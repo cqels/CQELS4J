@@ -4,5 +4,7 @@ This under-development version is the next generation of [ prototyped CQELS engi
 1. Support recommended Syntaxes of [RSP Community Group] (https://www.w3.org/community/rsp/)
 2. Support CEP operators
 3. Support RDFS/OWL reasoning
-4. Support Websocket
-5. Support Persistent stream
+4. Support Deep Learning for Semantic Reasoning on Vision Data
+5. Support Markov Logic Network
+6. Support Websocket
+7. Support Persistent stream
