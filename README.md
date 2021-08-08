@@ -1,5 +1,5 @@
 # Standalone CQELS Engine in Java
-This under-development version is the next generation of [ prototyped CQELS engine released in 2013](https://github.com/cqels/CQELS-1.x), the next release will be CQELS version 2.0, code name, COSMO. COSMO will be released by the end of 2021 with following features (delayed due to pademic situation):
+This under-development version is the next generation of [ prototyped CQELS engine released in 2013](https://github.com/cqels/CQELS-1.x), the next release will be CQELS version 2.0, code name, COSMO. COSMO will be released by the end of 2021 with following features (many delays due to pademic situation):
 
 1. Support Semantic Stream Fusion for Deep Neural Networks and RDF/Graph Streams
 2. Support recommended Syntaxes of [RSP Community Group](https://www.w3.org/community/rsp/) and RDF*/SPARQL*
