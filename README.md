@@ -11,4 +11,4 @@ This under-development version is the next generation of [ prototyped CQELS engi
 8. Support ARM hardwares such as Raspberry Pi, Jetson nano and Intel Movidius
 9. Support Persistent stream
 
-We are gladly now funded by DFG and BMBF under two projects, COSMO [https://gepris.dfg.de/gepris/projekt/453130567?language=en] and BIFOLD [https://bifold.berlin/] after being funded EU and Irish funding agencies under more than 10 projects.
+We are gladly now funded by DFG and BMBF under two projects, [COSMO] (https://gepris.dfg.de/gepris/projekt/453130567?language=en) and [BIFOLD] (https://bifold.berlin/) after being funded EU and Irish funding agencies under more than 10 projects in the last 12 years.
