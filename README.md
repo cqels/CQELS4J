@@ -153,8 +153,9 @@ server that exposes a CQELS engine as **AI-accessible tools** over stdio — sta
 `register_stream_query`, `poll_results`, `unregister_stream_query`), and intent-shaped
 capability tools (`detect_sequence` for CEP event-pattern matching, `define_subclass` for
 RDFS reasoning). So an MCP client such as Claude Desktop can run the same continuous
-windows/aggregates/CEP/reasoning the [`examples/`](examples/) demonstrate. It depends only on
-the published `cqels-engine` (+ `cqels-reasoning-rete` for the reasoning tool) and the MCP Java SDK.
+windows/aggregates/CEP/reasoning the [`examples/`](examples/) demonstrate. Its core dependencies
+are the published `cqels-engine` (+ `cqels-reasoning-rete` for the reasoning tool) and the MCP Java
+SDK (plus an `slf4j-simple` binding and a `jackson-annotations` pin — see the pom).
 
 ```bash
 cd mcp-server

@@ -459,10 +459,15 @@ public final class CqelsMemoryMcpServer {
                             // Look the buffer up by id so unregister_stream_query (which removes it) cleanly
                             // stops delivery — note the CEP matcher itself can't be individually stopped in
                             // this release (unregisterQuery does not cover CEP queries).
+                            final BlockingQueue<String> buf = buffer;
+                            final AtomicLong drp = dropped;
                             engine.registerCepQuery(query, match -> {
-                                BlockingQueue<String> q = BUFFERS.get(qid);
-                                if (q != null) {
-                                    boundedOffer(q, DROPPED.get(qid), String.valueOf(match));
+                                // Deliver only while this id still maps to OUR buffer. After
+                                // unregister (or if the id is later reused) the identity check
+                                // fails, so this un-stoppable CEP matcher can never write into a
+                                // different query's buffer.
+                                if (BUFFERS.get(qid) == buf) {
+                                    boundedOffer(buf, drp, String.valueOf(match));
                                 }
                             });
                         } catch (Exception ex) {
