@@ -4,7 +4,8 @@
 
 CQELS-QL (*Continuous Query Evaluation over Linked Streams — Query Language*) is **SPARQL 1.1 plus
 streaming**. If you know SPARQL, you already know most of it: `SELECT`, `FILTER`, `BIND`, `OPTIONAL`,
-`UNION`, `MINUS`, aggregates, `GROUP BY` / `HAVING` / `ORDER BY` / `LIMIT` behave as in SPARQL 1.1.
+`UNION`, aggregates and `GROUP BY` / `HAVING` behave as in SPARQL 1.1. (`ORDER BY` / `LIMIT` are
+supported with a streaming caveat, and `MINUS` parses but is not yet executed — see [§9](#9-standard-sparql-features-supported-as-is).)
 
 This document focuses on **what CQELS-QL adds on top of SPARQL** — the constructs you won't find in a
 plain triple store. The standard SPARQL surface is summarized briefly in
@@ -45,7 +46,7 @@ WHERE {
   STREAM <name> { <triple patterns> }                -- classic mode
   WINDOW :w   { <triple patterns> }                  -- named-window mode
   <static triple patterns>                           -- matched against the background graph
-  [OPTIONAL { … }] [{ … } UNION { … }] [MINUS { … }]
+  [OPTIONAL { … }] [{ … } UNION { … }] [MINUS { … }]   -- MINUS parses but is not yet executed (use FILTER NOT EXISTS)
   [FILTER(<expr>)] [FILTER NOT EXISTS { … }] [BIND(<expr> AS ?v)]
   [FILTER(SEQ(?a ; ?b ; …))]                         -- CEP sequence (see §7)
 }
@@ -417,7 +418,7 @@ WHERE {
 }
 ```
 
-**Named windows (short vs long baseline on one stream):**
+**Named windows (short vs long baseline on one stream)** — *syntax only; not yet executable, see [§5](#5-named-windows-rsp-ql):*
 ```sparql
 PREFIX vss: <https://covesa.global/vss#>
 REGISTER QUERY SpeedVsBaseline AS
@@ -443,7 +444,8 @@ WHERE {
 }
 ```
 
-More, all runnable and verified against this release, are in [`examples/`](examples/).
+More are in [`examples/`](examples/) — those are all runnable and verified against this release
+(the named-window snippet above is the exception: it parses but is not yet executable, see [§5](#5-named-windows-rsp-ql)).
 
 ---
 

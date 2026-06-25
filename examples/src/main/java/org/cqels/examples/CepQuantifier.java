@@ -13,12 +13,12 @@ import org.cqels.stream.StreamElement;
  * critical alert and the eventual failure — an escalation signature of variable length.
  *
  * <p>Quantifiers: {@code ?e+} (1+), {@code ?e*} (0+), {@code ?e?} (0/1), {@code ?e{n}},
- * {@code ?e{m,n}}. A step can also be negated with {@code NOT ?e} to mean "must not occur
- * between the neighbours".
+ * {@code ?e{m,n}}. A step can also be negated with {@code NOT ?e} ("must not occur between
+ * the neighbours") — see {@code CQELS-QL_SPEC.md} for the full CEP grammar.
  *
- * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.examples.CepQuantifierNegation}
+ * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.examples.CepQuantifier}
  */
-public class CepQuantifierNegation {
+public class CepQuantifier {
 
     private static final String EX = "http://example.org/";
 

@@ -111,14 +111,14 @@ new scenarios can be added under the matching heading.
 **Advanced query patterns**
 | Demo | Feature |
 |------|---------|
-| [`StreamStaticJoin`](examples/src/main/java/org/cqels/examples/StreamStaticJoin.java) | stream–static lookup join (`FROM STATIC`) |
+| [`StreamStaticJoin`](examples/src/main/java/org/cqels/examples/StreamStaticJoin.java) | stream–static lookup join (static patterns outside `STREAM {}`) |
 | [`AdvancedQueryOperators`](examples/src/main/java/org/cqels/examples/AdvancedQueryOperators.java) | `OPTIONAL` / `UNION` / `FILTER NOT EXISTS` / `BIND` |
 
 **Complex event processing**
 | Demo | Feature |
 |------|---------|
 | [`ComplexEventPattern`](examples/src/main/java/org/cqels/examples/ComplexEventPattern.java) | declarative CEP `FILTER(SEQ(…))` sequence detection |
-| [`CepQuantifierNegation`](examples/src/main/java/org/cqels/examples/CepQuantifierNegation.java) | CEP quantifier `?e+` (one-or-more) |
+| [`CepQuantifier`](examples/src/main/java/org/cqels/examples/CepQuantifier.java) | CEP quantifier `?e+` (one-or-more) |
 
 **Query dialects**
 | Demo | Feature |
@@ -172,7 +172,8 @@ aggregation (`GROUP BY` / `HAVING`), and declarative complex-event patterns (`FI
 Continuous property-graph queries use Cypher (CypherQL).
 
 📘 **Full language reference: [`CQELS-QL_SPEC.md`](CQELS-QL_SPEC.md)** — focuses on the streaming
-extensions over SPARQL (windows, named windows, stream–static joins, CEP), with grammar and examples.
+extensions over SPARQL (windows, stream–static joins, CEP; named windows are parsed but not yet
+executed — see the spec), with grammar and examples.
 The [examples/](examples/) are runnable counterparts.
 
 CQELS builds on and interoperates with these standards:

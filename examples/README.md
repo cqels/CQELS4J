@@ -21,13 +21,14 @@ mvn -q exec:java
 
 # Any scenario, e.g.:
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.WindowedAggregation
+mvn -q exec:java -Dexec.mainClass=org.cqels.examples.SlidingWindowTrends
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.CountWindow
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.DirectionalWindow
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.GroupConcatSummary
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.StreamStaticJoin
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.AdvancedQueryOperators
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.ComplexEventPattern
-mvn -q exec:java -Dexec.mainClass=org.cqels.examples.CepQuantifierNegation
+mvn -q exec:java -Dexec.mainClass=org.cqels.examples.CepQuantifier
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.CypherGraphQuery
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.RdfsReasoning
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.ShaclValidation
@@ -61,14 +62,14 @@ in the table + the `Build & run` block above).
 ### Advanced query patterns
 | Class | CQELS feature | Scenario |
 |-------|---------------|----------|
-| [`StreamStaticJoin`](src/main/java/org/cqels/examples/StreamStaticJoin.java) | `FROM STATIC` lookup join | Enrich each reading with its sensor's room/floor from a seeded background graph. |
+| [`StreamStaticJoin`](src/main/java/org/cqels/examples/StreamStaticJoin.java) | stream–static lookup join | Enrich each reading with its sensor's room/floor from a seeded background graph (static patterns outside `STREAM {}`). |
 | [`AdvancedQueryOperators`](src/main/java/org/cqels/examples/AdvancedQueryOperators.java) | `OPTIONAL` / `UNION` / `FILTER NOT EXISTS` / `BIND` | Order enrichment exercising the SPARQL algebra over a stream + static catalogue. |
 
 ### Complex event processing
 | Class | CQELS feature | Scenario |
 |-------|---------------|----------|
 | [`ComplexEventPattern`](src/main/java/org/cqels/examples/ComplexEventPattern.java) | declarative CEP `FILTER(SEQ(...))` | Detect a temporal sequence — overheat **then** stall — within a window. |
-| [`CepQuantifierNegation`](src/main/java/org/cqels/examples/CepQuantifierNegation.java) | CEP quantifier `?e+` | Escalation: a critical alert, then one-or-more retries, then a failure. |
+| [`CepQuantifier`](src/main/java/org/cqels/examples/CepQuantifier.java) | CEP quantifier `?e+` | Escalation: a critical alert, then one-or-more retries, then a failure. |
 
 ### Query dialects
 | Class | CQELS feature | Scenario |

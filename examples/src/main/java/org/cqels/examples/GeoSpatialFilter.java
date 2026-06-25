@@ -65,7 +65,11 @@ public class GeoSpatialFilter {
         System.out.println("\nDone.");
     }
 
-    /** Push a reading as two typed-WKT triples (location + the zone to test against). */
+    /**
+     * Push a reading as two typed-WKT triples (location + the zone to test against). The zone
+     * is repeated per reading purely to keep this example single-stream and self-contained; in
+     * practice you would seed the zone once into the static graph (see {@code StreamStaticJoin}).
+     */
     private static void pushReading(DataStream s, ValueFactory vf, String sensor, String wktPoint) {
         System.out.println("push: " + sensor + " at " + wktPoint);
         s.push(vf.createStatement(vf.createIRI(EX + sensor), vf.createIRI(EX + "location"),

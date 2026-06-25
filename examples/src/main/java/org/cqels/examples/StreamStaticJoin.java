@@ -17,10 +17,10 @@ import org.eclipse.rdf4j.repository.RepositoryConnection;
  *
  * <p>Key ideas:
  * <ul>
- *   <li>Seed the static graph via {@code engine.getRepository().getConnection()} before
+ *   <li>Seed the static data via {@code engine.getRepository().getConnection()} before
  *       {@code start()}.</li>
- *   <li>{@code FROM <graph-iri>} + bare patterns in WHERE = static lookup; {@code STREAM { }}
- *       = stream.</li>
+ *   <li>Patterns <em>outside</em> {@code STREAM { }} are matched against the engine's
+ *       repository (the static side); patterns <em>inside</em> it match the live stream.</li>
  * </ul>
  *
  * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.examples.StreamStaticJoin}
@@ -53,7 +53,6 @@ public class StreamStaticJoin {
                     REGISTER QUERY EnrichedReadings AS
                     SELECT ?sensor ?temp ?room ?floor
                     FROM STREAM Readings [NOW]
-                    FROM <http://example.org/catalogue>
                     WHERE {
                       STREAM Readings { ?sensor ex:temperature ?temp . }
                       ?sensor ex:room ?room ;

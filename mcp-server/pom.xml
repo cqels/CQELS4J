@@ -36,8 +36,8 @@
             <version>${mcp.sdk.version}</version>
         </dependency>
 
-        <!-- MCP SDK 1.0.0 needs @JsonFormat(shape=POJO), added in jackson-annotations 2.20;
-             RDF4J transitively brings an older one, so pin it here. -->
+        <!-- Pin jackson-annotations to a single recent version so RDF4J's older transitive
+             copy doesn't win the classpath; this is the version the build was verified against. -->
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-annotations</artifactId>

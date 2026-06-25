@@ -52,7 +52,6 @@ public class AdvancedQueryOperators {
                     REGISTER QUERY OrderEnrichment AS
                     SELECT ?product ?qty ?supplier ?description ?lineTotal
                     FROM STREAM Orders [TRIPLES 2]
-                    FROM <http://example.org/catalogue>
                     WHERE {
                       STREAM Orders { ?o ex:product ?product ; ex:qty ?qty . }
                       ?product ex:price ?price .

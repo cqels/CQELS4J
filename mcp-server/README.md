@@ -5,9 +5,11 @@ exposes a **CQELS engine as AI-accessible tools** over stdio. An MCP client — 
 Desktop, an IDE assistant, or any MCP-capable agent — can then use a CQELS in-memory RDF
 store as long-term memory it can write to and query.
 
-It depends only on the published `cqels-engine` and the official
+Its core dependencies are the published `cqels-engine` and the official
 [MCP Java SDK](https://github.com/modelcontextprotocol/java-sdk) (`io.modelcontextprotocol.sdk:mcp`),
-so it's a self-contained starting point for wrapping CQELS in your own MCP server.
+plus an `slf4j-simple` binding (so logs go to **stderr**, keeping stdout clean for JSON-RPC)
+and a `jackson-annotations` version pin (see the pom). It's a self-contained starting point
+for wrapping CQELS in your own MCP server.
 
 ## Tools exposed
 
@@ -19,7 +21,9 @@ so it's a self-contained starting point for wrapping CQELS in your own MCP serve
 > Both tools are synchronous request/response — the natural fit for MCP. Continuous CQELS-QL
 > queries (windows, CEP) push results asynchronously; see the [`examples/`](../examples/)
 > for those. **stdout is reserved for the JSON-RPC protocol** — this server logs only to
-> stderr, which is why it never prints stream results to stdout.
+> stderr, which is why it never prints stream results to stdout. (Keep it that way: don't set
+> `org.slf4j.simpleLogger.logFile=System.out`, and don't `System.out.println` from a tool
+> handler — either would interleave bytes into the JSON-RPC stream and break the protocol.)
 
 ## Build
 

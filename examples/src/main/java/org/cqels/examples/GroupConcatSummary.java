@@ -8,9 +8,10 @@ import java.util.Random;
 /**
  * Example 13 — String aggregation with GROUP_CONCAT.
  *
- * <p>Over each 3-second window, summarise sales per product: a count plus the distinct-ish
- * list of regions the product sold in, concatenated with {@code GROUP_CONCAT(?region;
- * SEPARATOR=", ")}.
+ * <p>Over each 3-second window, summarise sales per product: a count plus the list of regions
+ * the product sold in (with repeats — {@code GROUP_CONCAT} does not deduplicate unless you
+ * write {@code GROUP_CONCAT(DISTINCT …)}), concatenated with
+ * {@code GROUP_CONCAT(?region; SEPARATOR=", ")}.
  *
  * <p>Key idea: {@code GROUP_CONCAT(?v; SEPARATOR="…")} collapses a group's values into one
  * string (default separator is {@code ","}). Note: {@code ORDER BY} / {@code LIMIT} are part
