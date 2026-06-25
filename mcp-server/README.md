@@ -30,13 +30,17 @@ for wrapping CQELS in your own MCP server.
 | Tool | Arguments | What it does |
 |------|-----------|--------------|
 | `push_event` | `stream`, `subject`, `predicate`, `object` | Push one triple as an event into a named stream (created on first use). Numeric objects become numeric literals so `FILTER`/aggregates work; `http(s)://` becomes an IRI. |
-| `register_stream_query` | `query` | Register a continuous CQELS-QL query (`REGISTER QUERY … FROM STREAM … [window] …`). Returns a query **id**; emitted rows are buffered server-side. |
-| `poll_results` | `queryId` | Drain and return the rows that query has emitted since the last poll. |
+| `register_stream_query` | `query` | Register a continuous CQELS-QL query (`REGISTER QUERY … FROM STREAM … [window] …`). Returns a query **id**; emitted rows are buffered server-side (bounded — see below). |
+| `poll_results` | `queryId` | Drain and return up to 100 rows the query has emitted since the last poll; flags if more remain or if any were dropped. |
+| `unregister_stream_query` | `queryId` | Stop a query and free its buffer when you're done with it. |
 
 > Continuous queries push results asynchronously, but MCP tools are request/response — so a
 > registered query's rows are **buffered** and returned on demand. The natural call order is
 > **register → push_event(s) → poll_results** (a client awaits each response before the next,
-> so the query is registered before events arrive).
+> so the query is registered before events arrive), and **unregister_stream_query** when done.
+> Each query's buffer is **bounded** (10 000 rows): if a hot query is left unpolled, the
+> oldest rows are dropped and `poll_results` reports the count — so the server can't grow
+> memory without bound.
 >
 > **stdout is reserved for the JSON-RPC protocol** — this server logs only to stderr, and
 > never prints results to stdout. Keep it that way: don't set

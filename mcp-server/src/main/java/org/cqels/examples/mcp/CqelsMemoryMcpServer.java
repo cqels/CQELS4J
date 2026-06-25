@@ -20,10 +20,11 @@ import tools.jackson.databind.json.JsonMapper;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
-import java.util.Queue;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -58,13 +59,18 @@ public final class CqelsMemoryMcpServer {
     private static final JsonMapper JSON = JsonMapper.builder().build();
     private static final Duration SHUTDOWN_TIMEOUT = Duration.ofSeconds(5);
     private static final int MAX_ROWS = 100;
+    /** Per-query cap on buffered rows; past this the oldest are dropped (with accounting) so an
+     *  unpolled or high-volume query can't grow memory without bound. */
+    private static final int MAX_BUFFER = 10_000;
 
     /** Matches the stream name(s) in `FROM STREAM <name> [...]` so we can create them on demand. */
     private static final Pattern FROM_STREAM = Pattern.compile("FROM\\s+STREAM\\s+(\\w+)", Pattern.CASE_INSENSITIVE);
     /** Streams created so far (created once per name; createStream twice would throw). */
     private static final Map<String, DataStream> STREAMS = new ConcurrentHashMap<>();
-    /** Per-registered-query buffer of emitted result rows, drained by poll_results. */
-    private static final Map<String, Queue<String>> BUFFERS = new ConcurrentHashMap<>();
+    /** Per-registered-query bounded buffer of emitted result rows, drained by poll_results. */
+    private static final Map<String, BlockingQueue<String>> BUFFERS = new ConcurrentHashMap<>();
+    /** Per-query count of rows dropped because the buffer was full; surfaced by poll_results. */
+    private static final Map<String, AtomicLong> DROPPED = new ConcurrentHashMap<>();
 
     public static void main(String[] args) throws InterruptedException {
         CQELSEngine engine = CQELSEngine.builder()
@@ -89,7 +95,8 @@ public final class CqelsMemoryMcpServer {
                         queryTool(engine),
                         pushEventTool(engine),          // streaming
                         registerStreamQueryTool(engine),
-                        pollResultsTool())
+                        pollResultsTool(),
+                        unregisterStreamQueryTool(engine))
                 .build();
 
         // An MCP stdio server is long-running: the client (e.g. Claude Desktop) keeps the
@@ -262,11 +269,20 @@ public final class CqelsMemoryMcpServer {
                         while (m.find()) {
                             ensureStream(engine, m.group(1));
                         }
-                        Queue<String> buffer = new ConcurrentLinkedQueue<>();
-                        String queryId = engine.registerCqelsQuery(query, row -> buffer.add(String.valueOf(row)));
+                        BlockingQueue<String> buffer = new LinkedBlockingQueue<>(MAX_BUFFER);
+                        AtomicLong dropped = new AtomicLong();
+                        String queryId = engine.registerCqelsQuery(query, row -> {
+                            String r = String.valueOf(row);
+                            while (!buffer.offer(r)) {        // full → evict oldest until it fits
+                                buffer.poll();
+                                dropped.incrementAndGet();
+                            }
+                        });
                         BUFFERS.put(queryId, buffer);
+                        DROPPED.put(queryId, dropped);
                         return text("registered continuous query, id='" + queryId
-                                + "'. Push events to its stream, then call poll_results with this id.");
+                                + "'. Push events to its stream, then call poll_results with this id"
+                                + " (and unregister_stream_query when done).");
                     } catch (Exception e) {
                         return error("register_stream_query failed: " + e.getMessage());
                     }
@@ -292,30 +308,64 @@ public final class CqelsMemoryMcpServer {
                 (exchange, request) -> {
                     try {
                         String queryId = str(request.arguments(), "queryId");
-                        Queue<String> buffer = BUFFERS.get(queryId);
+                        BlockingQueue<String> buffer = BUFFERS.get(queryId);
                         if (buffer == null) {
                             return error("unknown query id: '" + queryId
                                     + "' (use the id returned by register_stream_query)");
                         }
                         StringBuilder out = new StringBuilder();
                         int rows = 0;
-                        boolean truncated = false;
                         String row;
-                        while ((row = buffer.poll()) != null) {
-                            if (rows >= MAX_ROWS) {
-                                truncated = true;
-                                break;
-                            }
+                        while (rows < MAX_ROWS && (row = buffer.poll()) != null) {  // cap, keeping the rest
                             out.append(row).append('\n');
                             rows++;
                         }
+                        boolean more = !buffer.isEmpty();
+                        AtomicLong droppedCtr = DROPPED.get(queryId);
+                        long drops = droppedCtr == null ? 0 : droppedCtr.getAndSet(0);
                         String body = rows == 0 ? "(no new results)" : out.toString().trim();
-                        if (truncated) {
-                            body += "\n… (truncated at " + MAX_ROWS + " rows; poll again for more)";
+                        if (more) {
+                            body += "\n… more rows buffered; poll again.";
+                        }
+                        if (drops > 0) {
+                            body += "\n(note: " + drops + " earlier row(s) dropped — buffer cap "
+                                    + MAX_BUFFER + "; poll more often or narrow the query.)";
                         }
                         return text(body);
                     } catch (Exception e) {
                         return error("poll_results failed: " + e.getMessage());
+                    }
+                });
+    }
+
+    // ---- tool: unregister_stream_query (stop a query + free its buffer) ---------------------
+
+    private static McpServerFeatures.SyncToolSpecification unregisterStreamQueryTool(CQELSEngine engine) {
+        String schema = """
+                {
+                  "type": "object",
+                  "required": ["queryId"],
+                  "properties": {
+                    "queryId": {"type": "string", "description": "Id returned by register_stream_query"}
+                  }
+                }
+                """;
+        return new McpServerFeatures.SyncToolSpecification(
+                new McpSchema.Tool("unregister_stream_query", null,
+                        "Stop a continuous query and free its result buffer (call this when you no "
+                                + "longer need a registered query).",
+                        parseSchema(schema), null, null, null),
+                (exchange, request) -> {
+                    try {
+                        String queryId = str(request.arguments(), "queryId");
+                        boolean existed = BUFFERS.remove(queryId) != null;
+                        DROPPED.remove(queryId);
+                        boolean stopped = engine.unregisterQuery(queryId);
+                        return text(existed || stopped
+                                ? "unregistered query '" + queryId + "' and freed its buffer."
+                                : "no such query '" + queryId + "' (already unregistered?).");
+                    } catch (Exception e) {
+                        return error("unregister_stream_query failed: " + e.getMessage());
                     }
                 });
     }
