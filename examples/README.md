@@ -30,14 +30,30 @@ Each program prints what it pushes and what the engine emits, then exits on its 
 
 ## The scenarios
 
-| # | Class | CQELS feature | Scenario |
-|---|-------|---------------|----------|
-| 1 | [`HelloCqels`](src/main/java/org/cqels/examples/HelloCqels.java) | `[NOW]` window + `FILTER` | Alert on every sensor reading above a threshold — the minimal continuous query. |
-| 2 | [`WindowedAggregation`](src/main/java/org/cqels/examples/WindowedAggregation.java) | `[RANGE 3s]` tumbling + `GROUP BY` | Per-sensor average / count / peak temperature, one row per 3-second window. |
-| 3 | [`SlidingWindowTrends`](src/main/java/org/cqels/examples/SlidingWindowTrends.java) | `[SLIDE 4s STEP 2s]` | Overlapping trailing-window stats (moving average / min / max) re-emitted every 2s. |
-| 4 | [`ComplexEventPattern`](src/main/java/org/cqels/examples/ComplexEventPattern.java) | declarative CEP `FILTER(SEQ(...))` | Detect a temporal sequence — overheat **then** stall — within a window. |
-| 5 | [`SosaObservations`](src/main/java/org/cqels/examples/SosaObservations.java) | W3C **SOSA/SSN** + multi-pattern stream join | Average / peak result per sensor over standard `sosa:Observation` streams. |
-| 6 | [`VehicleSignalsCdsp`](src/main/java/org/cqels/examples/VehicleSignalsCdsp.java) | COVESA **VSS** (CDSP) + `GROUP BY` + `HAVING` | Per-vehicle speed over a window; emit only vehicles that were speeding. |
+Grouped by use-case category — add new demos under the matching heading (and list them
+in the table + the `Build & run` block above).
+
+### Basics
+| Class | CQELS feature | Scenario |
+|-------|---------------|----------|
+| [`HelloCqels`](src/main/java/org/cqels/examples/HelloCqels.java) | `[NOW]` window + `FILTER` | Alert on every sensor reading above a threshold — the minimal continuous query. |
+
+### Windowing & aggregation
+| Class | CQELS feature | Scenario |
+|-------|---------------|----------|
+| [`WindowedAggregation`](src/main/java/org/cqels/examples/WindowedAggregation.java) | `[RANGE 3s]` tumbling + `GROUP BY` | Per-sensor average / count / peak temperature, one row per 3-second window. |
+| [`SlidingWindowTrends`](src/main/java/org/cqels/examples/SlidingWindowTrends.java) | `[SLIDE 4s STEP 2s]` + `GROUP BY` | Overlapping trailing-window stats (moving average / min / max) re-emitted every 2s. |
+
+### Complex event processing
+| Class | CQELS feature | Scenario |
+|-------|---------------|----------|
+| [`ComplexEventPattern`](src/main/java/org/cqels/examples/ComplexEventPattern.java) | declarative CEP `FILTER(SEQ(...))` | Detect a temporal sequence — overheat **then** stall — within a window. |
+
+### Standard vocabularies & domains
+| Class | CQELS feature | Scenario |
+|-------|---------------|----------|
+| [`SosaObservations`](src/main/java/org/cqels/examples/SosaObservations.java) | W3C [SOSA/SSN](https://www.w3.org/TR/vocab-ssn/) + multi-pattern stream join | Average / peak result per sensor over standard `sosa:Observation` streams. |
+| [`VehicleSignalsCdsp`](src/main/java/org/cqels/examples/VehicleSignalsCdsp.java) | COVESA [VSS](https://covesa.global/) (CDSP) + `GROUP BY` + `HAVING` | Per-vehicle speed over a window; emit only vehicles that were speeding. |
 
 ## Adapting them
 

@@ -26,9 +26,13 @@ rebuilt for edge-to-cloud deployments — code name **COSMO**.
   multi-way stream joins, and stream + static-graph composition.
 - **Durable & embeddable** — pluggable storage backends (LMDB, RocksDB, IoTDB) with
   event-journal recovery; runs on ARM hardware (Raspberry Pi, Jetson) as well as servers.
+- **Standards-based & interoperable** — plain RDF with [SPARQL 1.1](https://www.w3.org/TR/sparql11-query/)
+  semantics; works out of the box with standard vocabularies such as W3C
+  [SOSA/SSN](https://www.w3.org/TR/vocab-ssn/) (sensor observations) and
+  [COVESA VSS](https://covesa.global/) (connected-vehicle signals).
 
-Standards alignment: recommendations of the [RSP Community Group](https://www.w3.org/community/rsp/)
-and RDF\*/SPARQL\*.
+See **[Query language & standards](#query-language--standards)** for the full list of
+specifications CQELS builds on and aligns with.
 
 ---
 
@@ -87,14 +91,56 @@ GitHub Packages requires a token with `read:packages` — see
 
 ## Demonstration scenarios
 
+Runnable, verified demos in [`examples/`](examples/), grouped by use-case category —
+new scenarios can be added under the matching heading.
+
+**Basics**
 | Demo | Feature |
 |------|---------|
-| [`HelloCqels`](examples/src/main/java/org/cqels/examples/HelloCqels.java) | `[NOW]` window + `FILTER` |
+| [`HelloCqels`](examples/src/main/java/org/cqels/examples/HelloCqels.java) | `[NOW]` window + `FILTER` — the minimal continuous query |
+
+**Windowing & aggregation**
+| Demo | Feature |
+|------|---------|
 | [`WindowedAggregation`](examples/src/main/java/org/cqels/examples/WindowedAggregation.java) | tumbling `[RANGE]` + `GROUP BY` aggregates |
 | [`SlidingWindowTrends`](examples/src/main/java/org/cqels/examples/SlidingWindowTrends.java) | sliding `[SLIDE … STEP …]` windows |
-| [`ComplexEventPattern`](examples/src/main/java/org/cqels/examples/ComplexEventPattern.java) | declarative CEP `FILTER(SEQ(…))` |
-| [`SosaObservations`](examples/src/main/java/org/cqels/examples/SosaObservations.java) | W3C SOSA/SSN observations + multi-pattern stream join |
-| [`VehicleSignalsCdsp`](examples/src/main/java/org/cqels/examples/VehicleSignalsCdsp.java) | COVESA VSS vehicle signals + `GROUP BY` / `HAVING` |
+
+**Complex event processing**
+| Demo | Feature |
+|------|---------|
+| [`ComplexEventPattern`](examples/src/main/java/org/cqels/examples/ComplexEventPattern.java) | declarative CEP `FILTER(SEQ(…))` sequence detection |
+
+**Standard vocabularies & domains**
+| Demo | Feature |
+|------|---------|
+| [`SosaObservations`](examples/src/main/java/org/cqels/examples/SosaObservations.java) | W3C [SOSA/SSN](https://www.w3.org/TR/vocab-ssn/) observations + multi-pattern stream join |
+| [`VehicleSignalsCdsp`](examples/src/main/java/org/cqels/examples/VehicleSignalsCdsp.java) | COVESA [VSS](https://covesa.global/) (CDSP) vehicle signals + `GROUP BY` / `HAVING` |
+
+---
+
+## Query language & standards
+
+**CQELS-QL** is a continuous-query language: [SPARQL 1.1](https://www.w3.org/TR/sparql11-query/)
+graph patterns extended with stream windows
+(`FROM STREAM … [NOW | RANGE Ns | SLIDE Ns STEP Ms | TRIPLES N]`), aggregation
+(`GROUP BY` / `HAVING`), and declarative complex-event patterns (`FILTER(SEQ(…))`).
+The working syntax reference is the set of [examples](examples/) plus the operator summary
+in [GETTING_STARTED.md](GETTING_STARTED.md#6-where-to-go-next). Continuous property-graph
+queries use Cypher via `registerCypherQuery(...)`.
+
+CQELS builds on and interoperates with these standards:
+
+| Area | Standard / vocabulary |
+|------|-----------------------|
+| Graph query | [SPARQL 1.1](https://www.w3.org/TR/sparql11-query/) |
+| RDF stream processing | [RSP-QL — W3C RSP Community Group](https://www.w3.org/community/rsp/) † |
+| Quoted triples | [RDF-star / SPARQL-star](https://www.w3.org/2021/12/rdf-star.html) † |
+| Property graphs | [openCypher](https://opencypher.org/) |
+| Sensor observations | [W3C SOSA/SSN](https://www.w3.org/TR/vocab-ssn/) |
+| Connected-vehicle signals | [COVESA VSS](https://covesa.global/) |
+| Geospatial | [OGC GeoSPARQL](https://www.ogc.org/standard/geosparql/) |
+
+† RSP-QL surface syntax and RDF-star/SPARQL-star are active alignment targets — see **Roadmap**.
 
 ---
 
