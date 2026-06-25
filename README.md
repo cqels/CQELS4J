@@ -150,9 +150,9 @@ new scenarios can be added under the matching heading.
 [`mcp-server/`](mcp-server/) is a self-contained [Model Context Protocol](https://modelcontextprotocol.io/)
 server that exposes a CQELS engine as **AI-accessible tools** over stdio — both static
 memory (`store_fact`, `query`) and the **streaming** engine (`push_event`,
-`register_stream_query`, `poll_results`), so an MCP client such as Claude Desktop can run the
-same continuous windows/aggregates/CEP the [`examples/`](examples/) demonstrate. It depends
-only on the published `cqels-engine` and the official MCP Java SDK.
+`register_stream_query`, `poll_results`, `unregister_stream_query`), so an MCP client such as
+Claude Desktop can run the same continuous windows/aggregates/CEP the [`examples/`](examples/)
+demonstrate. It depends only on the published `cqels-engine` and the official MCP Java SDK.
 
 ```bash
 cd mcp-server
