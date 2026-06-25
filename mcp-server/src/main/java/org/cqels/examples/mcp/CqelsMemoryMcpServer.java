@@ -19,6 +19,7 @@ import tools.jackson.databind.json.JsonMapper;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
 
 /**
  * A minimal Model Context Protocol (MCP) server backed by a CQELS engine.
@@ -41,6 +42,7 @@ public final class CqelsMemoryMcpServer {
     private static final ValueFactory VF = SimpleValueFactory.getInstance();
     private static final JsonMapper JSON = JsonMapper.builder().build();
     private static final Duration SHUTDOWN_TIMEOUT = Duration.ofSeconds(5);
+    private static final int MAX_ROWS = 100;
 
     public static void main(String[] args) throws InterruptedException {
         CQELSEngine engine = CQELSEngine.builder()
@@ -63,7 +65,10 @@ public final class CqelsMemoryMcpServer {
         server.addTool(storeFactTool(engine));
         server.addTool(queryTool(engine));
 
-        // Graceful shutdown on SIGTERM/SIGINT (closeGracefully() blocks unbounded in SDK 1.0.0).
+        // An MCP stdio server runs until the client terminates the process (SIGTERM/SIGINT).
+        // The shutdown hook is the cleanup path: drain the server (closeGracefully() blocks
+        // unbounded in SDK 1.0.0, so bound it) and close the engine; then release main.
+        CountDownLatch shutdown = new CountDownLatch(1);
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             try {
                 server.getAsyncServer().closeGracefully().block(SHUTDOWN_TIMEOUT);
@@ -71,10 +76,11 @@ public final class CqelsMemoryMcpServer {
                 // best-effort
             }
             engine.close();
+            shutdown.countDown();
         }));
 
-        // Serve until the client closes the transport / the process is signalled.
-        Thread.currentThread().join();
+        // Park the main thread until shutdown so the JVM stays alive serving requests.
+        shutdown.await();
     }
 
     // ---- tool: store_fact ------------------------------------------------------------------
@@ -132,11 +138,16 @@ public final class CqelsMemoryMcpServer {
                         String sparql = str(request.arguments(), "sparql");
                         StringBuilder out = new StringBuilder();
                         int rows = 0;
+                        boolean truncated = false;
                         try (RepositoryConnection conn = engine.getRepository().getConnection();
                              TupleQueryResult result =
                                      conn.prepareTupleQuery(QueryLanguage.SPARQL, sparql).evaluate()) {
                             List<String> vars = result.getBindingNames();
-                            while (result.hasNext() && rows < 100) {
+                            while (result.hasNext()) {
+                                if (rows >= MAX_ROWS) {       // cap the response size
+                                    truncated = true;
+                                    break;
+                                }
                                 BindingSet bs = result.next();
                                 StringBuilder row = new StringBuilder();
                                 for (String v : vars) {
@@ -150,7 +161,11 @@ public final class CqelsMemoryMcpServer {
                                 rows++;
                             }
                         }
-                        return text(rows == 0 ? "(no results)" : out.toString().trim());
+                        String body = rows == 0 ? "(no results)" : out.toString().trim();
+                        if (truncated) {
+                            body += "\n… (truncated at " + MAX_ROWS + " rows)";
+                        }
+                        return text(body);
                     } catch (Exception e) {
                         return error("query failed: " + e.getMessage());
                     }

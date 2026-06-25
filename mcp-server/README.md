@@ -2,8 +2,10 @@
 
 A minimal [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server that
 exposes a **CQELS engine as AI-accessible tools** over stdio. An MCP client — Claude
-Desktop, an IDE assistant, or any MCP-capable agent — can then use a CQELS in-memory RDF
-store as long-term memory it can write to and query.
+Desktop, an IDE assistant, or any MCP-capable agent — can then use a CQELS RDF store as
+**queryable memory** it can write to and query. This example uses
+`.withMemoryStore()`, so the store is in-memory and **session-scoped (cleared when the
+process exits)**; swap in a durable storage backend for persistence across restarts.
 
 Its core dependencies are the published `cqels-engine` and the official
 [MCP Java SDK](https://github.com/modelcontextprotocol/java-sdk) (`io.modelcontextprotocol.sdk:mcp`),
@@ -16,7 +18,7 @@ for wrapping CQELS in your own MCP server.
 | Tool | Arguments | What it does |
 |------|-----------|--------------|
 | `store_fact` | `subject`, `predicate`, `object` | Add one RDF triple to memory. `object` is treated as an IRI if it starts with `http(s)://`, otherwise as a literal. |
-| `query` | `sparql` | Run a SPARQL `SELECT` over everything stored so far; returns the rows as text. |
+| `query` | `sparql` | Run a SPARQL `SELECT` over everything stored so far; returns the rows as text (capped at the first 100, with a truncation marker beyond that). |
 
 > Both tools are synchronous request/response — the natural fit for MCP. Continuous CQELS-QL
 > queries (windows, CEP) push results asynchronously; see the [`examples/`](../examples/)
