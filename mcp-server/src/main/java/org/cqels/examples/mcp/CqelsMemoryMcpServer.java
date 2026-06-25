@@ -55,19 +55,20 @@ public final class CqelsMemoryMcpServer {
         StdioServerTransportProvider transport = new StdioServerTransportProvider(
                 new JacksonMcpJsonMapper(JsonMapper.builder().build()));
 
+        // Register both tools on the builder BEFORE build() so they exist before the
+        // transport starts processing requests (no startup race).
         McpSyncServer server = McpServer.sync(transport)
                 .serverInfo("cqels-memory", "0.1.0")
                 .capabilities(McpSchema.ServerCapabilities.builder()
                         .tools(true)
                         .build())
+                .tools(storeFactTool(engine), queryTool(engine))
                 .build();
 
-        server.addTool(storeFactTool(engine));
-        server.addTool(queryTool(engine));
-
-        // An MCP stdio server runs until the client terminates the process (SIGTERM/SIGINT).
-        // The shutdown hook is the cleanup path: drain the server (closeGracefully() blocks
-        // unbounded in SDK 1.0.0, so bound it) and close the engine; then release main.
+        // An MCP stdio server is long-running: the client (e.g. Claude Desktop) keeps the
+        // connection open and terminates the process with SIGTERM/SIGINT when done. The
+        // shutdown hook is the cleanup path — drain the server (closeGracefully() blocks
+        // unbounded in SDK 1.0.0, so bound it), close the engine, then release main.
         CountDownLatch shutdown = new CountDownLatch(1);
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             try {
@@ -79,7 +80,8 @@ public final class CqelsMemoryMcpServer {
             shutdown.countDown();
         }));
 
-        // Park the main thread until shutdown so the JVM stays alive serving requests.
+        // Park main so the JVM stays alive serving requests until the process is signalled.
+        // (We intentionally do NOT exit on stdin EOF: that would race in-flight tool calls.)
         shutdown.await();
     }
 

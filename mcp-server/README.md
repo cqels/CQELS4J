@@ -36,18 +36,25 @@ mvn -q package
 # -> target/cqels-mcp-server.jar  (a single runnable jar)
 ```
 
-Quick smoke test without an MCP client (pipe a JSON-RPC session in):
+Quick smoke test without an MCP client (pipe a JSON-RPC session in). The server is
+**long-running** — like a real MCP client, you hold the connection open and then terminate
+the process, so the snippet below backgrounds it and kills it after the replies arrive
+(piping straight into `java …` would print the replies and then appear to hang, because the
+server keeps running until signalled):
 
 ```bash
-printf '%s\n' \
+( printf '%s\n' \
   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"cli","version":"1.0"}}}' \
   '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
   '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"store_fact","arguments":{"subject":"http://ex/alice","predicate":"http://ex/knows","object":"http://ex/bob"}}}' \
-  '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"query","arguments":{"sparql":"SELECT ?s ?p ?o WHERE { ?s ?p ?o }"}}}' \
-  | java -jar target/cqels-mcp-server.jar
+  '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"query","arguments":{"sparql":"SELECT ?s ?p ?o WHERE { ?s ?p ?o }"}}}'; \
+  sleep 2 ) | java -jar target/cqels-mcp-server.jar &
+sleep 4; kill %1 2>/dev/null   # stop the long-running server
 ```
 
-You should see the `initialize` result, then `Stored: …`, then the queried triple.
+You should see the `initialize` result, then `Stored: …`, then the queried triple. (An MCP
+client such as Claude Desktop manages this lifecycle for you — it launches the process and
+sends SIGTERM on shutdown, which the server's hook handles cleanly.)
 
 ## Use it from Claude Desktop
 
