@@ -68,6 +68,8 @@ public final class CqelsMemoryMcpServer {
 
     /** Matches the stream name(s) in `FROM STREAM <name> [...]` so we can create them on demand. */
     private static final Pattern FROM_STREAM = Pattern.compile("FROM\\s+STREAM\\s+(\\w+)", Pattern.CASE_INSENSITIVE);
+    /** Matches the `REGISTER QUERY <name>` id so we can reject a colliding registration up front. */
+    private static final Pattern REGISTER_NAME = Pattern.compile("REGISTER\\s+QUERY\\s+(\\w+)", Pattern.CASE_INSENSITIVE);
     /** Streams created so far (created once per name; createStream twice would throw). */
     private static final Map<String, DataStream> STREAMS = new ConcurrentHashMap<>();
     /** Per-registered-query bounded buffer of emitted result rows, drained by poll_results. */
@@ -292,11 +294,19 @@ public final class CqelsMemoryMcpServer {
                         while (m.find()) {
                             ensureStream(engine, m.group(1));
                         }
+                        // Reject a colliding id BEFORE registering, so we never create a duplicate
+                        // engine registration that would then be left orphaned.
+                        Matcher nm = REGISTER_NAME.matcher(query);
+                        if (nm.find() && BUFFERS.containsKey(nm.group(1))) {
+                            return error("a query with id '" + nm.group(1) + "' is already registered; "
+                                    + "use a different REGISTER QUERY name, or unregister it first.");
+                        }
                         BlockingQueue<String> buffer = new LinkedBlockingQueue<>(MAX_BUFFER);
                         AtomicLong dropped = new AtomicLong();
                         String queryId = engine.registerCqelsQuery(query,
                                 row -> boundedOffer(buffer, dropped, String.valueOf(row)));
-                        if (BUFFERS.putIfAbsent(queryId, buffer) != null) {  // don't clobber an existing buffer
+                        if (BUFFERS.putIfAbsent(queryId, buffer) != null) {  // racy backstop: undo our reg
+                            engine.unregisterQuery(queryId);
                             return error("a query with id '" + queryId + "' is already registered; "
                                     + "use a different REGISTER QUERY name, or unregister it first.");
                         }
@@ -440,16 +450,31 @@ public final class CqelsMemoryMcpServer {
                             }
                             seq.append(var);
                         }
-                        String query = "REGISTER QUERY " + name + " AS SELECT ?e1 FROM STREAM " + stream
+                        final String qid = name;
+                        String query = "REGISTER QUERY " + qid + " AS SELECT ?e1 FROM STREAM " + stream
                                 + " [RANGE " + within + "s] WHERE { " + where + "FILTER(SEQ(" + seq + ")) }";
-                        // FILTER(SEQ(...)) runs through registerCqelsQuery (returns the id, so
-                        // unregister_stream_query can stop it — registerCepQuery returns void / can't be).
-                        // The id == our reserved REGISTER QUERY name, so the buffer is already keyed correctly.
-                        engine.registerCqelsQuery(query, row -> boundedOffer(buffer, dropped, String.valueOf(row)));
-                        return text("watching '" + stream + "' for sequence " + steps + " within " + within
-                                + "s — query id='" + name + "'. Push events with predicate \"a\" (rdf:type) and "
-                                + "object the type IRI via push_event, then poll_results('" + name + "'); "
-                                + "unregister_stream_query when done.");
+                        try {
+                            // registerCepQuery enforces event ORDER; registerCqelsQuery treats FILTER(SEQ)
+                            // as an unordered conjunction (would match out-of-order), so it is NOT used here.
+                            // Look the buffer up by id so unregister_stream_query (which removes it) cleanly
+                            // stops delivery — note the CEP matcher itself can't be individually stopped in
+                            // this release (unregisterQuery does not cover CEP queries).
+                            engine.registerCepQuery(query, match -> {
+                                BlockingQueue<String> q = BUFFERS.get(qid);
+                                if (q != null) {
+                                    boundedOffer(q, DROPPED.get(qid), String.valueOf(match));
+                                }
+                            });
+                        } catch (Exception ex) {
+                            BUFFERS.remove(qid);            // don't leave a phantom id on failure
+                            DROPPED.remove(qid);
+                            return error("detect_sequence failed: " + ex.getMessage());
+                        }
+                        return text("watching '" + stream + "' for the ORDERED sequence " + steps + " within "
+                                + within + "s — query id='" + qid + "'. Push events with predicate \"a\" and "
+                                + "object the type IRI via push_event, then poll_results('" + qid + "'). "
+                                + "unregister_stream_query frees the buffer + stops delivery (the CEP matcher "
+                                + "itself keeps running — this alpha has no per-CEP-query stop).");
                     } catch (Exception e) {
                         return error("detect_sequence failed: " + e.getMessage());
                     }
@@ -464,7 +489,7 @@ public final class CqelsMemoryMcpServer {
                   "type": "object",
                   "required": ["stream", "subclass", "superclass"],
                   "properties": {
-                    "stream":     {"type": "string", "description": "Stream the rule applies to"},
+                    "stream":     {"type": "string", "description": "Stream used to inject the axiom (the rule applies engine-wide)"},
                     "subclass":   {"type": "string", "description": "Subclass IRI"},
                     "superclass": {"type": "string", "description": "Superclass IRI"}
                   }
