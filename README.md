@@ -31,7 +31,7 @@ rebuilt for edge-to-cloud deployments — code name **COSMO**.
   [SOSA/SSN](https://www.w3.org/TR/vocab-ssn/) (sensor observations) and
   [COVESA VSS](https://covesa.global/) (connected-vehicle signals).
 
-See **[Query language & standards](#query-language--standards)** for the full list of
+See **[Query language and standards](#query-language-and-standards)** for the full list of
 specifications CQELS builds on and aligns with.
 
 ---
@@ -118,7 +118,7 @@ new scenarios can be added under the matching heading.
 
 ---
 
-## Query language & standards
+## Query language and standards
 
 **CQELS-QL** is a continuous-query language: [SPARQL 1.1](https://www.w3.org/TR/sparql11-query/)
 graph patterns extended with stream windows

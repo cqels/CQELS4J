@@ -69,14 +69,16 @@ mvn -q compile
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.HelloCqels
 ```
 
-Pick any of the four scenarios with `-Dexec.mainClass`:
+Pick any of the six scenarios with `-Dexec.mainClass`:
 
 | Class | What it shows |
 |-------|---------------|
-| `org.cqels.examples.HelloCqels` | `[NOW]` window + `FILTER` — alert on each threshold breach |
+| `org.cqels.examples.HelloCqels` | `[NOW]` window + `FILTER` — the minimal continuous query |
 | `org.cqels.examples.WindowedAggregation` | `[RANGE 3s]` tumbling window + `GROUP BY` + `AVG`/`COUNT`/`MAX` |
 | `org.cqels.examples.SlidingWindowTrends` | `[SLIDE 4s STEP 2s]` overlapping windows for moving trends |
 | `org.cqels.examples.ComplexEventPattern` | declarative CEP — `FILTER(SEQ(?a; ?b))` sequence detection |
+| `org.cqels.examples.SosaObservations` | W3C SOSA/SSN observations + multi-pattern stream join |
+| `org.cqels.examples.VehicleSignalsCdsp` | COVESA VSS (CDSP) signals + `GROUP BY` + `HAVING` |
 
 See [`examples/README.md`](examples/README.md) for a description of each.
 
@@ -168,7 +170,7 @@ public class FirstQuery {
 
 ## 6. Where to go next
 
-- **Examples:** [`examples/`](examples/) — the four runnable scenarios above are the
+- **Examples:** [`examples/`](examples/) — the six runnable scenarios above are the
   fastest way to learn the query shapes.
 - **CQELS-QL operators:** beyond the examples, the language also supports `OPTIONAL` /
   `UNION` / `MINUS`, `BIND`, `HAVING` / `ORDER BY` / `LIMIT`, joins against a static
