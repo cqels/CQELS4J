@@ -122,11 +122,13 @@ new scenarios can be added under the matching heading.
 
 **CQELS-QL** is a continuous-query language: [SPARQL 1.1](https://www.w3.org/TR/sparql11-query/)
 graph patterns extended with stream windows
-(`FROM STREAM … [NOW | RANGE Ns | SLIDE Ns STEP Ms | TRIPLES N]`), aggregation
-(`GROUP BY` / `HAVING`), and declarative complex-event patterns (`FILTER(SEQ(…))`).
-The working syntax reference is the set of [examples](examples/) plus the operator summary
-in [GETTING_STARTED.md](GETTING_STARTED.md#6-where-to-go-next). Continuous property-graph
-queries use Cypher via `registerCypherQuery(...)`.
+(`FROM STREAM … [NOW | RANGE Ns | SLIDE Ns STEP Ms | TRIPLES N]`), directional (LARS) windows,
+aggregation (`GROUP BY` / `HAVING`), and declarative complex-event patterns (`FILTER(SEQ(…))`).
+Continuous property-graph queries use Cypher (CypherQL).
+
+📘 **Full language reference: [`CQELS-QL_SPEC.md`](CQELS-QL_SPEC.md)** — focuses on the streaming
+extensions over SPARQL (windows, named windows, stream–static joins, CEP), with grammar and examples.
+The [examples/](examples/) are runnable counterparts.
 
 CQELS builds on and interoperates with these standards:
 

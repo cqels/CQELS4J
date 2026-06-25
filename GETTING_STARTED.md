@@ -172,10 +172,12 @@ public class FirstQuery {
 
 - **Examples:** [`examples/`](examples/) — the six runnable scenarios above are the
   fastest way to learn the query shapes.
-- **CQELS-QL operators:** beyond the examples, the language also supports `OPTIONAL` /
-  `UNION` / `MINUS`, `BIND`, `HAVING` / `ORDER BY` / `LIMIT`, joins against a static
-  graph (`FROM STATIC`), named windows (`FROM NAMED WINDOW`), and declarative CEP
-  (`FILTER(SEQ(...))` with quantifiers `?e+` / `?e{m,n}` and negation `NOT ?e`).
+- **CQELS-QL language reference:** [`CQELS-QL_SPEC.md`](CQELS-QL_SPEC.md) — the full specification of
+  the streaming extensions over SPARQL (windows incl. directional/LARS, named windows, stream–static
+  joins, CEP, the grammar). Beyond the examples, the language also supports `OPTIONAL` / `UNION` /
+  `MINUS`, `BIND`, `HAVING` / `ORDER BY` / `LIMIT`, joins against a static graph (`FROM STATIC`), named
+  windows (`FROM NAMED WINDOW`), and declarative CEP (`FILTER(SEQ(...))` with quantifiers `?e+` /
+  `?e{m,n}` and negation `NOT ?e`).
 - **Cypher & CEP:** `engine.registerCypherQuery(...)` for property-graph patterns and
   `engine.registerCepQuery(...)` for event sequences.
 - **Releases:** https://github.com/cqels/CQELS4J/releases
