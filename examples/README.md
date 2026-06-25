@@ -1,7 +1,8 @@
 # CQELS Engine — Getting-Started Examples
 
-Four small, self-contained programs that demonstrate the core capabilities of the
-CQELS 2.0 continuous query engine. Each is a `main()` you can run directly.
+Six small, self-contained programs that demonstrate the core capabilities of the
+CQELS 2.0 continuous query engine — from a one-line filter to standard-vocabulary
+(W3C SOSA/SSN, COVESA VSS) scenarios. Each is a `main()` you can run directly.
 
 ## Prerequisites
 
@@ -21,6 +22,8 @@ mvn -q exec:java
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.WindowedAggregation
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.SlidingWindowTrends
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.ComplexEventPattern
+mvn -q exec:java -Dexec.mainClass=org.cqels.examples.SosaObservations
+mvn -q exec:java -Dexec.mainClass=org.cqels.examples.VehicleSignalsCdsp
 ```
 
 Each program prints what it pushes and what the engine emits, then exits on its own.
@@ -33,6 +36,8 @@ Each program prints what it pushes and what the engine emits, then exits on its 
 | 2 | [`WindowedAggregation`](src/main/java/org/cqels/examples/WindowedAggregation.java) | `[RANGE 3s]` tumbling + `GROUP BY` | Per-sensor average / count / peak temperature, one row per 3-second window. |
 | 3 | [`SlidingWindowTrends`](src/main/java/org/cqels/examples/SlidingWindowTrends.java) | `[SLIDE 4s STEP 2s]` | Overlapping trailing-window stats (moving average / min / max) re-emitted every 2s. |
 | 4 | [`ComplexEventPattern`](src/main/java/org/cqels/examples/ComplexEventPattern.java) | declarative CEP `FILTER(SEQ(...))` | Detect a temporal sequence — overheat **then** stall — within a window. |
+| 5 | [`SosaObservations`](src/main/java/org/cqels/examples/SosaObservations.java) | W3C **SOSA/SSN** + multi-pattern stream join | Average / peak result per sensor over standard `sosa:Observation` streams. |
+| 6 | [`VehicleSignalsCdsp`](src/main/java/org/cqels/examples/VehicleSignalsCdsp.java) | COVESA **VSS** (CDSP) + `GROUP BY` + `HAVING` | Per-vehicle speed over a window; emit only vehicles that were speeding. |
 
 ## Adapting them
 

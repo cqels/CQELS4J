@@ -93,6 +93,8 @@ GitHub Packages requires a token with `read:packages` — see
 | [`WindowedAggregation`](examples/src/main/java/org/cqels/examples/WindowedAggregation.java) | tumbling `[RANGE]` + `GROUP BY` aggregates |
 | [`SlidingWindowTrends`](examples/src/main/java/org/cqels/examples/SlidingWindowTrends.java) | sliding `[SLIDE … STEP …]` windows |
 | [`ComplexEventPattern`](examples/src/main/java/org/cqels/examples/ComplexEventPattern.java) | declarative CEP `FILTER(SEQ(…))` |
+| [`SosaObservations`](examples/src/main/java/org/cqels/examples/SosaObservations.java) | W3C SOSA/SSN observations + multi-pattern stream join |
+| [`VehicleSignalsCdsp`](examples/src/main/java/org/cqels/examples/VehicleSignalsCdsp.java) | COVESA VSS vehicle signals + `GROUP BY` / `HAVING` |
 
 ---
 
