@@ -29,6 +29,10 @@ mvn -q exec:java -Dexec.mainClass=org.cqels.examples.AdvancedQueryOperators
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.ComplexEventPattern
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.CepQuantifierNegation
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.CypherGraphQuery
+mvn -q exec:java -Dexec.mainClass=org.cqels.examples.RdfsReasoning
+mvn -q exec:java -Dexec.mainClass=org.cqels.examples.ShaclValidation
+mvn -q exec:java -Dexec.mainClass=org.cqels.examples.AspReasoning
+mvn -q exec:java -Dexec.mainClass=org.cqels.examples.GeoSpatialFilter
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.SosaObservations
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.VehicleSignalsCdsp
 ```
@@ -70,6 +74,18 @@ in the table + the `Build & run` block above).
 | Class | CQELS feature | Scenario |
 |-------|---------------|----------|
 | [`CypherGraphQuery`](src/main/java/org/cqels/examples/CypherGraphQuery.java) | CypherQL `MATCH … RETURN` | Continuous property-graph matching (`MATCH (p:Person)`) over the stream. |
+
+### Reasoning & validation (add-on modules)
+| Class | CQELS feature | Scenario |
+|-------|---------------|----------|
+| [`RdfsReasoning`](src/main/java/org/cqels/examples/RdfsReasoning.java) | RDFS/OWL inference — `cqels-reasoning-rete` | A `rdfs:subClassOf` schema lets a query for `ex:Device` match an `ex:Sensor` instance via inference. |
+| [`ShaclValidation`](src/main/java/org/cqels/examples/ShaclValidation.java) | continuous [SHACL](https://www.w3.org/TR/shacl/) — `cqels-shacl` | Validate a stream against shapes; `conforms` flips from `false` to `true` as the required edge arrives. |
+| [`AspReasoning`](src/main/java/org/cqels/examples/AspReasoning.java) | Answer-Set Programming — `cqels-asp` | A logic rule derives `colleague(X,Y)` for people sharing an employer (join + inequality). |
+
+### Geospatial (add-on module)
+| Class | CQELS feature | Scenario |
+|-------|---------------|----------|
+| [`GeoSpatialFilter`](src/main/java/org/cqels/examples/GeoSpatialFilter.java) | OGC [GeoSPARQL](https://www.ogc.org/standard/geosparql/) `geof:sfWithin` — `cqels-geo` | Keep only sensor readings whose WKT location falls inside a zone polygon. |
 
 ### Standard vocabularies & domains
 | Class | CQELS feature | Scenario |

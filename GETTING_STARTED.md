@@ -69,18 +69,25 @@ mvn -q compile
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.HelloCqels
 ```
 
-Pick any of the six scenarios with `-Dexec.mainClass`:
+A few representative scenarios (the full categorized list of 17 is in
+[`examples/README.md`](examples/README.md)) — run any with `-Dexec.mainClass`:
 
 | Class | What it shows |
 |-------|---------------|
 | `org.cqels.examples.HelloCqels` | `[NOW]` window + `FILTER` — the minimal continuous query |
 | `org.cqels.examples.WindowedAggregation` | `[RANGE 3s]` tumbling window + `GROUP BY` + `AVG`/`COUNT`/`MAX` |
 | `org.cqels.examples.SlidingWindowTrends` | `[SLIDE 4s STEP 2s]` overlapping windows for moving trends |
+| `org.cqels.examples.AdvancedQueryOperators` | `OPTIONAL` / `UNION` / `FILTER NOT EXISTS` / `BIND` over a stream + static graph |
 | `org.cqels.examples.ComplexEventPattern` | declarative CEP — `FILTER(SEQ(?a; ?b))` sequence detection |
+| `org.cqels.examples.CypherGraphQuery` | CypherQL — `MATCH (p:Person) RETURN p` over a stream |
+| `org.cqels.examples.RdfsReasoning` | RDFS inference over a stream (`cqels-reasoning-rete`) |
+| `org.cqels.examples.GeoSpatialFilter` | GeoSPARQL `geof:sfWithin` spatial filtering (`cqels-geo`) |
 | `org.cqels.examples.SosaObservations` | W3C SOSA/SSN observations + multi-pattern stream join |
 | `org.cqels.examples.VehicleSignalsCdsp` | COVESA VSS (CDSP) signals + `GROUP BY` + `HAVING` |
 
-See [`examples/README.md`](examples/README.md) for a description of each.
+See [`examples/README.md`](examples/README.md) for a description of each (grouped by
+category: Basics, Windowing, Advanced query, CEP, Query dialects, Reasoning & validation,
+Geospatial, Standard vocabularies).
 
 ---
 
@@ -170,14 +177,15 @@ public class FirstQuery {
 
 ## 6. Where to go next
 
-- **Examples:** [`examples/`](examples/) — the six runnable scenarios above are the
+- **Examples:** [`examples/`](examples/) — the runnable scenarios above are the
   fastest way to learn the query shapes.
 - **CQELS-QL language reference:** [`CQELS-QL_SPEC.md`](CQELS-QL_SPEC.md) — the full specification of
   the streaming extensions over SPARQL (windows incl. directional/LARS, named windows, stream–static
   joins, CEP, the grammar). Beyond the examples, the language also supports `OPTIONAL` / `UNION` /
-  `MINUS`, `BIND`, `HAVING` / `ORDER BY` / `LIMIT`, joins against a static graph (`FROM STATIC`), named
-  windows (`FROM NAMED WINDOW`), and declarative CEP (`FILTER(SEQ(...))` with quantifiers `?e+` /
-  `?e{m,n}` and negation `NOT ?e`).
+  `FILTER NOT EXISTS`, `BIND`, `HAVING` / `ORDER BY` / `LIMIT`, joins against a static graph
+  (`FROM STATIC`), and declarative CEP (`FILTER(SEQ(...))` with quantifiers `?e+` / `?e{m,n}` and
+  negation `NOT ?e`). (`MINUS` and `FROM NAMED WINDOW` parse but are not yet executed in this alpha —
+  see the spec.)
 - **Cypher & CEP:** `engine.registerCypherQuery(...)` for property-graph patterns and
   `engine.registerCepQuery(...)` for event sequences.
 - **Releases:** https://github.com/cqels/CQELS4J/releases

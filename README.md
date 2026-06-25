@@ -125,6 +125,18 @@ new scenarios can be added under the matching heading.
 |------|---------|
 | [`CypherGraphQuery`](examples/src/main/java/org/cqels/examples/CypherGraphQuery.java) | CypherQL `MATCH … RETURN` over a stream |
 
+**Reasoning & validation** (add-on modules)
+| Demo | Feature |
+|------|---------|
+| [`RdfsReasoning`](examples/src/main/java/org/cqels/examples/RdfsReasoning.java) | RDFS/OWL inference over a stream (`cqels-reasoning-rete`) |
+| [`ShaclValidation`](examples/src/main/java/org/cqels/examples/ShaclValidation.java) | continuous [SHACL](https://www.w3.org/TR/shacl/) validation (`cqels-shacl`) |
+| [`AspReasoning`](examples/src/main/java/org/cqels/examples/AspReasoning.java) | Answer-Set Programming rules (`cqels-asp`) |
+
+**Geospatial** (add-on module)
+| Demo | Feature |
+|------|---------|
+| [`GeoSpatialFilter`](examples/src/main/java/org/cqels/examples/GeoSpatialFilter.java) | OGC [GeoSPARQL](https://www.ogc.org/standard/geosparql/) `geof:sfWithin` (`cqels-geo`) |
+
 **Standard vocabularies & domains**
 | Demo | Feature |
 |------|---------|

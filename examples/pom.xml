@@ -29,6 +29,29 @@
             <version>${cqels.version}</version>
         </dependency>
 
+        <!-- Add-on modules used by the Reasoning & validation / Geospatial demos.
+             Each is optional in your own project — depend only on what you use. -->
+        <dependency>
+            <groupId>org.cqels</groupId>
+            <artifactId>cqels-reasoning-rete</artifactId>
+            <version>${cqels.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.cqels</groupId>
+            <artifactId>cqels-shacl</artifactId>
+            <version>${cqels.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.cqels</groupId>
+            <artifactId>cqels-asp</artifactId>
+            <version>${cqels.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.cqels</groupId>
+            <artifactId>cqels-geo</artifactId>
+            <version>${cqels.version}</version>
+        </dependency>
+
         <!-- A simple SLF4J binding so the engine's internal logs print to the console.
              Swap for logback/log4j in a real app; omit it and you'll just see an
              SLF4J "no providers" notice (the examples still run). -->
