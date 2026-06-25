@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>org.cqels.examples</groupId>
+    <artifactId>cqels-examples</artifactId>
+    <version>0.1.0</version>
+    <packaging>jar</packaging>
+
+    <name>CQELS Engine — Getting-Started Examples</name>
+    <description>Runnable demonstration scenarios for the CQELS 2.0 continuous query engine.</description>
+
+    <properties>
+        <maven.compiler.release>17</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <!-- Bump to the latest published CQELS release as new versions ship. -->
+        <cqels.version>2.0.0-alpha.3</cqels.version>
+        <!-- Default example for `mvn exec:java`; override with -Dexec.mainClass=... -->
+        <exec.mainClass>org.cqels.examples.HelloCqels</exec.mainClass>
+    </properties>
+
+    <dependencies>
+        <!-- The CQELS engine facade (pulls in cqels-core, windows, CEP, SPARQL/CqelsQL). -->
+        <dependency>
+            <groupId>org.cqels</groupId>
+            <artifactId>cqels-engine</artifactId>
+            <version>${cqels.version}</version>
+        </dependency>
+
+        <!-- Add-on modules used by the Reasoning & validation / Geospatial demos.
+             Each is optional in your own project — depend only on what you use. -->
+        <dependency>
+            <groupId>org.cqels</groupId>
+            <artifactId>cqels-reasoning-rete</artifactId>
+            <version>${cqels.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.cqels</groupId>
+            <artifactId>cqels-shacl</artifactId>
+            <version>${cqels.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.cqels</groupId>
+            <artifactId>cqels-asp</artifactId>
+            <version>${cqels.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.cqels</groupId>
+            <artifactId>cqels-geo</artifactId>
+            <version>${cqels.version}</version>
+        </dependency>
+
+        <!-- A simple SLF4J binding so the engine's internal logs print to the console.
+             Swap for logback/log4j in a real app; omit it and you'll just see an
+             SLF4J "no providers" notice (the examples still run). -->
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-simple</artifactId>
+            <version>2.0.16</version>
+            <scope>runtime</scope>
+        </dependency>
+    </dependencies>
+
+    <!-- CQELS artifacts are published to GitHub Packages. Consuming them requires a
+         GitHub token with read:packages in your ~/.m2/settings.xml — see ../GETTING_STARTED.md. -->
+    <repositories>
+        <repository>
+            <id>github-cqels</id>
+            <name>GitHub Packages — cqels/CQELS4J</name>
+            <url>https://maven.pkg.github.com/cqels/CQELS4J</url>
+            <releases><enabled>true</enabled></releases>
+            <snapshots><enabled>true</enabled></snapshots>
+        </repository>
+    </repositories>
+
+    <build>
+        <plugins>
+            <!-- Run an example with:
+                 mvn -q compile exec:java -Dexec.mainClass=org.cqels.examples.HelloCqels -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.5.0</version>
+                <configuration>
+                    <mainClass>${exec.mainClass}</mainClass>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>
