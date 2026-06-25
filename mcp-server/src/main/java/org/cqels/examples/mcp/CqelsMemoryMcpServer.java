@@ -8,6 +8,8 @@ import io.modelcontextprotocol.server.transport.StdioServerTransportProvider;
 import io.modelcontextprotocol.spec.McpSchema;
 import org.cqels.engine.CQELSEngine;
 import org.cqels.engine.DataStream;
+import org.cqels.reasoning.config.RDFSProfile;
+import org.cqels.reasoning.engine.ReactiveReteAdapter;
 import org.eclipse.rdf4j.model.Value;
 import org.eclipse.rdf4j.model.ValueFactory;
 import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
@@ -24,6 +26,7 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -71,11 +74,22 @@ public final class CqelsMemoryMcpServer {
     private static final Map<String, BlockingQueue<String>> BUFFERS = new ConcurrentHashMap<>();
     /** Per-query count of rows dropped because the buffer was full; surfaced by poll_results. */
     private static final Map<String, AtomicLong> DROPPED = new ConcurrentHashMap<>();
+    /** Generates ids for detect_sequence's REGISTER QUERY clause. */
+    private static final AtomicInteger SEQ_COUNTER = new AtomicInteger();
+
+    private static final String RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
+    private static final String RDFS_SUBCLASSOF = "http://www.w3.org/2000/01/rdf-schema#subClassOf";
 
     public static void main(String[] args) throws InterruptedException {
+        // RDFS reasoner wired into the stream pipeline: inferred triples (e.g. an instance's
+        // superclass types) flow to registered stream queries. Schema is supplied at runtime
+        // via define_subclass. Reasoning is stream-side — it does not materialise into the
+        // static store that store_fact/query/recall use.
+        ReactiveReteAdapter reasoner = new ReactiveReteAdapter(RDFSProfile.INSTANCE.createConfig());
         CQELSEngine engine = CQELSEngine.builder()
                 .id("cqels-mcp-memory")
                 .withMemoryStore()
+                .addStreamProcessor(reasoner::apply)
                 .build();
         engine.start();
 
@@ -91,12 +105,15 @@ public final class CqelsMemoryMcpServer {
                         .tools(true)
                         .build())
                 .tools(
-                        storeFactTool(engine),          // static memory
+                        storeFactTool(engine),          // static memory (low-level)
                         queryTool(engine),
-                        pushEventTool(engine),          // streaming
+                        recallTool(engine),             // memory retrieval (intent-shaped)
+                        pushEventTool(engine),          // streaming (low-level)
                         registerStreamQueryTool(engine),
                         pollResultsTool(),
-                        unregisterStreamQueryTool(engine))
+                        unregisterStreamQueryTool(engine),
+                        detectSequenceTool(engine),     // event-pattern matching (intent-shaped)
+                        defineSubclassTool(engine))     // reasoning (intent-shaped)
                 .build();
 
         // An MCP stdio server is long-running: the client (e.g. Claude Desktop) keeps the
@@ -171,39 +188,42 @@ public final class CqelsMemoryMcpServer {
                         parseSchema(schema), null, null, null),
                 (exchange, request) -> {
                     try {
-                        String sparql = str(request.arguments(), "sparql");
-                        StringBuilder out = new StringBuilder();
-                        int rows = 0;
-                        boolean truncated = false;
-                        try (RepositoryConnection conn = engine.getRepository().getConnection();
-                             TupleQueryResult result =
-                                     conn.prepareTupleQuery(QueryLanguage.SPARQL, sparql).evaluate()) {
-                            List<String> vars = result.getBindingNames();
-                            while (result.hasNext()) {
-                                if (rows >= MAX_ROWS) {       // cap the response size
-                                    truncated = true;
-                                    break;
-                                }
-                                BindingSet bs = result.next();
-                                StringBuilder row = new StringBuilder();
-                                for (String v : vars) {
-                                    Value val = bs.getValue(v);
-                                    if (val != null) {
-                                        row.append(v).append('=')
-                                           .append(val.stringValue()).append("  ");
-                                    }
-                                }
-                                out.append(row.toString().trim()).append('\n');
-                                rows++;
-                            }
-                        }
-                        String body = rows == 0 ? "(no results)" : out.toString().trim();
-                        if (truncated) {
-                            body += "\n… (truncated at " + MAX_ROWS + " rows)";
-                        }
-                        return text(body);
+                        return text(runSparql(engine, str(request.arguments(), "sparql")));
                     } catch (Exception e) {
                         return error("query failed: " + e.getMessage());
+                    }
+                });
+    }
+
+    // ---- tool: recall (intent-shaped memory retrieval) -------------------------------------
+
+    private static McpServerFeatures.SyncToolSpecification recallTool(CQELSEngine engine) {
+        String schema = """
+                {
+                  "type": "object",
+                  "required": ["subject"],
+                  "properties": {
+                    "subject":   {"type": "string", "description": "The entity IRI to recall facts about"},
+                    "predicate": {"type": "string", "description": "Optional: only recall this predicate IRI"}
+                  }
+                }
+                """;
+        return new McpServerFeatures.SyncToolSpecification(
+                new McpSchema.Tool("recall", null,
+                        "Recall what is known about an entity from memory — returns its stored facts "
+                                + "without you writing SPARQL.",
+                        parseSchema(schema), null, null, null),
+                (exchange, request) -> {
+                    try {
+                        Map<String, Object> a = request.arguments();
+                        String subject = str(a, "subject");
+                        Object predObj = a.get("predicate");
+                        String sparql = (predObj == null)
+                                ? "SELECT ?predicate ?object WHERE { <" + subject + "> ?predicate ?object }"
+                                : "SELECT ?object WHERE { <" + subject + "> <" + predObj + "> ?object }";
+                        return text(runSparql(engine, sparql));
+                    } catch (Exception e) {
+                        return error("recall failed: " + e.getMessage());
                     }
                 });
     }
@@ -271,13 +291,8 @@ public final class CqelsMemoryMcpServer {
                         }
                         BlockingQueue<String> buffer = new LinkedBlockingQueue<>(MAX_BUFFER);
                         AtomicLong dropped = new AtomicLong();
-                        String queryId = engine.registerCqelsQuery(query, row -> {
-                            String r = String.valueOf(row);
-                            while (!buffer.offer(r)) {        // full → evict oldest until it fits
-                                buffer.poll();
-                                dropped.incrementAndGet();
-                            }
-                        });
+                        String queryId = engine.registerCqelsQuery(query,
+                                row -> boundedOffer(buffer, dropped, String.valueOf(row)));
                         BUFFERS.put(queryId, buffer);
                         DROPPED.put(queryId, dropped);
                         return text("registered continuous query, id='" + queryId
@@ -370,11 +385,146 @@ public final class CqelsMemoryMcpServer {
                 });
     }
 
+    // ---- tool: detect_sequence (intent-shaped CEP) -----------------------------------------
+
+    private static McpServerFeatures.SyncToolSpecification detectSequenceTool(CQELSEngine engine) {
+        String schema = """
+                {
+                  "type": "object",
+                  "required": ["stream", "steps"],
+                  "properties": {
+                    "stream": {"type": "string", "description": "Stream name to watch"},
+                    "steps":  {"type": "array", "items": {"type": "string"},
+                               "description": "Ordered event-type IRIs to match in sequence (>= 2)"},
+                    "withinSeconds": {"type": "integer", "description": "Time window for the whole sequence (default 30)"}
+                  }
+                }
+                """;
+        return new McpServerFeatures.SyncToolSpecification(
+                new McpSchema.Tool("detect_sequence", null,
+                        "Watch a stream for an ordered sequence of event types (a CEP pattern) — builds and "
+                                + "registers the FILTER(SEQ(...)) query for you. Returns a query id; push events "
+                                + "as (eventIri, a, typeIri) via push_event, then read matches with poll_results.",
+                        parseSchema(schema), null, null, null),
+                (exchange, request) -> {
+                    try {
+                        Map<String, Object> a = request.arguments();
+                        String stream = str(a, "stream");
+                        Object stepsObj = a.get("steps");
+                        if (!(stepsObj instanceof List<?> steps) || steps.size() < 2) {
+                            return error("'steps' must be an array of at least 2 event-type IRIs");
+                        }
+                        long within = (a.get("withinSeconds") instanceof Number n) ? n.longValue() : 30L;
+                        ensureStream(engine, stream);
+                        String name = "seq_" + SEQ_COUNTER.incrementAndGet();
+                        StringBuilder where = new StringBuilder();
+                        StringBuilder seq = new StringBuilder();
+                        for (int i = 0; i < steps.size(); i++) {
+                            String var = "?e" + (i + 1);
+                            where.append(var).append(" a <").append(steps.get(i)).append("> . ");
+                            if (i > 0) {
+                                seq.append(" ; ");
+                            }
+                            seq.append(var);
+                        }
+                        String query = "REGISTER QUERY " + name + " AS SELECT ?e1 FROM STREAM " + stream
+                                + " [RANGE " + within + "s] WHERE { " + where + "FILTER(SEQ(" + seq + ")) }";
+                        BlockingQueue<String> buffer = new LinkedBlockingQueue<>(MAX_BUFFER);
+                        AtomicLong dropped = new AtomicLong();
+                        engine.registerCepQuery(query, match -> boundedOffer(buffer, dropped, String.valueOf(match)));
+                        BUFFERS.put(name, buffer);
+                        DROPPED.put(name, dropped);
+                        return text("watching '" + stream + "' for sequence " + steps + " within " + within
+                                + "s — query id='" + name + "'. Push events as (eventIri, a, typeIri) via "
+                                + "push_event, then poll_results('" + name + "').");
+                    } catch (Exception e) {
+                        return error("detect_sequence failed: " + e.getMessage());
+                    }
+                });
+    }
+
+    // ---- tool: define_subclass (intent-shaped RDFS reasoning) -------------------------------
+
+    private static McpServerFeatures.SyncToolSpecification defineSubclassTool(CQELSEngine engine) {
+        String schema = """
+                {
+                  "type": "object",
+                  "required": ["stream", "subclass", "superclass"],
+                  "properties": {
+                    "stream":     {"type": "string", "description": "Stream the rule applies to"},
+                    "subclass":   {"type": "string", "description": "Subclass IRI"},
+                    "superclass": {"type": "string", "description": "Superclass IRI"}
+                  }
+                }
+                """;
+        return new McpServerFeatures.SyncToolSpecification(
+                new McpSchema.Tool("define_subclass", null,
+                        "Teach the reasoner that subclass ⊑ superclass on a stream. Afterwards an event "
+                                + "pushed as (x, a, subclass) is also inferred as (x, a, superclass), so a "
+                                + "registered query/sequence on the superclass will match it. (Stream-side "
+                                + "RDFS reasoning — does not affect the static store / recall.)",
+                        parseSchema(schema), null, null, null),
+                (exchange, request) -> {
+                    try {
+                        Map<String, Object> a = request.arguments();
+                        String stream = str(a, "stream");
+                        String sub = str(a, "subclass");
+                        String sup = str(a, "superclass");
+                        ensureStream(engine, stream).pushTriple(sub, RDFS_SUBCLASSOF, sup);
+                        return text("declared <" + sub + "> rdfs:subClassOf <" + sup + "> on stream '"
+                                + stream + "'. Instances pushed as (x, a, <" + sub + ">) are now also inferred "
+                                + "as <" + sup + "> for queries on that stream.");
+                    } catch (Exception e) {
+                        return error("define_subclass failed: " + e.getMessage());
+                    }
+                });
+    }
+
     // ---- helpers ---------------------------------------------------------------------------
 
     /** Create a stream once per name (createStream twice would throw), reusing it thereafter. */
     private static DataStream ensureStream(CQELSEngine engine, String name) {
         return STREAMS.computeIfAbsent(name, engine::createStream);
+    }
+
+    /** Run a SPARQL SELECT over the static store and format up to MAX_ROWS rows as text. */
+    private static String runSparql(CQELSEngine engine, String sparql) {
+        StringBuilder out = new StringBuilder();
+        int rows = 0;
+        boolean truncated = false;
+        try (RepositoryConnection conn = engine.getRepository().getConnection();
+             TupleQueryResult result = conn.prepareTupleQuery(QueryLanguage.SPARQL, sparql).evaluate()) {
+            List<String> vars = result.getBindingNames();
+            while (result.hasNext()) {
+                if (rows >= MAX_ROWS) {
+                    truncated = true;
+                    break;
+                }
+                BindingSet bs = result.next();
+                StringBuilder row = new StringBuilder();
+                for (String v : vars) {
+                    Value val = bs.getValue(v);
+                    if (val != null) {
+                        row.append(v).append('=').append(val.stringValue()).append("  ");
+                    }
+                }
+                out.append(row.toString().trim()).append('\n');
+                rows++;
+            }
+        }
+        String body = rows == 0 ? "(no results)" : out.toString().trim();
+        if (truncated) {
+            body += "\n… (truncated at " + MAX_ROWS + " rows)";
+        }
+        return body;
+    }
+
+    /** Append a row to a query's bounded buffer, evicting + counting the oldest when full. */
+    private static void boundedOffer(BlockingQueue<String> buffer, AtomicLong dropped, String row) {
+        while (!buffer.offer(row)) {
+            buffer.poll();
+            dropped.incrementAndGet();
+        }
     }
 
     /**

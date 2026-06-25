@@ -29,6 +29,13 @@
             <version>${cqels.version}</version>
         </dependency>
 
+        <!-- RDFS/OWL stream reasoning (the define_subclass tool wires a RETE reasoner). -->
+        <dependency>
+            <groupId>org.cqels</groupId>
+            <artifactId>cqels-reasoning-rete</artifactId>
+            <version>${cqels.version}</version>
+        </dependency>
+
         <!-- Official MCP Java SDK: mcp-core + Jackson-3 JSON mapper + stdio transport. -->
         <dependency>
             <groupId>io.modelcontextprotocol.sdk</groupId>
