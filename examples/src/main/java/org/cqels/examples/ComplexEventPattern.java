@@ -58,11 +58,11 @@ public class ComplexEventPattern {
 
             // Sequence 1: overheat THEN stall -> should match.
             System.out.println("push: machine/1 OverheatAlert");
-            signals.push("http://example.org/machine/1", "http://example.org/hasAlert",
+            signals.pushTriple("http://example.org/machine/1", "http://example.org/hasAlert",
                     "http://example.org/OverheatAlert");
             Thread.sleep(400);
             System.out.println("push: machine/1 StallAlert");
-            signals.push("http://example.org/machine/1", "http://example.org/hasAlert",
+            signals.pushTriple("http://example.org/machine/1", "http://example.org/hasAlert",
                     "http://example.org/StallAlert");
 
             Thread.sleep(1500); // give the matcher time to emit

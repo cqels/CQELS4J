@@ -98,8 +98,10 @@ GitHub Packages requires a token with `read:packages` — see
 
 ## Roadmap
 
-CQELS 2.0 (COSMO) targets a Q1/Q2 2026 public release aligned with the
-[SmartEdge](https://smart-edge.eu/) project's open-source timeline. Headline goals:
+CQELS 2.0 (COSMO) is under active development toward a public release, aligned with the
+[SmartEdge](https://smart-edge.eu/) project's open-source timeline; the current line is
+the `2.0.0-alpha` series ([latest release](https://github.com/cqels/CQELS4J/releases)).
+Headline goals:
 
 1. Run on ARM hardware (Raspberry Pi, Jetson Nano, …) as well as servers.
 2. Support the recommended syntaxes of the [RSP Community Group](https://www.w3.org/community/rsp/)
