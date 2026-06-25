@@ -104,11 +104,26 @@ new scenarios can be added under the matching heading.
 |------|---------|
 | [`WindowedAggregation`](examples/src/main/java/org/cqels/examples/WindowedAggregation.java) | tumbling `[RANGE]` + `GROUP BY` aggregates |
 | [`SlidingWindowTrends`](examples/src/main/java/org/cqels/examples/SlidingWindowTrends.java) | sliding `[SLIDE … STEP …]` windows |
+| [`CountWindow`](examples/src/main/java/org/cqels/examples/CountWindow.java) | count-based `[TRIPLES N]` window |
+| [`DirectionalWindow`](examples/src/main/java/org/cqels/examples/DirectionalWindow.java) | directional/LARS `[FUTURE … EMIT …]` window |
+| [`GroupConcatSummary`](examples/src/main/java/org/cqels/examples/GroupConcatSummary.java) | `GROUP_CONCAT` string aggregation |
+
+**Advanced query patterns**
+| Demo | Feature |
+|------|---------|
+| [`StreamStaticJoin`](examples/src/main/java/org/cqels/examples/StreamStaticJoin.java) | stream–static lookup join (`FROM STATIC`) |
+| [`AdvancedQueryOperators`](examples/src/main/java/org/cqels/examples/AdvancedQueryOperators.java) | `OPTIONAL` / `UNION` / `FILTER NOT EXISTS` / `BIND` |
 
 **Complex event processing**
 | Demo | Feature |
 |------|---------|
 | [`ComplexEventPattern`](examples/src/main/java/org/cqels/examples/ComplexEventPattern.java) | declarative CEP `FILTER(SEQ(…))` sequence detection |
+| [`CepQuantifierNegation`](examples/src/main/java/org/cqels/examples/CepQuantifierNegation.java) | CEP quantifier `?e+` (one-or-more) |
+
+**Query dialects**
+| Demo | Feature |
+|------|---------|
+| [`CypherGraphQuery`](examples/src/main/java/org/cqels/examples/CypherGraphQuery.java) | CypherQL `MATCH … RETURN` over a stream |
 
 **Standard vocabularies & domains**
 | Demo | Feature |
