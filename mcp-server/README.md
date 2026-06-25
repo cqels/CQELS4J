@@ -87,9 +87,11 @@ Any MCP client works the same way — the launch command is just
 
 ## Extending it
 
-`CqelsMemoryMcpServer` registers each tool with
-`server.addTool(new McpServerFeatures.SyncToolSpecification(tool, handler))`. To add your
-own (e.g. a `register_stream_query` tool, or SHACL validation), add another
-`SyncToolSpecification` with a JSON input schema and a handler returning a
-`CallToolResult`. The engine is a full `CQELSEngine`, so you have the streaming, CEP,
-reasoning, and SHACL APIs available too.
+`CqelsMemoryMcpServer` registers its tools on the builder before serving:
+`McpServer.sync(transport)…​.tools(storeFactTool(engine), queryTool(engine)).build()`.
+To add your own (e.g. a `register_stream_query` tool, or SHACL validation), write another
+`SyncToolSpecification` — a `McpSchema.Tool` with a JSON input schema plus a handler
+returning a `CallToolResult` — and pass it to `.tools(…)` alongside the existing ones.
+(You can also register at runtime on the built server via `server.addTool(spec)`, but
+registering before `build()` avoids any startup race.) The engine is a full `CQELSEngine`,
+so the streaming, CEP, reasoning, and SHACL APIs are available too.
