@@ -187,6 +187,10 @@ WHERE {
 
 `FROM STREAM` mode and `FROM NAMED WINDOW` mode **cannot be mixed** in one query.
 
+> **Status:** in the current `2.0.0-alpha` line the named-window *syntax* parses, but named-window
+> *execution* is not yet implemented — registering such a query raises a clear "not yet implemented"
+> error. Use `FROM STREAM` windows (§2–§3) for executable queries today.
+
 ---
 
 ## 6. Stream–static composition
@@ -311,12 +315,16 @@ are called out.
 - **`BIND(expr AS ?v)`** — computed variables (evaluated after `FILTER`).
 - **`OPTIONAL { … }`** — left outer join (unmatched optional variables are unbound).
 - **`{ … } UNION { … }`** — alternative patterns merged before `FILTER`.
-- **`MINUS { … }` / `FILTER NOT EXISTS { … }`** — set difference / anti-join.
-- **`GROUP BY ?a, ?b`** · **`HAVING(expr)`** — post-aggregation filter; the expression references the
-  **SELECT aliases** (e.g. `HAVING(?cnt > 1)`, not `HAVING(COUNT(*) > 1)`).
-- **`ORDER BY ?v [ASC|DESC]`** (default `ASC`) · **`LIMIT n`**.
+- **`FILTER NOT EXISTS { … }`** — anti-join (exclude rows with a match). (`MINUS` is parsed but not yet
+  executed in the current alpha line — use `FILTER NOT EXISTS`.)
+- **`GROUP BY ?a, ?b`** · **`HAVING(expr)`** — aggregation (required for aggregates to apply) +
+  post-aggregation filter; `HAVING` references the **SELECT aliases** (e.g. `HAVING(?cnt > 1)`, not
+  `HAVING(COUNT(*) > 1)`).
+- **`ORDER BY ?v [ASC|DESC]`** (default `ASC`) · **`LIMIT n`** — note that over a *streaming windowed
+  aggregate* the engine currently emits per-group rows as they update rather than a single ranked,
+  truncated result set.
 
-**Evaluation order:** stream patterns → static lookup join → `UNION` → `OPTIONAL` → `MINUS` /
+**Evaluation order:** stream patterns → static lookup join → `UNION` → `OPTIONAL` →
 `FILTER NOT EXISTS` → `FILTER` → `BIND` → `GROUP BY` + aggregates → `HAVING` → `ORDER BY` → `LIMIT`.
 
 ---

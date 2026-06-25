@@ -10,8 +10,8 @@ import org.cqels.engine.DataStream;
  * applies, but you match property-graph patterns instead of triple patterns. RDF data maps
  * naturally: {@code rdf:type} becomes a node label, and predicates become node properties.
  *
- * <p>Here a {@code MATCH (p:Person) WHERE p.age > 18 RETURN p, p.age} continuously reports
- * the adults appearing on the stream.
+ * <p>Here a {@code MATCH (p:Person) RETURN p} continuously reports the people appearing on
+ * the stream — each {@code rdf:type ex:Person} triple is one labelled node match.
  *
  * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.examples.CypherGraphQuery}
  */
@@ -50,12 +50,5 @@ public class CypherGraphQuery {
             Thread.sleep(800);
         }
         System.out.println("\nDone.");
-    }
-
-    private static void pushPerson(DataStream s, String name, long age) throws InterruptedException {
-        System.out.printf("push: %s (age %d)%n", name, age);
-        s.pushTriple(EX + name, RDF_TYPE, EX + "Person");
-        s.push(EX + name, EX + "age", age);
-        Thread.sleep(100);
     }
 }
