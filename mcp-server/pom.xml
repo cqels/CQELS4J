@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>org.cqels.examples</groupId>
+    <artifactId>cqels-mcp-server-example</artifactId>
+    <version>0.1.0</version>
+    <packaging>jar</packaging>
+
+    <name>CQELS Engine — MCP Server Example</name>
+    <description>A minimal Model Context Protocol (MCP) server that exposes a CQELS engine as
+        AI-accessible memory/query tools over stdio.</description>
+
+    <properties>
+        <maven.compiler.release>17</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <cqels.version>2.0.0-alpha.3</cqels.version>
+        <mcp.sdk.version>1.0.0</mcp.sdk.version>
+        <mainClass>org.cqels.examples.mcp.CqelsMemoryMcpServer</mainClass>
+    </properties>
+
+    <dependencies>
+        <!-- CQELS engine facade (provides the in-memory RDF repository + query APIs). -->
+        <dependency>
+            <groupId>org.cqels</groupId>
+            <artifactId>cqels-engine</artifactId>
+            <version>${cqels.version}</version>
+        </dependency>
+
+        <!-- Official MCP Java SDK: mcp-core + Jackson-3 JSON mapper + stdio transport. -->
+        <dependency>
+            <groupId>io.modelcontextprotocol.sdk</groupId>
+            <artifactId>mcp</artifactId>
+            <version>${mcp.sdk.version}</version>
+        </dependency>
+
+        <!-- MCP SDK 1.0.0 needs @JsonFormat(shape=POJO), added in jackson-annotations 2.20;
+             RDF4J transitively brings an older one, so pin it here. -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-annotations</artifactId>
+            <version>2.20</version>
+        </dependency>
+
+        <!-- Logs MUST go to stderr — stdout is reserved for the JSON-RPC protocol.
+             slf4j-simple writes to System.err by default, which is exactly what we want. -->
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-simple</artifactId>
+            <version>2.0.16</version>
+            <scope>runtime</scope>
+        </dependency>
+    </dependencies>
+
+    <repositories>
+        <repository>
+            <id>github-cqels</id>
+            <name>GitHub Packages — cqels/CQELS4J</name>
+            <url>https://maven.pkg.github.com/cqels/CQELS4J</url>
+            <releases><enabled>true</enabled></releases>
+            <snapshots><enabled>true</enabled></snapshots>
+        </repository>
+    </repositories>
+
+    <build>
+        <finalName>cqels-mcp-server</finalName>
+        <plugins>
+            <!-- Build a single runnable jar so an MCP client can launch `java -jar …`. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>3.5.3</version>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals><goal>shade</goal></goals>
+                        <configuration>
+                            <transformers>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                    <mainClass>${mainClass}</mainClass>
+                                </transformer>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                            </transformers>
+                            <filters>
+                                <filter>
+                                    <artifact>*:*</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/*.SF</exclude>
+                                        <exclude>META-INF/*.DSA</exclude>
+                                        <exclude>META-INF/*.RSA</exclude>
+                                    </excludes>
+                                </filter>
+                            </filters>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

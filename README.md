@@ -145,6 +145,24 @@ new scenarios can be added under the matching heading.
 
 ---
 
+## Use CQELS as an MCP server
+
+[`mcp-server/`](mcp-server/) is a self-contained [Model Context Protocol](https://modelcontextprotocol.io/)
+server that exposes a CQELS engine as **AI-accessible tools** (`store_fact`, `query`) over
+stdio, so an MCP client such as Claude Desktop can use CQELS as queryable memory. It depends
+only on the published `cqels-engine` and the official MCP Java SDK.
+
+```bash
+cd mcp-server
+mvn -q package          # -> target/cqels-mcp-server.jar
+```
+
+Then point your MCP client at `java -jar …/cqels-mcp-server.jar` — see
+[`mcp-server/README.md`](mcp-server/README.md) for the Claude Desktop configuration and a
+smoke test.
+
+---
+
 ## Query language and standards
 
 **CQELS-QL** is a continuous-query language: [SPARQL 1.1](https://www.w3.org/TR/sparql11-query/)
