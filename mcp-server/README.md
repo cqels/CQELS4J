@@ -24,15 +24,23 @@ for wrapping CQELS in your own MCP server.
 |------|-----------|--------------|
 | `store_fact` | `subject`, `predicate`, `object` | Add one RDF triple to memory. `object` is an IRI if it starts with `http(s)://`, otherwise a literal. |
 | `query` | `sparql` | Run a SPARQL `SELECT` over everything stored so far; returns the rows as text (first 100, with a truncation marker beyond that). |
+| `recall` | `subject`, *(opt)* `predicate` | **Intent-shaped memory retrieval** — returns what's known about an entity (builds the SPARQL for you, so the model needn't write a query). |
 
 **Streaming (continuous queries — mirrors the [`examples/`](../examples/)):**
 
 | Tool | Arguments | What it does |
 |------|-----------|--------------|
-| `push_event` | `stream`, `subject`, `predicate`, `object` | Push one triple as an event into a named stream (created on first use). Numeric objects become numeric literals so `FILTER`/aggregates work; `http(s)://` becomes an IRI. |
+| `push_event` | `stream`, `subject`, `predicate`, `object` | Push one triple as an event into a named stream (created on first use). Numeric objects become numeric literals so `FILTER`/aggregates work; `http(s)://` becomes an IRI; predicate `"a"` is shorthand for `rdf:type`. |
 | `register_stream_query` | `query` | Register a continuous CQELS-QL query (`REGISTER QUERY … FROM STREAM … [window] …`). Returns a query **id**; emitted rows are buffered server-side (bounded — see below). |
 | `poll_results` | `queryId` | Drain and return up to 100 rows the query has emitted since the last poll; flags if more remain or if any were dropped. |
 | `unregister_stream_query` | `queryId` | Stop a query and free its buffer when you're done with it. |
+
+**Intent-shaped streaming (higher-level wrappers):**
+
+| Tool | Arguments | What it does |
+|------|-----------|--------------|
+| `detect_sequence` | `stream`, `steps[]`, *(opt)* `withinSeconds` | **Event-pattern matching** — builds + registers a CEP `FILTER(SEQ(...))` from an ordered list of event-type IRIs, returns a query id. Push events as `(eventIri, "a", typeIri)`, then `poll_results`. |
+| `define_subclass` | `stream`, `subclass`, `superclass` | **RDFS reasoning** — declares `subclass ⊑ superclass`; afterwards an event `(x, a, subclass)` is also inferred as `(x, a, superclass)` for stream queries. The reasoner is engine-wide (applies to all streams) and stream-side only (does not affect `recall`/the static store). |
 
 > Continuous queries push results asynchronously, but MCP tools are request/response — so a
 > registered query's rows are **buffered** and returned on demand. The natural call order is

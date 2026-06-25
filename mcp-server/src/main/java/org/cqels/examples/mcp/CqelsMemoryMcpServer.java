@@ -255,6 +255,9 @@ public final class CqelsMemoryMcpServer {
                         String s = str(a, "subject");
                         String p = str(a, "predicate");
                         String o = str(a, "object");
+                        if (p.equals("a") || p.equals("rdf:type")) {  // convenience: the rdf:type shorthand
+                            p = RDF_TYPE;
+                        }
                         pushTyped(ensureStream(engine, streamName), s, p, o);
                         return text("pushed to stream '" + streamName + "': <" + s + "> <" + p + "> " + o);
                     } catch (Exception e) {
@@ -293,7 +296,10 @@ public final class CqelsMemoryMcpServer {
                         AtomicLong dropped = new AtomicLong();
                         String queryId = engine.registerCqelsQuery(query,
                                 row -> boundedOffer(buffer, dropped, String.valueOf(row)));
-                        BUFFERS.put(queryId, buffer);
+                        if (BUFFERS.putIfAbsent(queryId, buffer) != null) {  // don't clobber an existing buffer
+                            return error("a query with id '" + queryId + "' is already registered; "
+                                    + "use a different REGISTER QUERY name, or unregister it first.");
+                        }
                         DROPPED.put(queryId, dropped);
                         return text("registered continuous query, id='" + queryId
                                 + "'. Push events to its stream, then call poll_results with this id"
@@ -416,7 +422,14 @@ public final class CqelsMemoryMcpServer {
                         }
                         long within = (a.get("withinSeconds") instanceof Number n) ? n.longValue() : 30L;
                         ensureStream(engine, stream);
-                        String name = "seq_" + SEQ_COUNTER.incrementAndGet();
+                        // Reserve a buffer under a free generated id (won't clobber an existing query).
+                        BlockingQueue<String> buffer = new LinkedBlockingQueue<>(MAX_BUFFER);
+                        AtomicLong dropped = new AtomicLong();
+                        String name;
+                        do {
+                            name = "seq_" + SEQ_COUNTER.incrementAndGet();
+                        } while (BUFFERS.putIfAbsent(name, buffer) != null);
+                        DROPPED.put(name, dropped);
                         StringBuilder where = new StringBuilder();
                         StringBuilder seq = new StringBuilder();
                         for (int i = 0; i < steps.size(); i++) {
@@ -429,14 +442,14 @@ public final class CqelsMemoryMcpServer {
                         }
                         String query = "REGISTER QUERY " + name + " AS SELECT ?e1 FROM STREAM " + stream
                                 + " [RANGE " + within + "s] WHERE { " + where + "FILTER(SEQ(" + seq + ")) }";
-                        BlockingQueue<String> buffer = new LinkedBlockingQueue<>(MAX_BUFFER);
-                        AtomicLong dropped = new AtomicLong();
-                        engine.registerCepQuery(query, match -> boundedOffer(buffer, dropped, String.valueOf(match)));
-                        BUFFERS.put(name, buffer);
-                        DROPPED.put(name, dropped);
+                        // FILTER(SEQ(...)) runs through registerCqelsQuery (returns the id, so
+                        // unregister_stream_query can stop it — registerCepQuery returns void / can't be).
+                        // The id == our reserved REGISTER QUERY name, so the buffer is already keyed correctly.
+                        engine.registerCqelsQuery(query, row -> boundedOffer(buffer, dropped, String.valueOf(row)));
                         return text("watching '" + stream + "' for sequence " + steps + " within " + within
-                                + "s — query id='" + name + "'. Push events as (eventIri, a, typeIri) via "
-                                + "push_event, then poll_results('" + name + "').");
+                                + "s — query id='" + name + "'. Push events with predicate \"a\" (rdf:type) and "
+                                + "object the type IRI via push_event, then poll_results('" + name + "'); "
+                                + "unregister_stream_query when done.");
                     } catch (Exception e) {
                         return error("detect_sequence failed: " + e.getMessage());
                     }
@@ -459,10 +472,12 @@ public final class CqelsMemoryMcpServer {
                 """;
         return new McpServerFeatures.SyncToolSpecification(
                 new McpSchema.Tool("define_subclass", null,
-                        "Teach the reasoner that subclass ⊑ superclass on a stream. Afterwards an event "
-                                + "pushed as (x, a, subclass) is also inferred as (x, a, superclass), so a "
-                                + "registered query/sequence on the superclass will match it. (Stream-side "
-                                + "RDFS reasoning — does not affect the static store / recall.)",
+                        "Teach the reasoner that subclass ⊑ superclass. Afterwards an event pushed as "
+                                + "(x, a, subclass) is also inferred as (x, a, superclass), so a registered "
+                                + "query/sequence on the superclass matches it. Note: the RDFS reasoner is "
+                                + "engine-wide, so the rule applies across ALL streams (the 'stream' arg is "
+                                + "just where the axiom is injected); it is stream-side only and does not "
+                                + "affect the static store / recall.",
                         parseSchema(schema), null, null, null),
                 (exchange, request) -> {
                     try {
@@ -471,9 +486,10 @@ public final class CqelsMemoryMcpServer {
                         String sub = str(a, "subclass");
                         String sup = str(a, "superclass");
                         ensureStream(engine, stream).pushTriple(sub, RDFS_SUBCLASSOF, sup);
-                        return text("declared <" + sub + "> rdfs:subClassOf <" + sup + "> on stream '"
-                                + stream + "'. Instances pushed as (x, a, <" + sub + ">) are now also inferred "
-                                + "as <" + sup + "> for queries on that stream.");
+                        return text("declared <" + sub + "> rdfs:subClassOf <" + sup + "> (injected via stream '"
+                                + stream + "'; the reasoner is engine-wide, so this applies to all streams). "
+                                + "Instances pushed as (x, a, <" + sub + ">) are now also inferred as <" + sup
+                                + "> for stream queries.");
                     } catch (Exception e) {
                         return error("define_subclass failed: " + e.getMessage());
                     }
