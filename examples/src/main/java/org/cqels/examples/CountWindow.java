@@ -11,7 +11,7 @@ import org.cqels.engine.DataStream;
  * observations per vehicle over the most recent triples.
  *
  * <p>(The window counts stream <em>triples</em>; each observation contributes five, so size it
- * accordingly — {@code [TRIPLES 30]} holds roughly the last 6 observations and the earliest age out.)
+ * accordingly — {@code [TRIPLES 30]} holds the last 6 observations (30 ÷ 5) and the earliest age out.)
  *
  * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.examples.CountWindow}
  */

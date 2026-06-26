@@ -14,7 +14,10 @@ import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
  * keeps only the vehicles currently inside the depot zone (e.g. plugged in and chargeable).
  *
  * <p>Note: CQELS-QL has no inline {@code "…"^^geo:wktLiteral} literal syntax — geometries are supplied
- * as typed RDF literals in the data ({@code Fleet.GEO_WKT}) and compared as variables.
+ * as typed RDF literals in the data ({@code Fleet.GEO_WKT}) and compared as variables. To keep the
+ * demo single-stream and self-contained the geofence polygon is shipped inline with each reading; in
+ * practice you would seed it once into the static graph (cf. {@link Fleet#seedStatic}, which stores
+ * the same {@code zone:depot} outline) and join it as in {@code StreamStaticJoin}.
  *
  * <p>Add-on dependency: {@code org.cqels:cqels-geo}.
  *
@@ -22,7 +25,7 @@ import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
  */
 public class GeoSpatialFilter {
 
-    private static final String DEPOT_ZONE = "POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))";
+    private static final String DEPOT_GEOFENCE = "POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))";
 
     public static void main(String[] args) throws InterruptedException {
         ValueFactory vf = SimpleValueFactory.getInstance();
@@ -38,9 +41,9 @@ public class GeoSpatialFilter {
                     PREFIX geof: <http://www.opengis.net/def/function/geosparql/>
                     REGISTER QUERY InDepot AS
                     SELECT ?vehicle ?loc
-                    FROM STREAM Readings [TRIPLES 2]
+                    FROM STREAM Readings [TRIPLES 4]
                     WHERE {
-                      STREAM Readings { ?vehicle ex:location ?loc . ?vehicle ex:zone ?area . }
+                      STREAM Readings { ?vehicle ex:location ?loc . ?vehicle ex:geofence ?area . }
                       FILTER(geof:sfWithin(?loc, ?area))
                     }
                     """;
@@ -48,9 +51,9 @@ public class GeoSpatialFilter {
                     System.out.println("  in-depot -> " + row));
 
             engine.start();
-            System.out.println("Engine started. Depot geofence = " + DEPOT_ZONE + ".\n");
+            System.out.println("Engine started. Depot geofence = " + DEPOT_GEOFENCE + ".\n");
 
-            // EV-7Q2 (POINT 2 2) is inside the depot zone; EV-9TZ (POINT 20 20) is out on the road.
+            // EV-7Q2 (POINT(2 2)) is inside the depot zone; EV-9TZ (POINT(20 20)) is out on the road.
             pushLocation(readings, vf, Fleet.EV1, "POINT(2 2)");
             Thread.sleep(300);
             pushLocation(readings, vf, Fleet.EV3, "POINT(20 20)");
@@ -64,7 +67,7 @@ public class GeoSpatialFilter {
         System.out.println("push: " + vehicle.substring(Fleet.EX.length()) + " at " + wktPoint);
         s.push(vf.createStatement(vf.createIRI(vehicle), vf.createIRI(Fleet.EX + "location"),
                 vf.createLiteral(wktPoint, vf.createIRI(Fleet.GEO_WKT))));
-        s.push(vf.createStatement(vf.createIRI(vehicle), vf.createIRI(Fleet.EX + "zone"),
-                vf.createLiteral(DEPOT_ZONE, vf.createIRI(Fleet.GEO_WKT))));
+        s.push(vf.createStatement(vf.createIRI(vehicle), vf.createIRI(Fleet.EX + "geofence"),
+                vf.createLiteral(DEPOT_GEOFENCE, vf.createIRI(Fleet.GEO_WKT))));
     }
 }

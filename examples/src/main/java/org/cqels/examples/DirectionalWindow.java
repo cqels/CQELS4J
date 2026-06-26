@@ -8,11 +8,13 @@ import org.cqels.engine.DataStream;
  *
  * <p>Beyond backward-looking windows, CQELS-QL supports <em>directional</em> windows. A
  * {@code [FUTURE 2s …]} window anchored at an observation covers the next 2 seconds, and
- * {@code EMIT EARLY_AND_FINAL} reports both running and final results — e.g. how many charge-power
- * readings each vehicle produces in the forward window during a V2G charging burst.
+ * {@code EMIT EARLY_AND_FINAL} reports both running and final results — here, how many readings each
+ * vehicle produces in the forward window during a V2G charging burst (the demo streams charge-power
+ * readings, so the count is of charge readings).
  *
  * <p>Uses explicit event timestamps ({@link Fleet#pushObservationAt}) so the directional window is
- * deterministic.
+ * deterministic. Directional ({@code FUTURE}/centered) windows execute as single-pattern windowed
+ * aggregates, so this counts the observation per vehicle rather than joining the signal type.
  *
  * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.examples.DirectionalWindow}
  */

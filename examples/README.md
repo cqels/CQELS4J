@@ -18,8 +18,8 @@ semantics, and vehicle ids are pseudonymous asset ids (EV-7Q2 / EV-3K8 / EV-9TZ)
 Shared vocabulary, the canonical observation push, and the seeded static context (depot,
 charging stations, geofenced zones, drivers, GTFS-style service assignments) live in
 [`Fleet.java`](src/main/java/org/cqels/examples/Fleet.java) so the demos form a single
-connected world rather than ad-hoc per-demo data. The domain mirrors the vehicle-to-grid stack
-in [SV2G-Twin](https://github.com/HiveIntel/sv2g-twins).
+connected world rather than ad-hoc per-demo data. The domain mirrors a real fleet vehicle-to-grid
+digital-twin deployment built on this engine.
 
 ## Prerequisites
 
@@ -95,7 +95,7 @@ in the table + the `Build & run` block above).
 ### Reasoning & validation (add-on modules)
 | Class | CQELS feature | Scenario |
 |-------|---------------|----------|
-| [`RdfsReasoning`](src/main/java/org/cqels/examples/RdfsReasoning.java) | RDFS/OWL inference — `cqels-reasoning-rete` | An `ex:ElectricBus rdfs:subClassOf vsso:Vehicle` schema lets a query for `vsso:Vehicle` match the EV bus via inference. |
+| [`RdfsReasoning`](src/main/java/org/cqels/examples/RdfsReasoning.java) | RDFS/OWL inference — `cqels-reasoning-rete` | An `ex:DepotVehicle rdfs:subClassOf vsso:Vehicle` schema lets a query for `vsso:Vehicle` match the EV via inference. |
 | [`ShaclValidation`](src/main/java/org/cqels/examples/ShaclValidation.java) | continuous [SHACL](https://www.w3.org/TR/shacl/) — `cqels-shacl` | Require every `sosa:Observation` to carry a result; `conforms` flips from `false` to `true` as the result arrives for the same observation. |
 | [`AspReasoning`](src/main/java/org/cqels/examples/AspReasoning.java) | Answer-Set Programming — `cqels-asp` | A logic rule derives `convoy(V1,V2)` for two distinct vehicles reporting telemetry together (join + inequality). |
 

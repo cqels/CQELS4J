@@ -80,7 +80,7 @@ A few representative scenarios (the full categorized list of 17 is in
 | `org.cqels.examples.AdvancedQueryOperators` | `OPTIONAL` / `UNION` / `FILTER NOT EXISTS` / `BIND` enriching a speed reading against the static fleet graph |
 | `org.cqels.examples.ComplexEventPattern` | declarative CEP — `FILTER(SEQ(?drop; ?spike))` road-rage detection |
 | `org.cqels.examples.CypherGraphQuery` | CypherQL — `MATCH (o:Observation) RETURN o` over the telemetry stream |
-| `org.cqels.examples.RdfsReasoning` | RDFS inference — `ex:ElectricBus rdfs:subClassOf vsso:Vehicle` (`cqels-reasoning-rete`) |
+| `org.cqels.examples.RdfsReasoning` | RDFS inference — `ex:DepotVehicle rdfs:subClassOf vsso:Vehicle` (`cqels-reasoning-rete`) |
 | `org.cqels.examples.GeoSpatialFilter` | GeoSPARQL `geof:sfWithin` — vehicles inside the depot geofence (`cqels-geo`) |
 | `org.cqels.examples.SosaObservations` | W3C SOSA/SSN observations + multi-pattern stream join — per vehicle × VSS signal |
 | `org.cqels.examples.VehicleSignalsCdsp` | COVESA VSS (CDSP) — per-vehicle speeding via `GROUP BY` + `HAVING` |

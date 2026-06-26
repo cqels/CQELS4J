@@ -14,8 +14,7 @@ import java.util.Random;
  *
  * <p>{@code GROUP_CONCAT} collapses a group's values into one string and keeps repeats (CQELS-QL's
  * {@code GROUP_CONCAT} takes only the optional {@code SEPARATOR} — there is no per-aggregate
- * {@code DISTINCT}). {@code ORDER BY}/{@code LIMIT} are part of CQELS-QL but over a streaming
- * windowed aggregate the engine emits per-group rows (see the spec).
+ * {@code DISTINCT}).
  *
  * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.examples.GroupConcatSummary}
  */

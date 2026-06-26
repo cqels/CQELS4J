@@ -8,7 +8,7 @@ import org.cqels.stream.StreamElement;
 /**
  * Example — CEP with a quantifier (one-or-more).
  *
- * <p>A CEP step can carry a quantifier. Here {@code ?weave+} matches <em>one or more</em>
+ * <p>A CEP step can carry a quantifier. Here the middle step {@code ?e2+} matches <em>one or more</em>
  * lane-weave events between an initial speed drop and an eventual speed spike — an impaired-driving
  * pattern of variable length: drop → weave… → spike.
  *
