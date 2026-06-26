@@ -48,19 +48,21 @@ mvn -q compile exec:java -Dexec.mainClass=org.cqels.examples.HelloCqels
 ```
 
 ```java
+// Smart EV fleet: alert when a vehicle's battery state-of-charge drops below 20 %.
 try (CQELSEngine engine = CQELSEngine.builder().withMemoryStore().build()) {
-    DataStream sensors = engine.createStream("Sensors");
+    DataStream telemetry = engine.createStream("Telemetry");
 
     engine.registerCqelsQuery("""
-        PREFIX ex: <http://example.org/>
-        REGISTER QUERY HighTemperature AS
-        SELECT ?sensor ?temp
-        FROM STREAM Sensors [NOW]
-        WHERE { STREAM Sensors { ?sensor ex:temperature ?temp . } FILTER(?temp > 30) }
-        """, row -> System.out.println("ALERT: " + row));
+        PREFIX sosa: <http://www.w3.org/ns/sosa/>
+        REGISTER QUERY LowBattery AS
+        SELECT ?obs ?soc
+        FROM STREAM Telemetry [NOW]
+        WHERE { STREAM Telemetry { ?obs sosa:hasSimpleResult ?soc . } FILTER(?soc < 20) }
+        """, row -> System.out.println("LOW BATTERY: " + row));
 
     engine.start();
-    sensors.push("http://example.org/sensor/1", "http://example.org/temperature", 35.6);
+    telemetry.push("https://example.org/fleet/obs/1",
+                   "http://www.w3.org/ns/sosa/hasSimpleResult", 18.0);
     Thread.sleep(500);
 }
 ```
@@ -93,6 +95,16 @@ GitHub Packages requires a token with `read:packages` — see
 
 Runnable, verified demos in [`examples/`](examples/), grouped by use-case category —
 new scenarios can be added under the matching heading.
+
+All demos share **one coherent world**: a *smart electric-vehicle fleet / V2G depot*, layered
+W3C [SOSA/SSN](https://www.w3.org/TR/vocab-ssn/) → [VSSo](https://www.w3.org/TR/vsso/) →
+[COVESA VSS](https://covesa.global/project/vehicle-signal-specification/). Vehicles stream
+telemetry — speed, battery state-of-charge, location, charge power — as `sosa:Observation`s whose
+`observedProperty` is a VSS signal, joined against a static fleet graph (depot, charging stations,
+geofenced zones, drivers, GTFS-style service duties). The shared vocabulary, fixed entities, and
+push helpers live in [`Fleet.java`](examples/src/main/java/org/cqels/examples/Fleet.java), so the
+examples connect into a single story rather than ad-hoc per-demo data. (The domain mirrors the
+[SV2G-Twin](https://github.com/HiveIntel/sv2g-twins) vehicle-to-grid stack built on this engine.)
 
 **Basics**
 | Demo | Feature |
@@ -140,8 +152,8 @@ new scenarios can be added under the matching heading.
 **Standard vocabularies & domains**
 | Demo | Feature |
 |------|---------|
-| [`SosaObservations`](examples/src/main/java/org/cqels/examples/SosaObservations.java) | W3C [SOSA/SSN](https://www.w3.org/TR/vocab-ssn/) observations + multi-pattern stream join |
-| [`VehicleSignalsCdsp`](examples/src/main/java/org/cqels/examples/VehicleSignalsCdsp.java) | COVESA [VSS](https://covesa.global/) (CDSP) vehicle signals + `GROUP BY` / `HAVING` |
+| [`SosaObservations`](examples/src/main/java/org/cqels/examples/SosaObservations.java) | W3C [SOSA/SSN](https://www.w3.org/TR/vocab-ssn/) + [VSSo](https://www.w3.org/TR/vsso/) + VSS: per (vehicle × observed signal) averages |
+| [`VehicleSignalsCdsp`](examples/src/main/java/org/cqels/examples/VehicleSignalsCdsp.java) | flagship COVESA [VSS](https://covesa.global/) speeding detection + `GROUP BY` / `HAVING` |
 
 ---
 

@@ -74,16 +74,16 @@ A few representative scenarios (the full categorized list of 17 is in
 
 | Class | What it shows |
 |-------|---------------|
-| `org.cqels.examples.HelloCqels` | `[NOW]` window + `FILTER` — the minimal continuous query |
-| `org.cqels.examples.WindowedAggregation` | `[RANGE 3s]` tumbling window + `GROUP BY` + `AVG`/`COUNT`/`MAX` |
-| `org.cqels.examples.SlidingWindowTrends` | `[SLIDE 4s STEP 2s]` overlapping windows for moving trends |
-| `org.cqels.examples.AdvancedQueryOperators` | `OPTIONAL` / `UNION` / `FILTER NOT EXISTS` / `BIND` over a stream + static graph |
-| `org.cqels.examples.ComplexEventPattern` | declarative CEP — `FILTER(SEQ(?a; ?b))` sequence detection |
-| `org.cqels.examples.CypherGraphQuery` | CypherQL — `MATCH (p:Person) RETURN p` over a stream |
-| `org.cqels.examples.RdfsReasoning` | RDFS inference over a stream (`cqels-reasoning-rete`) |
-| `org.cqels.examples.GeoSpatialFilter` | GeoSPARQL `geof:sfWithin` spatial filtering (`cqels-geo`) |
-| `org.cqels.examples.SosaObservations` | W3C SOSA/SSN observations + multi-pattern stream join |
-| `org.cqels.examples.VehicleSignalsCdsp` | COVESA VSS (CDSP) signals + `GROUP BY` + `HAVING` |
+| `org.cqels.examples.HelloCqels` | `[NOW]` window + `FILTER` — low-battery alert (SoC < 20 %), the minimal continuous query |
+| `org.cqels.examples.WindowedAggregation` | `[RANGE 3s]` tumbling window + `GROUP BY` — per-vehicle avg/peak speed |
+| `org.cqels.examples.SlidingWindowTrends` | `[SLIDE 4s STEP 2s]` overlapping windows — per-vehicle moving state-of-charge trend |
+| `org.cqels.examples.AdvancedQueryOperators` | `OPTIONAL` / `UNION` / `FILTER NOT EXISTS` / `BIND` enriching a speed reading against the static fleet graph |
+| `org.cqels.examples.ComplexEventPattern` | declarative CEP — `FILTER(SEQ(?drop; ?spike))` road-rage detection |
+| `org.cqels.examples.CypherGraphQuery` | CypherQL — `MATCH (o:Observation) RETURN o` over the telemetry stream |
+| `org.cqels.examples.RdfsReasoning` | RDFS inference — `ex:ElectricBus rdfs:subClassOf vsso:Vehicle` (`cqels-reasoning-rete`) |
+| `org.cqels.examples.GeoSpatialFilter` | GeoSPARQL `geof:sfWithin` — vehicles inside the depot geofence (`cqels-geo`) |
+| `org.cqels.examples.SosaObservations` | W3C SOSA/SSN observations + multi-pattern stream join — per vehicle × VSS signal |
+| `org.cqels.examples.VehicleSignalsCdsp` | COVESA VSS (CDSP) — per-vehicle speeding via `GROUP BY` + `HAVING` |
 
 See [`examples/README.md`](examples/README.md) for a description of each (grouped by
 category: Basics, Windowing, Advanced query, CEP, Query dialects, Reasoning & validation,
@@ -132,18 +132,18 @@ public class FirstQuery {
                 .withMemoryStore()        // in-memory RDF store
                 .build()) {
 
-            // 1. A named stream to push data into.
-            DataStream sensors = engine.createStream("Sensors");
+            // 1. A named stream to push fleet telemetry into.
+            DataStream telemetry = engine.createStream("Telemetry");
 
-            // 2. A continuous CQELS-QL query over that stream.
+            // 2. A continuous CQELS-QL query over that stream — a low-battery alert.
             String query = """
-                    PREFIX ex: <http://example.org/>
-                    REGISTER QUERY HighTemperature AS
-                    SELECT ?sensor ?temp
-                    FROM STREAM Sensors [NOW]
+                    PREFIX sosa: <http://www.w3.org/ns/sosa/>
+                    REGISTER QUERY LowBattery AS
+                    SELECT ?obs ?soc
+                    FROM STREAM Telemetry [NOW]
                     WHERE {
-                      STREAM Sensors { ?sensor ex:temperature ?temp . }
-                      FILTER(?temp > 30)
+                      STREAM Telemetry { ?obs sosa:hasSimpleResult ?soc . }
+                      FILTER(?soc < 20)
                     }
                     """;
 
@@ -154,8 +154,8 @@ public class FirstQuery {
             engine.start();
 
             // 5. Feed data; matching rows are pushed to the listener.
-            sensors.push("http://example.org/sensor/1", "http://example.org/temperature", 35.6);
-            sensors.push("http://example.org/sensor/2", "http://example.org/temperature", 22.0); // ignored
+            telemetry.push("https://example.org/fleet/obs/1", "http://www.w3.org/ns/sosa/hasSimpleResult", 18.0); // SoC 18 % -> alert
+            telemetry.push("https://example.org/fleet/obs/2", "http://www.w3.org/ns/sosa/hasSimpleResult", 64.0); // ignored
 
             Thread.sleep(500); // let results flush before close()
         }
