@@ -2,32 +2,20 @@ package org.cqels.examples;
 
 import org.cqels.engine.CQELSEngine;
 import org.cqels.engine.DataStream;
-import org.eclipse.rdf4j.model.ValueFactory;
-import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
-import org.eclipse.rdf4j.repository.RepositoryConnection;
 
 /**
- * Example 9 — Linked Streams: joining a stream against a static background graph.
+ * Example — Linked Streams: joining the observation stream against a static background graph.
  *
- * <p>This is the idea CQELS is named for. Triple patterns <em>inside</em> a
- * {@code STREAM { … }} block match the live stream; patterns <em>outside</em> it are
- * resolved against a static RDF graph (a lookup join). Each stream element is enriched
- * with background knowledge — here, a sensor reading is joined to the sensor's room and
- * floor from a seeded catalogue.
+ * <p>This is the idea CQELS is named for. Triple patterns <em>inside</em> a {@code STREAM { … }}
+ * block match live observations; patterns <em>outside</em> it resolve against the static brewery
+ * graph (see {@link Brewery#seedStatic}). Each temperature observation is enriched with the
+ * sensor's tank and that tank's room — joining stream and background knowledge.
  *
- * <p>Key ideas:
- * <ul>
- *   <li>Seed the static data via {@code engine.getRepository().getConnection()} before
- *       {@code start()}.</li>
- *   <li>Patterns <em>outside</em> {@code STREAM { }} are matched against the engine's
- *       repository (the static side); patterns <em>inside</em> it match the live stream.</li>
- * </ul>
+ * <p>Uses a {@code [TRIPLES 5]} window so each observation (five triples) is joined as a unit.
  *
  * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.examples.StreamStaticJoin}
  */
 public class StreamStaticJoin {
-
-    private static final String EX = "http://example.org/";
 
     public static void main(String[] args) throws InterruptedException {
         try (CQELSEngine engine = CQELSEngine.builder()
@@ -35,45 +23,44 @@ public class StreamStaticJoin {
                 .withMemoryStore()
                 .build()) {
 
-            // 1. Seed the static catalogue (sensor -> room, floor) BEFORE start().
-            ValueFactory vf = SimpleValueFactory.getInstance();
-            try (RepositoryConnection conn = engine.getRepository().getConnection()) {
-                for (int s = 0; s < 3; s++) {
-                    conn.add(vf.createIRI(EX + "sensor/" + s), vf.createIRI(EX + "room"),
-                            vf.createLiteral("Room-" + (char) ('A' + s)));
-                    conn.add(vf.createIRI(EX + "sensor/" + s), vf.createIRI(EX + "floor"),
-                            vf.createLiteral((long) (s % 2 + 1)));
-                }
-            }
+            // Seed the static graph (sensor -> tank deployment, tank -> room) BEFORE start().
+            Brewery.seedStatic(engine);
 
-            DataStream readings = engine.createStream("Readings");
+            DataStream fermentation = engine.createStream("Fermentation");
 
-            String query = """
-                    PREFIX ex: <http://example.org/>
+            String query = Brewery.PREFIXES + """
                     REGISTER QUERY EnrichedReadings AS
-                    SELECT ?sensor ?temp ?room ?floor
-                    FROM STREAM Readings [NOW]
+                    SELECT ?sensor ?temp ?tank ?room
+                    FROM STREAM Fermentation [TRIPLES 5]
                     WHERE {
-                      STREAM Readings { ?sensor ex:temperature ?temp . }
-                      ?sensor ex:room ?room ;
-                              ex:floor ?floor .
+                      STREAM Fermentation {
+                        ?obs sosa:madeBySensor ?sensor .
+                        ?obs sosa:hasSimpleResult ?temp .
+                      }
+                      ?sensor sosa:hasFeatureOfInterest ?tank .
+                      ?tank ex:room ?room .
                     }
                     """;
-
             engine.registerCqelsQuery(query, row ->
                     System.out.println("  enriched -> " + row));
 
             engine.start();
-            System.out.println("Engine started. Each reading is joined to its sensor's room/floor.\n");
+            System.out.println("Engine started. Each reading is joined to its tank and room.\n");
 
+            String[][] s = {
+                    {Brewery.SENSOR_T1, Brewery.TANK1},
+                    {Brewery.SENSOR_T2, Brewery.TANK2},
+                    {Brewery.SENSOR_T3, Brewery.TANK3}};
             double[] temps = {21.4, 27.9, 30.1, 19.8, 33.2};
             for (int i = 0; i < temps.length; i++) {
-                String sensor = EX + "sensor/" + (i % 3);
-                System.out.printf("push: sensor%d = %.1f%n", i % 3, temps[i]);
-                readings.push(sensor, EX + "temperature", temps[i]);
-                Thread.sleep(250);
+                String[] sensor = s[i % s.length];
+                System.out.printf("push: %s temperature = %.1f °C%n",
+                        sensor[1].substring(Brewery.EX.length()), temps[i]);
+                Brewery.pushObservation(fermentation, sensor[0], sensor[1],
+                        Brewery.TEMPERATURE, temps[i]);
+                Thread.sleep(300);
             }
-            Thread.sleep(500);
+            Thread.sleep(600);
         }
         System.out.println("\nDone.");
     }

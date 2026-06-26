@@ -6,25 +6,20 @@ import org.cqels.engine.DataStream;
 import java.util.Random;
 
 /**
- * Example 2 — Windowed aggregation with GROUP BY.
+ * Example 2 — tumbling windowed aggregation.
  *
- * <p>Tumbling time windows ({@code [RANGE 3s]}) partition the stream into
- * consecutive, non-overlapping 3-second buckets. At the end of each bucket the
- * query emits one row per sensor with the average, count and peak temperature
- * seen in that window.
+ * <p>Over each 3-second window, compute per-sensor statistics of the brewery temperature
+ * observations: average, peak, and count. A {@code [RANGE 3s]} tumbling window joins each
+ * observation's {@code sosa:madeBySensor} and {@code sosa:hasSimpleResult} and a {@code GROUP BY}
+ * aggregates per sensor.
  *
- * <p>Key ideas:
- * <ul>
- *   <li>{@code [RANGE Ns]} — tumbling time window of N seconds.</li>
- *   <li>SPARQL-style aggregates: {@code AVG}, {@code COUNT(*)}, {@code MAX}.</li>
- *   <li>{@code GROUP BY ?sensor} — one result row per group, per window firing.</li>
- * </ul>
+ * <p>Note: aggregates apply only with an explicit {@code GROUP BY} (see {@code CQELS-QL_SPEC.md}).
  *
  * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.examples.WindowedAggregation}
  */
 public class WindowedAggregation {
 
-    private static final Random RANDOM = new Random(42);
+    private static final Random RANDOM = new Random(7);
 
     public static void main(String[] args) throws InterruptedException {
         try (CQELSEngine engine = CQELSEngine.builder()
@@ -32,34 +27,37 @@ public class WindowedAggregation {
                 .withMemoryStore()
                 .build()) {
 
-            DataStream readings = engine.createStream("Readings");
+            DataStream fermentation = engine.createStream("Fermentation");
 
-            String query = """
-                    PREFIX ex: <http://example.org/>
+            String query = Brewery.PREFIXES + """
                     REGISTER QUERY PerSensorStats AS
-                    SELECT ?sensor (AVG(?temp) AS ?avgTemp) (COUNT(*) AS ?n) (MAX(?temp) AS ?peak)
-                    FROM STREAM Readings [RANGE 3s]
+                    SELECT ?sensor (AVG(?v) AS ?avg) (MAX(?v) AS ?peak) (COUNT(*) AS ?n)
+                    FROM STREAM Fermentation [RANGE 3s]
                     WHERE {
-                      STREAM Readings { ?sensor ex:temperature ?temp . }
+                      STREAM Fermentation {
+                        ?obs sosa:madeBySensor ?sensor .
+                        ?obs sosa:hasSimpleResult ?v .
+                      }
                     }
                     GROUP BY ?sensor
                     """;
-
             engine.registerCqelsQuery(query, row ->
-                    System.out.println("  window result -> " + row));
+                    System.out.println("  window stats -> " + row));
 
             engine.start();
-            System.out.println("Engine started. Each 3s window emits avg/count/peak per sensor.\n");
+            System.out.println("Engine started. Per-sensor avg/peak/count temperature each 3s.\n");
 
-            // ~9 seconds of readings from 3 sensors => roughly three window firings.
-            for (int i = 0; i < 45; i++) {
-                String sensor = "http://example.org/sensor/" + (i % 3);
-                double temp = 18 + RANDOM.nextDouble() * 20; // 18..38
-                readings.push(sensor, "http://example.org/temperature", temp);
-                Thread.sleep(200);
+            String[][] sensors = {
+                    {Brewery.SENSOR_T1, Brewery.TANK1},
+                    {Brewery.SENSOR_T2, Brewery.TANK2},
+                    {Brewery.SENSOR_T3, Brewery.TANK3}};
+            for (int i = 0; i < 30; i++) {
+                String[] s = sensors[RANDOM.nextInt(sensors.length)];
+                double temp = 18 + RANDOM.nextDouble() * 14;   // 18–32 °C
+                Brewery.pushObservation(fermentation, s[0], s[1], Brewery.TEMPERATURE, temp);
+                Thread.sleep(150);
             }
-
-            Thread.sleep(1000); // let the final window fire
+            Thread.sleep(1000);
         }
         System.out.println("\nDone.");
     }

@@ -4,20 +4,14 @@ import org.cqels.engine.CQELSEngine;
 import org.cqels.engine.DataStream;
 
 /**
- * Example 1 — Hello, CQELS: your first continuous query.
+ * Example 1 — the "hello world" of continuous queries.
  *
- * <p>The smallest useful CQELS program. It registers a continuous CQELS-QL query
- * that fires an alert for every sensor reading above a threshold, then pushes a
- * handful of readings into the stream.
+ * <p>Our running scenario (shared by every demo) is a <strong>smart brewery</strong>: fermentation
+ * tanks monitored by IBS-TH2 sensors that emit W3C SOSA/SSN {@code sosa:Observation}s. Here the
+ * minimal query raises an alert on every temperature reading above the fermentation ceiling
+ * (28&nbsp;°C) — a {@code [NOW]} window (each event on its own) plus a {@code FILTER}.
  *
- * <p>Key ideas:
- * <ul>
- *   <li>{@code [NOW]} is an instantaneous window — the query is evaluated on each
- *       incoming triple.</li>
- *   <li>A {@code QueryResultListener} (here a lambda) receives each result row as a
- *       {@code Map} of variable name → value.</li>
- *   <li>The engine is {@link AutoCloseable}; try-with-resources stops it cleanly.</li>
- * </ul>
+ * <p>See {@link Brewery} for the shared vocabulary and the observation schema.
  *
  * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.examples.HelloCqels}
  */
@@ -29,37 +23,29 @@ public class HelloCqels {
                 .withMemoryStore()
                 .build()) {
 
-            // A named stream we will push sensor readings into.
-            DataStream sensors = engine.createStream("Sensors");
+            DataStream fermentation = engine.createStream("Fermentation");
 
-            // Continuous query: alert whenever a reading exceeds 30 degrees.
-            String query = """
-                    PREFIX ex: <http://example.org/>
+            String query = Brewery.PREFIXES + """
                     REGISTER QUERY HighTemperature AS
-                    SELECT ?sensor ?temp
-                    FROM STREAM Sensors [NOW]
-                    WHERE {
-                      STREAM Sensors { ?sensor ex:temperature ?temp . }
-                      FILTER(?temp > 30)
-                    }
+                    SELECT ?obs ?temp
+                    FROM STREAM Fermentation [NOW]
+                    WHERE { STREAM Fermentation { ?obs sosa:hasSimpleResult ?temp . } FILTER(?temp > 28) }
                     """;
-
-            // Each matching row is delivered to this listener as a Map<String, Object>.
             engine.registerCqelsQuery(query, row ->
-                    System.out.println("  ALERT  high temperature -> " + row));
+                    System.out.println("  ALERT high temperature -> " + row));
 
             engine.start();
-            System.out.println("Engine started. Pushing 10 readings; alerts fire for temp > 30.\n");
+            System.out.println("Engine started. Alerting on tank temperatures above 28 °C.\n");
 
-            double[] readings = {21.5, 28.0, 31.2, 19.8, 35.6, 24.1, 30.5, 41.0, 26.3, 33.3};
-            for (int i = 0; i < readings.length; i++) {
-                String sensor = "http://example.org/sensor/" + (i % 3);
-                System.out.printf("push: sensor%d = %.1f%n", i % 3, readings[i]);
-                sensors.push(sensor, "http://example.org/temperature", readings[i]);
-                Thread.sleep(300);
+            // Temperature observations from Tank 1's sensor; 30.1 and 31.5 breach the 28 °C ceiling.
+            double[] temps = {21.4, 27.9, 30.1, 19.8, 31.5};
+            for (double t : temps) {
+                System.out.printf("push: Tank1 temperature = %.1f °C%n", t);
+                Brewery.pushObservation(fermentation, Brewery.SENSOR_T1, Brewery.TANK1,
+                        Brewery.TEMPERATURE, t);
+                Thread.sleep(250);
             }
-
-            Thread.sleep(500); // let the last results flush
+            Thread.sleep(500);
         }
         System.out.println("\nDone.");
     }
