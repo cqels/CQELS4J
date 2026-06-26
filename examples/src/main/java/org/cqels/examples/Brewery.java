@@ -56,6 +56,12 @@ public final class Brewery {
     public static final String IBS_TH2_T = SENSOR_NS + "IBS-TH2-Plus-T";   // temperature sensor
     public static final String IBS_TH2_H = SENSOR_NS + "IBS-TH2-Plus-H";   // humidity sensor
 
+    // ---- brewery incident alerts (events for the CEP demos) -------------------------------
+    public static final String ALERT = EX + "alert";
+    public static final String OVERHEAT_ALERT = EX + "OverheatAlert";
+    public static final String PRESSURE_RISE_ALERT = EX + "PressureRiseAlert";
+    public static final String FOAMING_ALERT = EX + "FoamingAlert";
+
     // ---- fixed entities reused across demos -----------------------------------------------
     public static final String TANK1 = EX + "Tank1";
     public static final String TANK2 = EX + "Tank2";
@@ -73,8 +79,14 @@ public final class Brewery {
 
     private static final ValueFactory VF = SimpleValueFactory.getInstance();
     private static final AtomicLong OBS_SEQ = new AtomicLong();
+    private static final AtomicLong EVT_SEQ = new AtomicLong();
 
     private Brewery() { }
+
+    /** Push a brewery incident alert event ({@code ?event ex:alert <alertIri>}) — used by the CEP demos. */
+    public static void pushAlert(DataStream stream, String alertIri) {
+        stream.pushTriple(EX + "event/" + EVT_SEQ.incrementAndGet(), ALERT, alertIri);
+    }
 
     /**
      * Push one {@code sosa:Observation} (five triples sharing a fresh observation IRI) onto a
