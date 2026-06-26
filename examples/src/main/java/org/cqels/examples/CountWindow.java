@@ -4,21 +4,18 @@ import org.cqels.engine.CQELSEngine;
 import org.cqels.engine.DataStream;
 
 /**
- * Example 7 — Count-based windows ({@code [TRIPLES N]}).
+ * Example 7 — count-based windows ({@code [TRIPLES N]}).
  *
- * <p>Not every window is time-based. {@code [TRIPLES N]} keeps the most recent N stream
- * elements and re-evaluates as they arrive — useful when you care about "the last N
- * events" rather than "the last N seconds". Here we count page views per user over the
- * last 8 views.
+ * <p>Not every window is time-based. {@code [TRIPLES N]} keeps the most recent N stream triples
+ * and re-evaluates as they arrive — useful for "the last N readings" rather than "the last N
+ * seconds". Here we count temperature observations per sensor over the most recent triples.
  *
- * <p>(Aggregates are computed per group, so a {@code GROUP BY} is required — see the
- * language spec.)
+ * <p>(The window counts stream <em>triples</em>; each observation contributes several, so size the
+ * window accordingly.)
  *
  * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.examples.CountWindow}
  */
 public class CountWindow {
-
-    private static final String EX = "http://example.org/";
 
     public static void main(String[] args) throws InterruptedException {
         try (CQELSEngine engine = CQELSEngine.builder()
@@ -26,27 +23,30 @@ public class CountWindow {
                 .withMemoryStore()
                 .build()) {
 
-            DataStream views = engine.createStream("PageViews");
+            DataStream fermentation = engine.createStream("Fermentation");
 
-            String query = """
-                    PREFIX ex: <http://example.org/>
-                    REGISTER QUERY ViewsPerUser AS
-                    SELECT ?user (COUNT(*) AS ?views)
-                    FROM STREAM PageViews [TRIPLES 8]
-                    WHERE { STREAM PageViews { ?user ex:viewed ?page . } }
-                    GROUP BY ?user
+            String query = Brewery.PREFIXES + """
+                    REGISTER QUERY ReadingsPerSensor AS
+                    SELECT ?sensor (COUNT(*) AS ?readings)
+                    FROM STREAM Fermentation [TRIPLES 30]
+                    WHERE { STREAM Fermentation { ?obs sosa:madeBySensor ?sensor . } }
+                    GROUP BY ?sensor
                     """;
-
             engine.registerCqelsQuery(query, row ->
-                    System.out.println("  last-8-views -> " + row));
+                    System.out.println("  recent-readings -> " + row));
 
             engine.start();
-            System.out.println("Engine started. Count-based window over the last 8 page views.\n");
+            System.out.println("Engine started. Observations per sensor over the most recent triples.\n");
 
-            String[] users = {"alice", "alice", "bob", "alice", "carol", "bob", "alice", "carol", "bob", "alice"};
-            for (int i = 0; i < users.length; i++) {
-                System.out.println("push: " + users[i] + " viewed page" + i);
-                views.pushTriple(EX + "user/" + users[i], EX + "viewed", EX + "page/" + i);
+            String[][] order = {
+                    {Brewery.SENSOR_T1, Brewery.TANK1}, {Brewery.SENSOR_T1, Brewery.TANK1},
+                    {Brewery.SENSOR_T2, Brewery.TANK2}, {Brewery.SENSOR_T1, Brewery.TANK1},
+                    {Brewery.SENSOR_T3, Brewery.TANK3}, {Brewery.SENSOR_T2, Brewery.TANK2},
+                    {Brewery.SENSOR_T1, Brewery.TANK1}, {Brewery.SENSOR_T3, Brewery.TANK3}};
+            for (int i = 0; i < order.length; i++) {
+                System.out.println("push: observation from " + order[i][0].substring(Brewery.EX.length()));
+                Brewery.pushObservation(fermentation, order[i][0], order[i][1],
+                        Brewery.TEMPERATURE, 20 + i);
                 Thread.sleep(150);
             }
             Thread.sleep(500);

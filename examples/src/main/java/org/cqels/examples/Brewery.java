@@ -91,6 +91,20 @@ public final class Brewery {
     }
 
     /**
+     * Push one {@code sosa:Observation} with an explicit event timestamp (ms) on all five
+     * triples — used by the directional/LARS window demo, which assigns events by event time.
+     */
+    public static void pushObservationAt(DataStream stream, String sensor, String tank,
+                                         String quantityKind, double value, long timestamp) {
+        IRI obs = VF.createIRI(EX + "obs/" + OBS_SEQ.incrementAndGet());
+        stream.push(obs, VF.createIRI(RDF_TYPE), VF.createIRI(OBSERVATION), timestamp);
+        stream.push(obs, VF.createIRI(MADE_BY_SENSOR), VF.createIRI(sensor), timestamp);
+        stream.push(obs, VF.createIRI(OBSERVED_PROPERTY), VF.createIRI(quantityKind), timestamp);
+        stream.push(obs, VF.createIRI(HAS_FEATURE_OF_INTEREST), VF.createIRI(tank), timestamp);
+        stream.push(obs, VF.createIRI(HAS_SIMPLE_RESULT), VF.createLiteral(value), timestamp);
+    }
+
+    /**
      * Seed the static background graph: each temperature sensor's tank deployment
      * ({@code sosa:hasFeatureOfInterest}) plus each tank's room and WKT location. Used by the
      * stream–static join and geospatial demos.
