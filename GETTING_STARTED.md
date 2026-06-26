@@ -79,7 +79,7 @@ A few representative scenarios (the full categorized list of 17 is in
 | `org.cqels.examples.SlidingWindowTrends` | `[SLIDE 4s STEP 2s]` overlapping windows for moving trends |
 | `org.cqels.examples.AdvancedQueryOperators` | `OPTIONAL` / `UNION` / `FILTER NOT EXISTS` / `BIND` over a stream + static graph |
 | `org.cqels.examples.ComplexEventPattern` | declarative CEP — `FILTER(SEQ(?a; ?b))` sequence detection |
-| `org.cqels.examples.CypherGraphQuery` | CypherQL — `MATCH (p:Person) RETURN p` over a stream |
+| `org.cqels.examples.CypherGraphQuery` | CypherQL — `MATCH (o:Observation) RETURN o` over a stream |
 | `org.cqels.examples.RdfsReasoning` | RDFS inference over a stream (`cqels-reasoning-rete`) |
 | `org.cqels.examples.GeoSpatialFilter` | GeoSPARQL `geof:sfWithin` spatial filtering (`cqels-geo`) |
 | `org.cqels.examples.SosaObservations` | W3C SOSA/SSN observations + multi-pattern stream join |
@@ -132,18 +132,18 @@ public class FirstQuery {
                 .withMemoryStore()        // in-memory RDF store
                 .build()) {
 
-            // 1. A named stream to push data into.
-            DataStream sensors = engine.createStream("Sensors");
+            // 1. A named stream to push data into (a brewery's fermentation readings).
+            DataStream fermentation = engine.createStream("Fermentation");
 
-            // 2. A continuous CQELS-QL query over that stream.
+            // 2. A continuous CQELS-QL query: alert when a tank's temperature crosses 28 °C.
             String query = """
-                    PREFIX ex: <http://example.org/>
-                    REGISTER QUERY HighTemperature AS
-                    SELECT ?sensor ?temp
-                    FROM STREAM Sensors [NOW]
+                    PREFIX sosa: <http://www.w3.org/ns/sosa/>
+                    REGISTER QUERY Overheating AS
+                    SELECT ?obs ?temp
+                    FROM STREAM Fermentation [NOW]
                     WHERE {
-                      STREAM Sensors { ?sensor ex:temperature ?temp . }
-                      FILTER(?temp > 30)
+                      STREAM Fermentation { ?obs sosa:hasSimpleResult ?temp . }
+                      FILTER(?temp > 28)
                     }
                     """;
 
@@ -154,8 +154,9 @@ public class FirstQuery {
             engine.start();
 
             // 5. Feed data; matching rows are pushed to the listener.
-            sensors.push("http://example.org/sensor/1", "http://example.org/temperature", 35.6);
-            sensors.push("http://example.org/sensor/2", "http://example.org/temperature", 22.0); // ignored
+            String result = "http://www.w3.org/ns/sosa/hasSimpleResult";
+            fermentation.push("http://example.org/brewery/obs/1", result, 30.1);
+            fermentation.push("http://example.org/brewery/obs/2", result, 22.0); // ignored
 
             Thread.sleep(500); // let results flush before close()
         }

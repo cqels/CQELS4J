@@ -48,19 +48,21 @@ mvn -q compile exec:java -Dexec.mainClass=org.cqels.examples.HelloCqels
 ```
 
 ```java
+// Smart brewery: alert when a fermentation tank's temperature crosses 28 °C.
 try (CQELSEngine engine = CQELSEngine.builder().withMemoryStore().build()) {
-    DataStream sensors = engine.createStream("Sensors");
+    DataStream fermentation = engine.createStream("Fermentation");
 
     engine.registerCqelsQuery("""
-        PREFIX ex: <http://example.org/>
-        REGISTER QUERY HighTemperature AS
-        SELECT ?sensor ?temp
-        FROM STREAM Sensors [NOW]
-        WHERE { STREAM Sensors { ?sensor ex:temperature ?temp . } FILTER(?temp > 30) }
+        PREFIX sosa: <http://www.w3.org/ns/sosa/>
+        REGISTER QUERY Overheating AS
+        SELECT ?obs ?temp
+        FROM STREAM Fermentation [NOW]
+        WHERE { STREAM Fermentation { ?obs sosa:hasSimpleResult ?temp . } FILTER(?temp > 28) }
         """, row -> System.out.println("ALERT: " + row));
 
     engine.start();
-    sensors.push("http://example.org/sensor/1", "http://example.org/temperature", 35.6);
+    fermentation.push("http://example.org/brewery/obs/1",
+                      "http://www.w3.org/ns/sosa/hasSimpleResult", 30.1);
     Thread.sleep(500);
 }
 ```
@@ -93,6 +95,14 @@ GitHub Packages requires a token with `read:packages` — see
 
 Runnable, verified demos in [`examples/`](examples/), grouped by use-case category —
 new scenarios can be added under the matching heading.
+
+All demos (except `VehicleSignalsCdsp`, which uses real [COVESA VSS](https://covesa.global/)
+vehicle signals) share **one coherent world**: a *smart brewery* modelled in W3C
+[SOSA/SSN](https://www.w3.org/TR/vocab-ssn/) — fermentation tanks (`sosa:FeatureOfInterest`)
+monitored by InkBird IBS-TH2 sensors (`sosa:Sensor`) emitting `sosa:Observation`s. The shared
+vocabulary, fixed entities, and push helpers live in
+[`Brewery.java`](examples/src/main/java/org/cqels/examples/Brewery.java), so the examples connect
+into a single story rather than ad-hoc per-demo data.
 
 **Basics**
 | Demo | Feature |
