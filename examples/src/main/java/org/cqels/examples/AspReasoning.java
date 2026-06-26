@@ -33,10 +33,11 @@ public class AspReasoning {
 
             DataStream observations = engine.createStream("Observations");
 
-            String program = """
-                    monitors(S, T) :- rdf(O, iri("http://www.w3.org/ns/sosa/madeBySensor"), S),
-                                      rdf(O, iri("http://www.w3.org/ns/sosa/hasFeatureOfInterest"), T).
-                    """;
+            // Build the rule from the shared Brewery constants so it can never drift from the
+            // predicate IRIs the push helper actually emits.
+            String program =
+                    "monitors(S, T) :- rdf(O, iri(\"" + Brewery.MADE_BY_SENSOR + "\"), S),\n"
+                    + "                  rdf(O, iri(\"" + Brewery.HAS_FEATURE_OF_INTEREST + "\"), T).\n";
 
             AspStreamSolveConfig config = AspStreamSolveConfig.builder()
                     .inputStreamName("Observations")

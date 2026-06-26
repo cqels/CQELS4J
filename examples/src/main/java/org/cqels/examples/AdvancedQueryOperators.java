@@ -46,13 +46,13 @@ public class AdvancedQueryOperators {
             String query = Brewery.PREFIXES + """
                     REGISTER QUERY EnrichedReadings AS
                     SELECT ?sensor ?temp ?tank ?contact ?target ?deviation
-                    FROM STREAM Fermentation [TRIPLES 5]
+                    FROM STREAM Fermentation [TRIPLES 10]
                     WHERE {
                       STREAM Fermentation {
                         ?obs sosa:madeBySensor ?sensor .
                         ?obs sosa:hasSimpleResult ?temp .
                       }
-                      ?sensor sosa:hasFeatureOfInterest ?tank .
+                      ?sensor ex:monitors ?tank .
                       OPTIONAL { ?tank ex:targetTemp ?target . }
                       { ?tank ex:supervisor ?contact . } UNION { ?tank ex:backupContact ?contact . }
                       FILTER NOT EXISTS { ?sensor ex:decommissioned ?d . }

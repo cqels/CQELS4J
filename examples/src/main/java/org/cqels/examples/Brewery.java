@@ -56,6 +56,12 @@ public final class Brewery {
     public static final String IBS_TH2_T = SENSOR_NS + "IBS-TH2-Plus-T";   // temperature sensor
     public static final String IBS_TH2_H = SENSOR_NS + "IBS-TH2-Plus-H";   // humidity sensor
 
+    // ---- brewery-local relations (not SOSA terms) -----------------------------------------
+    /** Sensor-&gt;tank deployment edge in the static graph. A brewery-local predicate: SOSA's
+     *  {@code hasFeatureOfInterest} has domain {@code sosa:Observation}, so it must not be reused
+     *  for a sensor. This is the same relation {@code AspReasoning} derives from observations. */
+    public static final String MONITORS = EX + "monitors";
+
     // ---- brewery incident alerts (events for the CEP demos) -------------------------------
     public static final String ALERT = EX + "alert";
     public static final String OVERHEAT_ALERT = EX + "OverheatAlert";
@@ -118,7 +124,7 @@ public final class Brewery {
 
     /**
      * Seed the static background graph: each temperature sensor's tank deployment
-     * ({@code sosa:hasFeatureOfInterest}) plus each tank's room and WKT location. Used by the
+     * ({@code ex:monitors}) plus each tank's room and WKT location. Used by the
      * stream–static join and geospatial demos.
      */
     public static void seedStatic(CQELSEngine engine) {
@@ -133,7 +139,7 @@ public final class Brewery {
                                String room, String wkt) {
         IRI s = VF.createIRI(sensor);
         IRI t = VF.createIRI(tank);
-        conn.add(s, VF.createIRI(HAS_FEATURE_OF_INTEREST), t);
+        conn.add(s, VF.createIRI(MONITORS), t);
         conn.add(t, VF.createIRI(EX + "room"), VF.createLiteral(room));
         conn.add(t, VF.createIRI(EX + "location"), VF.createLiteral(wkt, VF.createIRI(GEO_WKT)));
     }

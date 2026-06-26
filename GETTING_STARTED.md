@@ -138,7 +138,7 @@ public class FirstQuery {
             // 2. A continuous CQELS-QL query: alert when a tank's temperature crosses 28 °C.
             String query = """
                     PREFIX sosa: <http://www.w3.org/ns/sosa/>
-                    REGISTER QUERY Overheating AS
+                    REGISTER QUERY HighTemperature AS
                     SELECT ?obs ?temp
                     FROM STREAM Fermentation [NOW]
                     WHERE {

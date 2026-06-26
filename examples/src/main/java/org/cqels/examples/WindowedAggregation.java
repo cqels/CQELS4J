@@ -31,11 +31,12 @@ public class WindowedAggregation {
 
             String query = Brewery.PREFIXES + """
                     REGISTER QUERY PerSensorStats AS
-                    SELECT ?sensor (AVG(?v) AS ?avg) (MAX(?v) AS ?peak) (COUNT(*) AS ?n)
+                    SELECT ?sensor (AVG(?v) AS ?avgTemp) (MAX(?v) AS ?peak) (COUNT(*) AS ?n)
                     FROM STREAM Fermentation [RANGE 3s]
                     WHERE {
                       STREAM Fermentation {
                         ?obs sosa:madeBySensor ?sensor .
+                        ?obs sosa:observedProperty qk:Temperature .
                         ?obs sosa:hasSimpleResult ?v .
                       }
                     }

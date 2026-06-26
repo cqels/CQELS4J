@@ -54,7 +54,7 @@ try (CQELSEngine engine = CQELSEngine.builder().withMemoryStore().build()) {
 
     engine.registerCqelsQuery("""
         PREFIX sosa: <http://www.w3.org/ns/sosa/>
-        REGISTER QUERY Overheating AS
+        REGISTER QUERY HighTemperature AS
         SELECT ?obs ?temp
         FROM STREAM Fermentation [NOW]
         WHERE { STREAM Fermentation { ?obs sosa:hasSimpleResult ?temp . } FILTER(?temp > 28) }

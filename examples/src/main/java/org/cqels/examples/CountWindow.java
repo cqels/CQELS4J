@@ -36,7 +36,8 @@ public class CountWindow {
                     System.out.println("  recent-readings -> " + row));
 
             engine.start();
-            System.out.println("Engine started. Observations per sensor over the most recent triples.\n");
+            System.out.println("Engine started. Observations per sensor over the most recent triples.");
+            System.out.println("([TRIPLES 30] holds ~the last 6 observations, so the earliest pushes age out.)\n");
 
             String[][] order = {
                     {Brewery.SENSOR_T1, Brewery.TANK1}, {Brewery.SENSOR_T1, Brewery.TANK1},

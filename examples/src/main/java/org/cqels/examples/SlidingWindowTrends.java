@@ -28,11 +28,12 @@ public class SlidingWindowTrends {
 
             String query = Brewery.PREFIXES + """
                     REGISTER QUERY TempTrends AS
-                    SELECT ?sensor (AVG(?v) AS ?avg) (MIN(?v) AS ?min) (MAX(?v) AS ?max)
+                    SELECT ?sensor (AVG(?v) AS ?avgTemp) (MIN(?v) AS ?minTemp) (MAX(?v) AS ?maxTemp)
                     FROM STREAM Fermentation [SLIDE 4s STEP 2s]
                     WHERE {
                       STREAM Fermentation {
                         ?obs sosa:madeBySensor ?sensor .
+                        ?obs sosa:observedProperty qk:Temperature .
                         ?obs sosa:hasSimpleResult ?v .
                       }
                     }

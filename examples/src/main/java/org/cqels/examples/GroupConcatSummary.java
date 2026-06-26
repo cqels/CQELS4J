@@ -12,9 +12,10 @@ import java.util.Random;
  * list of observed quantity-kinds ({@code qk:Temperature} / {@code qk:RelativeHumidity}),
  * concatenated with {@code GROUP_CONCAT(?qk; SEPARATOR=", ")}.
  *
- * <p>{@code GROUP_CONCAT} collapses a group's values into one string (it keeps repeats — use
- * {@code GROUP_CONCAT(DISTINCT …)} to dedupe). {@code ORDER BY}/{@code LIMIT} are part of CQELS-QL
- * but over a streaming windowed aggregate the engine emits per-group rows (see the spec).
+ * <p>{@code GROUP_CONCAT} collapses a group's values into one string and keeps repeats (CQELS-QL's
+ * {@code GROUP_CONCAT} takes only the optional {@code SEPARATOR} — there is no per-aggregate
+ * {@code DISTINCT}). {@code ORDER BY}/{@code LIMIT} are part of CQELS-QL but over a streaming
+ * windowed aggregate the engine emits per-group rows (see the spec).
  *
  * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.examples.GroupConcatSummary}
  */

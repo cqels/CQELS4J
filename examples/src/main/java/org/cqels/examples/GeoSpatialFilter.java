@@ -2,7 +2,6 @@ package org.cqels.examples;
 
 import org.cqels.engine.CQELSEngine;
 import org.cqels.engine.DataStream;
-import org.cqels.geo.geosparql.GeoVocabulary;
 import org.eclipse.rdf4j.model.ValueFactory;
 import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
 
@@ -15,7 +14,7 @@ import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
  * only the tanks located inside that zone.
  *
  * <p>Note: CQELS-QL has no inline {@code "…"^^geo:wktLiteral} literal syntax — geometries are supplied
- * as typed RDF literals in the data ({@code GeoVocabulary.WKT_LITERAL}) and compared as variables.
+ * as typed RDF literals in the data ({@code Brewery.GEO_WKT}) and compared as variables.
  *
  * <p>Add-on dependency: {@code org.cqels:cqels-geo}.
  *
@@ -64,8 +63,8 @@ public class GeoSpatialFilter {
     private static void pushLocation(DataStream s, ValueFactory vf, String tank, String wktPoint) {
         System.out.println("push: " + tank.substring(Brewery.EX.length()) + " at " + wktPoint);
         s.push(vf.createStatement(vf.createIRI(tank), vf.createIRI(Brewery.EX + "location"),
-                vf.createLiteral(wktPoint, GeoVocabulary.WKT_LITERAL)));
+                vf.createLiteral(wktPoint, vf.createIRI(Brewery.GEO_WKT))));
         s.push(vf.createStatement(vf.createIRI(tank), vf.createIRI(Brewery.EX + "zone"),
-                vf.createLiteral(CELLAR_ZONE, GeoVocabulary.WKT_LITERAL)));
+                vf.createLiteral(CELLAR_ZONE, vf.createIRI(Brewery.GEO_WKT))));
     }
 }

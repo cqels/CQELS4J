@@ -14,8 +14,8 @@ import org.cqels.reasoning.engine.ReactiveReteAdapter;
  *
  * <p>The IBS-TH2 sensor types subclass {@code sosa:Sensor}
  * ({@code sensor:IBS-TH2-Plus-T rdfs:subClassOf sosa:Sensor}). After declaring that and registering
- * {@code tank1-T a sensor:IBS-TH2-Plus-T}, the <em>rdfs9</em> rule infers
- * {@code tank1-T a sosa:Sensor} — so a query asking only for {@code sosa:Sensor} instances finds it.
+ * {@code ex:sensor/tank1-T a sensor:IBS-TH2-Plus-T}, the <em>rdfs9</em> rule infers
+ * {@code ex:sensor/tank1-T a sosa:Sensor} — so a query asking only for {@code sosa:Sensor} instances finds it.
  *
  * <p>Add-on dependency: {@code org.cqels:cqels-reasoning-rete}.
  *

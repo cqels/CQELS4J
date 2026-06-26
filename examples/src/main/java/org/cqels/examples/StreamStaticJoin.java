@@ -37,7 +37,7 @@ public class StreamStaticJoin {
                         ?obs sosa:madeBySensor ?sensor .
                         ?obs sosa:hasSimpleResult ?temp .
                       }
-                      ?sensor sosa:hasFeatureOfInterest ?tank .
+                      ?sensor ex:monitors ?tank .
                       ?tank ex:room ?room .
                     }
                     """;
