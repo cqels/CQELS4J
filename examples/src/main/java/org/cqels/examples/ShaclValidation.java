@@ -12,13 +12,13 @@ import org.eclipse.rdf4j.model.Statement;
 import java.util.List;
 
 /**
- * Example 15 — Continuous SHACL validation (cqels-shacl).
+ * Example — continuous SHACL validation (cqels-shacl).
  *
- * <p>Validate a stream against W3C [SHACL](https://www.w3.org/TR/shacl/) shapes as data
- * arrives. The shape below requires {@code ex:alice} to have at least one {@code ex:knows}
- * edge ({@code sh:minCount 1}). We first push an unrelated triple (the constraint is
- * violated → {@code conforms=false}), then push the missing {@code ex:knows} edge (now
- * {@code conforms=true}).
+ * <p>Validate the telemetry stream against W3C [SHACL](https://www.w3.org/TR/shacl/) shapes as data
+ * arrives. The shape below requires every {@code sosa:Observation} to carry a numeric result
+ * ({@code sosa:hasSimpleResult}, {@code sh:minCount 1}). We first push a malformed observation
+ * (sensor + signal, but no result → {@code conforms=false}), then supply the result for the same
+ * observation ({@code conforms=true}).
  *
  * <p>Add-on dependency: {@code org.cqels:cqels-shacl}.
  *
@@ -27,15 +27,16 @@ import java.util.List;
 public class ShaclValidation {
 
     private static final String SHAPES = """
-            @prefix sh: <http://www.w3.org/ns/shacl#> .
-            @prefix ex: <http://example.org/> .
+            @prefix sh:   <http://www.w3.org/ns/shacl#> .
+            @prefix sosa: <http://www.w3.org/ns/sosa/> .
+            @prefix ex:   <https://example.org/fleet/> .
 
-            ex:PersonShape a sh:NodeShape ;
-                sh:targetNode ex:alice ;
-                sh:property ex:knowsShape .
+            ex:ObservationShape a sh:NodeShape ;
+                sh:targetClass sosa:Observation ;
+                sh:property ex:resultShape .
 
-            ex:knowsShape a sh:PropertyShape ;
-                sh:path ex:knows ;
+            ex:resultShape a sh:PropertyShape ;
+                sh:path sosa:hasSimpleResult ;
                 sh:minCount 1 .
             """;
 
@@ -43,7 +44,7 @@ public class ShaclValidation {
         List<Statement> shapes = new ShaclShapeParser().parseTurtle(SHAPES);
 
         ShaclStreamSolveConfig config = ShaclStreamSolveConfig.builder()
-                .inputStreamName("events")
+                .inputStreamName("Telemetry")
                 .shapeStatements(shapes)
                 .build();
 
@@ -54,7 +55,7 @@ public class ShaclValidation {
                 .withMemoryStore()
                 .build()) {
 
-            DataStream events = engine.createStream("events");
+            DataStream telemetry = engine.createStream("Telemetry");
 
             engine.registerQuery(query, new QueryResultListener<ShaclValidationResult>() {
                 @Override
@@ -62,8 +63,7 @@ public class ShaclValidation {
                     System.out.printf("  validation -> conforms=%s violations=%d%n",
                             r.isConforms(), r.getViolations().size());
                     r.getViolations().forEach(v ->
-                            System.out.println("      violation: " + v.getConstraint()
-                                    + " on " + v.getFocusNode()));
+                            System.out.println("      violation: " + v.getConstraint() + " on " + v.getFocusNode()));
                 }
 
                 @Override
@@ -76,16 +76,19 @@ public class ShaclValidation {
             });
 
             engine.start();
-            System.out.println("Engine started. Shape: ex:alice must have >=1 ex:knows.\n");
+            System.out.println("Engine started. Shape: every sosa:Observation needs a result.\n");
 
-            System.out.println("push: ex:alice ex:worksAt ex:acme  (knows still missing)");
-            events.pushTriple("http://example.org/alice",
-                    "http://example.org/worksAt", "http://example.org/acme");
+            // An observation typed + sensor + signal, but (at first) NO sosa:hasSimpleResult -> violation.
+            String obs = Fleet.EX + "obs/1";
+            System.out.println("push: observation " + obs.substring(Fleet.EX.length()) + " without a result");
+            telemetry.pushTriple(obs, Fleet.RDF_TYPE, Fleet.OBSERVATION);
+            telemetry.pushTriple(obs, Fleet.MADE_BY_SENSOR, Fleet.SENSOR_EV1);
+            telemetry.pushTriple(obs, Fleet.OBSERVED_PROPERTY, Fleet.SOC);
             Thread.sleep(1500);
 
-            System.out.println("push: ex:alice ex:knows ex:bob  (constraint now satisfied)");
-            events.pushTriple("http://example.org/alice",
-                    "http://example.org/knows", "http://example.org/bob");
+            // Supply the missing result for the SAME observation -> it now conforms.
+            System.out.println("push: the missing result for the same observation");
+            telemetry.push(obs, Fleet.HAS_SIMPLE_RESULT, 54.0);
             Thread.sleep(2500);
         }
         System.out.println("\nDone.");

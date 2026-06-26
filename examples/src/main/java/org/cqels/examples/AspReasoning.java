@@ -4,23 +4,22 @@ import org.cqels.asp.config.AspStreamSolveConfig;
 import org.cqels.engine.CQELSEngine;
 import org.cqels.engine.DataStream;
 import org.cqels.engine.QueryResultListener;
-import org.eclipse.rdf4j.model.IRI;
-import org.eclipse.rdf4j.model.ValueFactory;
-import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
 
 import java.util.List;
 import java.util.Map;
 
 /**
- * Example 16 — Answer-Set Programming over a stream (cqels-asp).
+ * Example — Answer-Set Programming over the stream (cqels-asp).
  *
- * <p>For rule-based derivation beyond SPARQL, CQELS can evaluate ASP (Answer-Set
- * Programming) programs continuously. Each RDF triple {@code (s, p, o)} becomes an ASP fact
- * {@code rdf(s, p, o)}; the program derives new atoms over each stream delta.
+ * <p>For rule-based derivation beyond SPARQL, CQELS evaluates ASP programs continuously. Each RDF
+ * triple {@code (s, p, o)} becomes an ASP fact {@code rdf(s, p, o)}; the program derives new atoms
+ * over each stream delta.
  *
- * <p>The rule below derives {@code colleague(X, Y)} for any two distinct people sharing an
- * employer — a genuine join + inequality, not a simple projection:
- * <pre>colleague(X, Y) :- rdf(X, iri(".../worksAt"), C), rdf(Y, iri(".../worksAt"), C), X != Y.</pre>
+ * <p>The rule derives {@code convoy(V1, V2)} for any two distinct vehicles currently reporting
+ * telemetry — a genuine join + inequality over the {@code sosa:hasFeatureOfInterest} links, i.e. the
+ * set of vehicles active together:
+ * <pre>convoy(V1, V2) :- rdf(O1, iri(".../hasFeatureOfInterest"), V1),
+ *                    rdf(O2, iri(".../hasFeatureOfInterest"), V2), V1 != V2.</pre>
  *
  * <p>Add-on dependency: {@code org.cqels:cqels-asp}.
  *
@@ -28,32 +27,31 @@ import java.util.Map;
  */
 public class AspReasoning {
 
-    private static final String EX = "http://example.org/";
-
     public static void main(String[] args) throws InterruptedException {
         try (CQELSEngine engine = CQELSEngine.builder()
                 .id("asp-reasoning")
                 .withMemoryStore()
                 .build()) {
 
-            DataStream people = engine.createStream("People");
+            DataStream telemetry = engine.createStream("Telemetry");
 
-            String program = """
-                    colleague(X, Y) :- rdf(X, iri("http://example.org/worksAt"), C),
-                                       rdf(Y, iri("http://example.org/worksAt"), C),
-                                       X != Y.
-                    """;
+            // Build the rule from the shared Fleet constant so it can never drift from the predicate
+            // IRI the push helper actually emits.
+            String program =
+                    "convoy(V1, V2) :- rdf(O1, iri(\"" + Fleet.HAS_FEATURE_OF_INTEREST + "\"), V1),\n"
+                    + "                  rdf(O2, iri(\"" + Fleet.HAS_FEATURE_OF_INTEREST + "\"), V2),\n"
+                    + "                  V1 != V2.\n";
 
             AspStreamSolveConfig config = AspStreamSolveConfig.builder()
-                    .inputStreamName("People")
+                    .inputStreamName("Telemetry")
                     .build();
 
-            engine.registerAspQuery("Colleagues", program, config,
-                    "colleague", List.of("x", "y"),
+            engine.registerAspQuery("Convoy", program, config,
+                    "convoy", List.of("v1", "v2"),
                     new QueryResultListener<Map<String, Object>>() {
                         @Override
                         public void onResult(Map<String, Object> row) {
-                            System.out.println("  colleague -> " + row);
+                            System.out.println("  convoy -> " + row);
                         }
 
                         @Override
@@ -66,16 +64,13 @@ public class AspReasoning {
                     });
 
             engine.start();
-            System.out.println("Engine started. Rule: colleagues share an employer.\n");
+            System.out.println("Engine started. Rule: vehicles reporting telemetry together form a convoy.\n");
 
-            ValueFactory vf = SimpleValueFactory.getInstance();
-            IRI worksAt = vf.createIRI(EX + "worksAt");
-            // alice + bob -> Acme (colleagues); carol -> Globex (alone)
-            for (String[] pair : new String[][]{
-                    {"alice", "Acme"}, {"bob", "Acme"}, {"carol", "Globex"}}) {
-                System.out.println("push: " + pair[0] + " worksAt " + pair[1]);
-                people.push(vf.createStatement(
-                        vf.createIRI(EX + pair[0]), worksAt, vf.createIRI(EX + pair[1])));
+            String[][] fleet = {
+                    {Fleet.SENSOR_EV1, Fleet.EV1}, {Fleet.SENSOR_EV2, Fleet.EV2}};
+            for (String[] ev : fleet) {
+                System.out.println("push: telemetry from " + ev[1].substring(Fleet.EX.length()));
+                Fleet.pushObservation(telemetry, ev[0], ev[1], Fleet.SPEED, 60.0);
                 Thread.sleep(300);
             }
             Thread.sleep(1000);
