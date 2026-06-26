@@ -35,7 +35,12 @@ import java.util.regex.Pattern;
  * A minimal Model Context Protocol (MCP) server backed by a CQELS engine.
  *
  * <p>It exposes a CQELS engine as AI-callable tools over stdio — both the static RDF store
- * <em>and</em> the streaming engine that the {@code examples/} demonstrate:
+ * <em>and</em> the streaming engine that the {@code examples/} demonstrate. The tools are
+ * vocabulary-agnostic, so an MCP client can drive the very same <strong>electric-vehicle fleet /
+ * V2G</strong> world the examples run: {@code push_event} a VSS {@code sosa:Observation}
+ * (speed / battery SoC), {@code register_stream_query} a per-vehicle speeding monitor,
+ * {@code detect_sequence} a road-rage CEP pattern, {@code define_subclass} the
+ * {@code ex:ElectricBus ⊑ vsso:Vehicle} taxonomy — see {@code README.md} for the walkthrough:
  * <ul>
  *   <li><b>Memory (static):</b> {@code store_fact} adds a {@code (subject, predicate, object)}
  *       triple; {@code query} runs a SPARQL SELECT over everything stored.</li>
