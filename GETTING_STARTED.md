@@ -51,6 +51,12 @@ the **`read:packages`** scope.
 > Keep the token out of source control. For CI, inject it via a secret and a generated
 > `settings.xml` rather than committing it.
 
+> **Why is a token needed at all?** GitHub Packages' Maven registry requires authentication
+> even for **public** packages — there is no anonymous download (unlike Maven Central). This is
+> a GitHub limitation, not a CQELS choice, so the `read:packages` token above is currently
+> required to build the examples. Publishing `org.cqels:*` to **Maven Central** (which needs no
+> token) is on the [roadmap](README.md#roadmap); until then the one-time token is the only path.
+
 ---
 
 ## 3. Run the bundled examples

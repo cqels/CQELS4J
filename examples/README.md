@@ -8,8 +8,11 @@ Cypher dialect, to standard-vocabulary (W3C SOSA/SSN, COVESA VSS) scenarios. Eac
 ## Prerequisites
 
 - JDK 17+ and Maven 3.8+
-- A GitHub Packages token configured in `~/.m2/settings.xml` (one-time setup) —
-  see [`../GETTING_STARTED.md`](../GETTING_STARTED.md#2-authenticate-to-github-packages-one-time).
+- A GitHub Packages token (classic PAT with `read:packages`) in `~/.m2/settings.xml` —
+  **required**: GitHub Packages has no anonymous access even for public packages, so the
+  engine JARs can't be fetched without it. One-time setup in
+  [`../GETTING_STARTED.md`](../GETTING_STARTED.md#2-authenticate-to-github-packages-one-time).
+  (A token-free Maven Central release is planned — see the README roadmap.)
 
 ## Build & run
 
