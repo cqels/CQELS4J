@@ -2,32 +2,21 @@ package org.cqels.examples;
 
 import org.cqels.engine.CQELSEngine;
 import org.cqels.engine.DataStream;
-import org.eclipse.rdf4j.model.ValueFactory;
-import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
-import org.eclipse.rdf4j.repository.RepositoryConnection;
 
 /**
- * Example 9 — Linked Streams: joining a stream against a static background graph.
+ * Example — Linked Streams: joining the telemetry stream against the static fleet graph.
  *
- * <p>This is the idea CQELS is named for. Triple patterns <em>inside</em> a
- * {@code STREAM { … }} block match the live stream; patterns <em>outside</em> it are
- * resolved against a static RDF graph (a lookup join). Each stream element is enriched
- * with background knowledge — here, a sensor reading is joined to the sensor's room and
- * floor from a seeded catalogue.
+ * <p>This is the idea CQELS is named for. Triple patterns <em>inside</em> a {@code STREAM { … }}
+ * block match live observations; patterns <em>outside</em> it resolve against the static fleet graph
+ * (see {@link Fleet#seedStatic}). Each speed reading is enriched with the assigned driver and the
+ * vehicle's GTFS-style service route — joining live telemetry with mission context.
  *
- * <p>Key ideas:
- * <ul>
- *   <li>Seed the static data via {@code engine.getRepository().getConnection()} before
- *       {@code start()}.</li>
- *   <li>Patterns <em>outside</em> {@code STREAM { }} are matched against the engine's
- *       repository (the static side); patterns <em>inside</em> it match the live stream.</li>
- * </ul>
+ * <p>Uses a {@code [TRIPLES 10]} window so each observation (five triples) is comfortably co-resident
+ * with its mates when the stream patterns are matched.
  *
  * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.examples.StreamStaticJoin}
  */
 public class StreamStaticJoin {
-
-    private static final String EX = "http://example.org/";
 
     public static void main(String[] args) throws InterruptedException {
         try (CQELSEngine engine = CQELSEngine.builder()
@@ -35,45 +24,42 @@ public class StreamStaticJoin {
                 .withMemoryStore()
                 .build()) {
 
-            // 1. Seed the static catalogue (sensor -> room, floor) BEFORE start().
-            ValueFactory vf = SimpleValueFactory.getInstance();
-            try (RepositoryConnection conn = engine.getRepository().getConnection()) {
-                for (int s = 0; s < 3; s++) {
-                    conn.add(vf.createIRI(EX + "sensor/" + s), vf.createIRI(EX + "room"),
-                            vf.createLiteral("Room-" + (char) ('A' + s)));
-                    conn.add(vf.createIRI(EX + "sensor/" + s), vf.createIRI(EX + "floor"),
-                            vf.createLiteral((long) (s % 2 + 1)));
-                }
-            }
+            // Seed the static graph (fleet membership, driver, service route) BEFORE start().
+            Fleet.seedStatic(engine);
 
-            DataStream readings = engine.createStream("Readings");
+            DataStream telemetry = engine.createStream("Telemetry");
 
-            String query = """
-                    PREFIX ex: <http://example.org/>
-                    REGISTER QUERY EnrichedReadings AS
-                    SELECT ?sensor ?temp ?room ?floor
-                    FROM STREAM Readings [NOW]
+            String query = Fleet.PREFIXES + """
+                    REGISTER QUERY EnrichedSpeed AS
+                    SELECT ?vehicle ?kmh ?driver ?route
+                    FROM STREAM Telemetry [TRIPLES 10]
                     WHERE {
-                      STREAM Readings { ?sensor ex:temperature ?temp . }
-                      ?sensor ex:room ?room ;
-                              ex:floor ?floor .
+                      STREAM Telemetry {
+                        ?obs sosa:observedProperty vss:Speed .
+                        ?obs sosa:hasFeatureOfInterest ?vehicle .
+                        ?obs sosa:hasSimpleResult ?kmh .
+                      }
+                      ?vehicle fleet:assignedDriver ?d .
+                      ?d fleet:name ?driver .
+                      ?vehicle svc:route ?route .
                     }
                     """;
-
             engine.registerCqelsQuery(query, row ->
                     System.out.println("  enriched -> " + row));
 
             engine.start();
-            System.out.println("Engine started. Each reading is joined to its sensor's room/floor.\n");
+            System.out.println("Engine started. Each speed reading is joined to its driver and service route.\n");
 
-            double[] temps = {21.4, 27.9, 30.1, 19.8, 33.2};
-            for (int i = 0; i < temps.length; i++) {
-                String sensor = EX + "sensor/" + (i % 3);
-                System.out.printf("push: sensor%d = %.1f%n", i % 3, temps[i]);
-                readings.push(sensor, EX + "temperature", temps[i]);
-                Thread.sleep(250);
+            String[][] fleet = {
+                    {Fleet.SENSOR_EV1, Fleet.EV1}, {Fleet.SENSOR_EV2, Fleet.EV2}, {Fleet.SENSOR_EV3, Fleet.EV3}};
+            double[] kmh = {52.0, 64.0, 48.0};
+            for (int i = 0; i < kmh.length; i++) {
+                String[] ev = fleet[i];
+                System.out.printf("push: %s speed = %.0f km/h%n", ev[1].substring(Fleet.EX.length()), kmh[i]);
+                Fleet.pushObservation(telemetry, ev[0], ev[1], Fleet.SPEED, kmh[i]);
+                Thread.sleep(300);
             }
-            Thread.sleep(500);
+            Thread.sleep(600);
         }
         System.out.println("\nDone.");
     }

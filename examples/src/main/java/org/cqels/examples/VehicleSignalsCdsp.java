@@ -6,28 +6,18 @@ import org.cqels.engine.DataStream;
 import java.util.Random;
 
 /**
- * Example 6 — Connected-vehicle signals (CDSP / COVESA VSS).
+ * Example — the flagship VSS scenario: per-vehicle speeding detection (GROUP BY + HAVING).
  *
- * <p>In a COVESA Common Data Standard for the Practice (CDSP) / Vehicle Signal
- * Specification (VSS) setting, vehicles emit signal samples such as {@code vss:Speed}.
- * This example monitors a fleet: each 5-second window reports, per vehicle, the average
- * and top speed and the number of samples — and a {@code HAVING} clause keeps only the
- * vehicles that exceeded a speed limit in that window (a continuous "speeding" alert).
- *
- * <p>Key ideas:
- * <ul>
- *   <li>Domain RDF stream over the COVESA VSS namespace.</li>
- *   <li>{@code GROUP BY ?vehicle} with {@code AVG} / {@code MAX} / {@code COUNT}.</li>
- *   <li>{@code HAVING(?topSpeed > 120)} — post-aggregation filter on the SELECT alias,
- *       so only speeding vehicles are emitted.</li>
- * </ul>
+ * <p>The fleet's defining query: over a 5-second window, compute each vehicle's top and average
+ * speed from its {@code vss:Speed} observations and report only those exceeding a limit, via
+ * {@code GROUP BY ?vehicle} + {@code HAVING}. This is the COVESA VSS use case that motivated the
+ * whole fleet domain (cf. the COVESA CDSP), expressed over SOSA-wrapped VSS observations.
  *
  * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.examples.VehicleSignalsCdsp}
  */
 public class VehicleSignalsCdsp {
 
-    private static final String VSS = "https://covesa.global/vss#";
-    private static final Random RANDOM = new Random(23);
+    private static final Random RANDOM = new Random(42);
 
     public static void main(String[] args) throws InterruptedException {
         try (CQELSEngine engine = CQELSEngine.builder()
@@ -35,35 +25,38 @@ public class VehicleSignalsCdsp {
                 .withMemoryStore()
                 .build()) {
 
-            DataStream speed = engine.createStream("VehicleSpeed");
+            DataStream telemetry = engine.createStream("Telemetry");
 
-            String query = """
-                    PREFIX vss: <https://covesa.global/vss#>
+            String query = Fleet.PREFIXES + """
                     REGISTER QUERY Speeding AS
                     SELECT ?vehicle (MAX(?kmh) AS ?topSpeed) (AVG(?kmh) AS ?avgSpeed) (COUNT(*) AS ?samples)
-                    FROM STREAM VehicleSpeed [RANGE 5s]
+                    FROM STREAM Telemetry [RANGE 5s]
                     WHERE {
-                      STREAM VehicleSpeed { ?vehicle vss:Speed ?kmh . }
+                      STREAM Telemetry {
+                        ?obs sosa:observedProperty vss:Speed .
+                        ?obs sosa:hasFeatureOfInterest ?vehicle .
+                        ?obs sosa:hasSimpleResult ?kmh .
+                      }
                     }
                     GROUP BY ?vehicle
                     HAVING(?topSpeed > 120)
                     """;
-
             engine.registerCqelsQuery(query, row ->
                     System.out.println("  SPEEDING -> " + row));
 
             engine.start();
-            System.out.println("Engine started. Per-vehicle speed over 5s windows; only > 120 km/h reported.\n");
+            System.out.println("Engine started. Per-vehicle speeding (top speed > 120 km/h) each 5s.\n");
 
-            // Three vehicles; one is biased fast so it trips the HAVING filter.
-            double[] base = {90.0, 110.0, 135.0};
+            // Three EVs; EV-9TZ runs fast enough to trip the HAVING filter.
+            String[][] fleet = {
+                    {Fleet.SENSOR_EV1, Fleet.EV1}, {Fleet.SENSOR_EV2, Fleet.EV2}, {Fleet.SENSOR_EV3, Fleet.EV3}};
+            double[] base = {90.0, 105.0, 135.0};
             for (int i = 0; i < 60; i++) {
-                int v = i % base.length;
+                int v = i % fleet.length;
                 double kmh = base[v] + (RANDOM.nextDouble() - 0.5) * 20;
-                speed.push("https://example.org/vehicle/" + v, VSS + "Speed", kmh);
-                Thread.sleep(200);
+                Fleet.pushObservation(telemetry, fleet[v][0], fleet[v][1], Fleet.SPEED, kmh);
+                Thread.sleep(80);
             }
-
             Thread.sleep(1000);
         }
         System.out.println("\nDone.");
