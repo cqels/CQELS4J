@@ -75,6 +75,8 @@ public final class CqelsMemoryMcpServer {
     private static final Pattern FROM_STREAM = Pattern.compile("FROM\\s+STREAM\\s+(\\w+)", Pattern.CASE_INSENSITIVE);
     /** Matches the `REGISTER QUERY <name>` id so we can reject a colliding registration up front. */
     private static final Pattern REGISTER_NAME = Pattern.compile("REGISTER\\s+QUERY\\s+(\\w+)", Pattern.CASE_INSENSITIVE);
+    /** Matches `FILTER(SEQ(...))` so register_stream_query can route ordered CEP to detect_sequence. */
+    private static final Pattern SEQ_FILTER = Pattern.compile("FILTER\\s*\\(\\s*SEQ", Pattern.CASE_INSENSITIVE);
     /** Streams created so far (created once per name; createStream twice would throw). */
     private static final Map<String, DataStream> STREAMS = new ConcurrentHashMap<>();
     /** Per-registered-query bounded buffer of emitted result rows, drained by poll_results. */
@@ -288,12 +290,21 @@ public final class CqelsMemoryMcpServer {
                 """;
         return new McpServerFeatures.SyncToolSpecification(
                 new McpSchema.Tool("register_stream_query", null,
-                        "Register a continuous CQELS-QL query (windows, aggregates, CEP). Returns a query "
-                                + "id; emitted rows are buffered — read them with poll_results.",
+                        "Register a continuous CQELS-QL query (windows + aggregates). Returns a query "
+                                + "id; emitted rows are buffered — read them with poll_results. For ordered "
+                                + "event sequences (FILTER(SEQ(...))) use detect_sequence instead.",
                         parseSchema(schema), null, null, null),
                 (exchange, request) -> {
                     try {
                         String query = str(request.arguments(), "query");
+                        // Ordered CEP must go through detect_sequence: registerCqelsQuery treats
+                        // FILTER(SEQ(...)) as an UNORDERED conjunction, so reject it here rather than
+                        // silently matching the steps out of order.
+                        if (SEQ_FILTER.matcher(query).find()) {
+                            return error("this query uses FILTER(SEQ(...)) — register ordered event "
+                                    + "sequences with detect_sequence; register_stream_query runs windows "
+                                    + "+ aggregates only and would match SEQ steps out of order.");
+                        }
                         // Ensure every stream the query references exists before registering.
                         Matcher m = FROM_STREAM.matcher(query);
                         while (m.find()) {

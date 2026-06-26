@@ -70,6 +70,7 @@ public final class Fleet {
     public static final String STEERING = VSS + "Chassis.SteeringWheel.Angle";                     // degrees
     public static final String LATITUDE = VSS + "CurrentLocation.Latitude";
     public static final String LONGITUDE = VSS + "CurrentLocation.Longitude";
+    public static final String LOCATION = VSS + "CurrentLocation";   // WKT point (geo demo)
 
     // ---- driving incident events (for the CEP demos) -------------------------------------
     public static final String EVENT = FLEET + "event";
@@ -141,6 +142,20 @@ public final class Fleet {
     }
 
     /**
+     * Push a location {@code sosa:Observation} whose {@code observedProperty} is {@code vss:CurrentLocation}
+     * and whose result is a typed WKT literal — the SOSA-shaped form of a GPS reading, used by the geo demo.
+     */
+    public static void pushLocationObservation(DataStream stream, String sensor, String vehicle, String wkt) {
+        IRI obs = VF.createIRI(EX + "obs/" + OBS_SEQ.incrementAndGet());
+        stream.push(obs, VF.createIRI(RDF_TYPE), VF.createIRI(OBSERVATION));
+        stream.push(obs, VF.createIRI(MADE_BY_SENSOR), VF.createIRI(sensor));
+        stream.push(obs, VF.createIRI(OBSERVED_PROPERTY), VF.createIRI(LOCATION));
+        stream.push(obs, VF.createIRI(HAS_FEATURE_OF_INTEREST), VF.createIRI(vehicle));
+        stream.push(VF.createStatement(obs, VF.createIRI(HAS_SIMPLE_RESULT),
+                VF.createLiteral(wkt, VF.createIRI(GEO_WKT))));
+    }
+
+    /**
      * Seed the static background graph: fleet membership + driver + depot per vehicle; charging
      * stations (name, max power, WKT location); geofenced zones (speed limit + WKT area); GTFS-style
      * service assignments with a next-duty SoC reserve; and a traffic sensor. Plus a few signal→unit
@@ -148,6 +163,14 @@ public final class Fleet {
      */
     public static void seedStatic(CQELSEngine engine) {
         try (RepositoryConnection conn = engine.getRepository().getConnection()) {
+            // stable type facts — the VSSo/SOSA typing layer
+            for (String v : new String[]{EV1, EV2, EV3}) {
+                conn.add(VF.createIRI(v), VF.createIRI(RDF_TYPE), VF.createIRI(VEHICLE_CLASS));
+            }
+            for (String s : new String[]{SENSOR_EV1, SENSOR_EV2, SENSOR_EV3}) {
+                conn.add(VF.createIRI(s), VF.createIRI(RDF_TYPE), VF.createIRI(SENSOR_CLASS));
+            }
+
             // fleet / driver / depot
             assign(conn, EV1, "Alice", "D", 35);   // next-duty reserve 35%
             assign(conn, EV2, "Bob", "D", 50);

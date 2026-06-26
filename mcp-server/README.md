@@ -34,7 +34,7 @@ for wrapping CQELS in your own MCP server.
 | Tool | Arguments | What it does |
 |------|-----------|--------------|
 | `push_event` | `stream`, `subject`, `predicate`, `object` | Push one triple as an event into a named stream (created on first use). Numeric objects become numeric literals so `FILTER`/aggregates work; `http(s)://` becomes an IRI; predicate `"a"` is shorthand for `rdf:type`. |
-| `register_stream_query` | `query` | Register a continuous CQELS-QL query (`REGISTER QUERY … FROM STREAM … [window] …`). Returns a query **id**; emitted rows are buffered server-side (bounded — see below). |
+| `register_stream_query` | `query` | Register a continuous CQELS-QL query (`REGISTER QUERY … FROM STREAM … [window] …`) — windows + aggregates. Returns a query **id**; emitted rows are buffered server-side (bounded — see below). Ordered `FILTER(SEQ(...))` patterns are rejected here — use `detect_sequence`. |
 | `poll_results` | `queryId` | Drain and return up to 100 rows the query has emitted since the last poll; flags if more remain or if any were dropped. |
 | `unregister_stream_query` | `queryId` | Stop a query and free its buffer when you're done with it. |
 
