@@ -4,23 +4,20 @@ import org.cqels.asp.config.AspStreamSolveConfig;
 import org.cqels.engine.CQELSEngine;
 import org.cqels.engine.DataStream;
 import org.cqels.engine.QueryResultListener;
-import org.eclipse.rdf4j.model.IRI;
-import org.eclipse.rdf4j.model.ValueFactory;
-import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
 
 import java.util.List;
 import java.util.Map;
 
 /**
- * Example 16 — Answer-Set Programming over a stream (cqels-asp).
+ * Example — Answer-Set Programming over the stream (cqels-asp).
  *
- * <p>For rule-based derivation beyond SPARQL, CQELS can evaluate ASP (Answer-Set
- * Programming) programs continuously. Each RDF triple {@code (s, p, o)} becomes an ASP fact
- * {@code rdf(s, p, o)}; the program derives new atoms over each stream delta.
+ * <p>For rule-based derivation beyond SPARQL, CQELS evaluates ASP programs continuously. Each RDF
+ * triple {@code (s, p, o)} becomes an ASP fact {@code rdf(s, p, o)}; the program derives new atoms
+ * over each stream delta.
  *
- * <p>The rule below derives {@code colleague(X, Y)} for any two distinct people sharing an
- * employer — a genuine join + inequality, not a simple projection:
- * <pre>colleague(X, Y) :- rdf(X, iri(".../worksAt"), C), rdf(Y, iri(".../worksAt"), C), X != Y.</pre>
+ * <p>The rule derives {@code monitors(Sensor, Tank)} from each observation — joining
+ * {@code sosa:madeBySensor} and {@code sosa:hasFeatureOfInterest} on the observation:
+ * <pre>monitors(S, T) :- rdf(O, iri(".../madeBySensor"), S), rdf(O, iri(".../hasFeatureOfInterest"), T).</pre>
  *
  * <p>Add-on dependency: {@code org.cqels:cqels-asp}.
  *
@@ -28,32 +25,29 @@ import java.util.Map;
  */
 public class AspReasoning {
 
-    private static final String EX = "http://example.org/";
-
     public static void main(String[] args) throws InterruptedException {
         try (CQELSEngine engine = CQELSEngine.builder()
                 .id("asp-reasoning")
                 .withMemoryStore()
                 .build()) {
 
-            DataStream people = engine.createStream("People");
+            DataStream observations = engine.createStream("Observations");
 
             String program = """
-                    colleague(X, Y) :- rdf(X, iri("http://example.org/worksAt"), C),
-                                       rdf(Y, iri("http://example.org/worksAt"), C),
-                                       X != Y.
+                    monitors(S, T) :- rdf(O, iri("http://www.w3.org/ns/sosa/madeBySensor"), S),
+                                      rdf(O, iri("http://www.w3.org/ns/sosa/hasFeatureOfInterest"), T).
                     """;
 
             AspStreamSolveConfig config = AspStreamSolveConfig.builder()
-                    .inputStreamName("People")
+                    .inputStreamName("Observations")
                     .build();
 
-            engine.registerAspQuery("Colleagues", program, config,
-                    "colleague", List.of("x", "y"),
+            engine.registerAspQuery("Monitors", program, config,
+                    "monitors", List.of("s", "t"),
                     new QueryResultListener<Map<String, Object>>() {
                         @Override
                         public void onResult(Map<String, Object> row) {
-                            System.out.println("  colleague -> " + row);
+                            System.out.println("  monitors -> " + row);
                         }
 
                         @Override
@@ -66,16 +60,15 @@ public class AspReasoning {
                     });
 
             engine.start();
-            System.out.println("Engine started. Rule: colleagues share an employer.\n");
+            System.out.println("Engine started. Rule: a sensor monitors the tank its observations are about.\n");
 
-            ValueFactory vf = SimpleValueFactory.getInstance();
-            IRI worksAt = vf.createIRI(EX + "worksAt");
-            // alice + bob -> Acme (colleagues); carol -> Globex (alone)
-            for (String[] pair : new String[][]{
-                    {"alice", "Acme"}, {"bob", "Acme"}, {"carol", "Globex"}}) {
-                System.out.println("push: " + pair[0] + " worksAt " + pair[1]);
-                people.push(vf.createStatement(
-                        vf.createIRI(EX + pair[0]), worksAt, vf.createIRI(EX + pair[1])));
+            String[][] s = {
+                    {Brewery.SENSOR_T1, Brewery.TANK1},
+                    {Brewery.SENSOR_T2, Brewery.TANK2},
+                    {Brewery.SENSOR_T3, Brewery.TANK3}};
+            for (String[] sensor : s) {
+                System.out.println("push: observation from " + sensor[0].substring(Brewery.EX.length()));
+                Brewery.pushObservation(observations, sensor[0], sensor[1], Brewery.TEMPERATURE, 22.0);
                 Thread.sleep(300);
             }
             Thread.sleep(1000);

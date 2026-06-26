@@ -3,23 +3,19 @@ package org.cqels.examples;
 import org.cqels.engine.CQELSEngine;
 import org.cqels.engine.DataStream;
 import org.cqels.reasoning.config.RDFSProfile;
-import org.cqels.reasoning.config.ReasoningConfig;
 import org.cqels.reasoning.engine.ReactiveReteAdapter;
-import org.eclipse.rdf4j.model.vocabulary.RDF;
-import org.eclipse.rdf4j.model.vocabulary.RDFS;
 
 /**
- * Example 14 — RDFS reasoning over a stream (cqels-reasoning-rete).
+ * Example — RDFS reasoning over the stream (cqels-reasoning-rete).
  *
- * <p>CQELS can run incremental RDFS/OWL inference inline with stream processing. A RETE
- * reasoner is attached to the engine as a {@code StreamProcessor}; as triples arrive it
- * fires entailment rules and injects the inferred triples back into the stream, where
- * ordinary CQELS-QL queries can match them.
+ * <p>CQELS can run incremental RDFS/OWL inference inline with stream processing. A RETE reasoner is
+ * attached as a {@code StreamProcessor}; as triples arrive it fires entailment rules and injects the
+ * inferred triples back into the stream for ordinary queries to match.
  *
- * <p>Here we declare {@code ex:Sensor rdfs:subClassOf ex:Device}, then push
- * {@code ex:sensor1 a ex:Sensor}. The RDFS <em>rdfs9</em> rule infers
- * {@code ex:sensor1 a ex:Device} — and the query, which only asks for {@code ex:Device}
- * instances, emits {@code sensor1} purely from the inferred triple.
+ * <p>The IBS-TH2 sensor types subclass {@code sosa:Sensor}
+ * ({@code sensor:IBS-TH2-Plus-T rdfs:subClassOf sosa:Sensor}). After declaring that and registering
+ * {@code tank1-T a sensor:IBS-TH2-Plus-T}, the <em>rdfs9</em> rule infers
+ * {@code tank1-T a sosa:Sensor} — so a query asking only for {@code sosa:Sensor} instances finds it.
  *
  * <p>Add-on dependency: {@code org.cqels:cqels-reasoning-rete}.
  *
@@ -27,12 +23,8 @@ import org.eclipse.rdf4j.model.vocabulary.RDFS;
  */
 public class RdfsReasoning {
 
-    private static final String EX = "http://example.org/";
-
     public static void main(String[] args) throws InterruptedException {
-        // RDFS entailment rules, compiled into a reactive RETE stream processor.
-        ReasoningConfig config = RDFSProfile.INSTANCE.createConfig();
-        ReactiveReteAdapter reasoner = new ReactiveReteAdapter(config);
+        ReactiveReteAdapter reasoner = new ReactiveReteAdapter(RDFSProfile.INSTANCE.createConfig());
 
         try (CQELSEngine engine = CQELSEngine.builder()
                 .id("rdfs-reasoning")
@@ -40,31 +32,29 @@ public class RdfsReasoning {
                 .addStreamProcessor(reasoner::apply)
                 .build()) {
 
-            DataStream data = engine.createStream("SensorData");
+            DataStream registry = engine.createStream("Registry");
 
-            // The query asks ONLY for ex:Device instances — none are pushed directly.
-            String query = """
-                    PREFIX ex: <http://example.org/>
-                    PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
-                    REGISTER QUERY Devices AS
-                    SELECT ?device
-                    FROM STREAM SensorData [NOW]
-                    WHERE { STREAM SensorData { ?device rdf:type ex:Device . } }
+            String query = Brewery.PREFIXES + """
+                    PREFIX sensor: <http://example.org/sensor/>
+                    REGISTER QUERY Sensors AS
+                    SELECT ?sensor
+                    FROM STREAM Registry [NOW]
+                    WHERE { STREAM Registry { ?sensor a sosa:Sensor . } }
                     """;
             engine.registerCqelsQuery(query, row ->
-                    System.out.println("  inferred Device -> " + row));
+                    System.out.println("  inferred sosa:Sensor -> " + row));
 
             engine.start();
-            System.out.println("Engine started. Schema: ex:Sensor rdfs:subClassOf ex:Device.\n");
+            System.out.println("Engine started. Schema: sensor:IBS-TH2-Plus-T rdfs:subClassOf sosa:Sensor.\n");
 
-            // 1) schema triple — lands in the reasoner's working memory
-            System.out.println("push schema: ex:Sensor rdfs:subClassOf ex:Device");
-            data.pushTriple(EX + "Sensor", RDFS.SUBCLASSOF.stringValue(), EX + "Device");
+            // 1) schema axiom — lands in the reasoner's working memory
+            System.out.println("push schema: IBS-TH2-Plus-T rdfs:subClassOf sosa:Sensor");
+            registry.pushTriple(Brewery.IBS_TH2_T, Brewery.RDFS_SUBCLASSOF, Brewery.SENSOR_CLASS);
             Thread.sleep(300);
 
-            // 2) instance triple — fires rdfs9 -> infers ex:sensor1 rdf:type ex:Device
-            System.out.println("push instance: ex:sensor1 rdf:type ex:Sensor");
-            data.pushTriple(EX + "sensor1", RDF.TYPE.stringValue(), EX + "Sensor");
+            // 2) instance — fires rdfs9 -> infers tank1-T a sosa:Sensor
+            System.out.println("push instance: tank1-T a IBS-TH2-Plus-T");
+            registry.pushTriple(Brewery.SENSOR_T1, Brewery.RDF_TYPE, Brewery.IBS_TH2_T);
             Thread.sleep(600);
         }
         System.out.println("\nDone.");

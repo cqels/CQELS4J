@@ -7,17 +7,15 @@ import org.eclipse.rdf4j.model.ValueFactory;
 import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
 
 /**
- * Example 17 — GeoSPARQL spatial filtering (cqels-geo).
+ * Example — GeoSPARQL spatial filtering (cqels-geo).
  *
  * <p>With {@code cqels-geo} on the classpath, OGC [GeoSPARQL](https://www.ogc.org/standard/geosparql/)
- * {@code geof:*} functions become available inside {@code FILTER} / {@code BIND}. Here each
- * reading carries a sensor's location and the zone polygon to check it against (both as
- * typed {@code geo:wktLiteral} values); {@code geof:sfWithin} keeps only the sensors that
- * fall inside their zone.
+ * {@code geof:*} functions become available in {@code FILTER} / {@code BIND}. Here each reading
+ * carries the tank's WKT location and the WKT outline of a cellar zone; {@code geof:sfWithin} keeps
+ * only the tanks located inside that zone.
  *
- * <p>Note: CQELS-QL has no inline {@code "…"^^geo:wktLiteral} literal syntax — geometries
- * are supplied as typed RDF literals in the data ({@code GeoVocabulary.WKT_LITERAL}) and
- * compared as variables.
+ * <p>Note: CQELS-QL has no inline {@code "…"^^geo:wktLiteral} literal syntax — geometries are supplied
+ * as typed RDF literals in the data ({@code GeoVocabulary.WKT_LITERAL}) and compared as variables.
  *
  * <p>Add-on dependency: {@code org.cqels:cqels-geo}.
  *
@@ -25,8 +23,7 @@ import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
  */
 public class GeoSpatialFilter {
 
-    private static final String EX = "http://example.org/";
-    private static final String ZONE = "POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))";
+    private static final String CELLAR_ZONE = "POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))";
 
     public static void main(String[] args) throws InterruptedException {
         ValueFactory vf = SimpleValueFactory.getInstance();
@@ -36,45 +33,39 @@ public class GeoSpatialFilter {
                 .withMemoryStore()
                 .build()) {
 
-            DataStream sensors = engine.createStream("SensorData");
+            DataStream readings = engine.createStream("Readings");
 
-            String query = """
-                    PREFIX ex: <http://example.org/>
+            String query = Brewery.PREFIXES + """
                     PREFIX geof: <http://www.opengis.net/def/function/geosparql/>
                     REGISTER QUERY InZone AS
-                    SELECT ?sensor ?point
-                    FROM STREAM SensorData [TRIPLES 2]
+                    SELECT ?tank ?loc
+                    FROM STREAM Readings [TRIPLES 2]
                     WHERE {
-                      STREAM SensorData { ?sensor ex:location ?point . ?sensor ex:zone ?zone . }
-                      FILTER(geof:sfWithin(?point, ?zone))
+                      STREAM Readings { ?tank ex:location ?loc . ?tank ex:zone ?zone . }
+                      FILTER(geof:sfWithin(?loc, ?zone))
                     }
                     """;
-
             engine.registerCqelsQuery(query, row ->
                     System.out.println("  in-zone -> " + row));
 
             engine.start();
-            System.out.println("Engine started. Zone = " + ZONE + ".\n");
+            System.out.println("Engine started. Cellar zone = " + CELLAR_ZONE + ".\n");
 
-            // sensorA is inside the zone; sensorB is outside.
-            pushReading(sensors, vf, "sensorA", "POINT(5 5)");
+            // Tank1 (POINT 2 2) is inside the cellar zone; Tank3 (POINT 20 20) is outside.
+            pushLocation(readings, vf, Brewery.TANK1, "POINT(2 2)");
             Thread.sleep(300);
-            pushReading(sensors, vf, "sensorB", "POINT(20 20)");
+            pushLocation(readings, vf, Brewery.TANK3, "POINT(20 20)");
             Thread.sleep(600);
         }
         System.out.println("\nDone.");
     }
 
-    /**
-     * Push a reading as two typed-WKT triples (location + the zone to test against). The zone
-     * is repeated per reading purely to keep this example single-stream and self-contained; in
-     * practice you would seed the zone once into the static graph (see {@code StreamStaticJoin}).
-     */
-    private static void pushReading(DataStream s, ValueFactory vf, String sensor, String wktPoint) {
-        System.out.println("push: " + sensor + " at " + wktPoint);
-        s.push(vf.createStatement(vf.createIRI(EX + sensor), vf.createIRI(EX + "location"),
+    /** Push a reading as two typed-WKT triples (the tank location + the cellar zone to test against). */
+    private static void pushLocation(DataStream s, ValueFactory vf, String tank, String wktPoint) {
+        System.out.println("push: " + tank.substring(Brewery.EX.length()) + " at " + wktPoint);
+        s.push(vf.createStatement(vf.createIRI(tank), vf.createIRI(Brewery.EX + "location"),
                 vf.createLiteral(wktPoint, GeoVocabulary.WKT_LITERAL)));
-        s.push(vf.createStatement(vf.createIRI(EX + sensor), vf.createIRI(EX + "zone"),
-                vf.createLiteral(ZONE, GeoVocabulary.WKT_LITERAL)));
+        s.push(vf.createStatement(vf.createIRI(tank), vf.createIRI(Brewery.EX + "zone"),
+                vf.createLiteral(CELLAR_ZONE, GeoVocabulary.WKT_LITERAL)));
     }
 }
