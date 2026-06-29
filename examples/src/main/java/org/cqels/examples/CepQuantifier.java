@@ -44,7 +44,9 @@ public class CepQuantifier {
             engine.start();
             System.out.println("Watching for: a speed drop, then one+ lane weaves, then a speed spike.\n");
 
-            // Drop -> Weave -> Weave -> Spike : matches (?e2+ consumes both weaves).
+            // Drop -> Weave -> Weave -> Spike. The ?e2+ quantifier matches one-or-more weaves, so the
+            // NFA reports the escalation (under relaxed contiguity it may emit more than one match as it
+            // enumerates weave counts — the point is that the variable-length middle is detected).
             for (String ev : new String[]{
                     Fleet.SPEED_DROP, Fleet.LANE_WEAVE, Fleet.LANE_WEAVE, Fleet.SPEED_SPIKE}) {
                 System.out.println("push: " + ev.substring(Fleet.FLEET.length()));

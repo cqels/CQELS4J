@@ -103,8 +103,8 @@ telemetry — speed, battery state-of-charge, location, charge power — as `sos
 `observedProperty` is a VSS signal, joined against a static fleet graph (depot, charging stations,
 geofenced zones, drivers, GTFS-style service duties). The shared vocabulary, fixed entities, and
 push helpers live in [`Fleet.java`](examples/src/main/java/org/cqels/examples/Fleet.java), so the
-examples connect into a single story rather than ad-hoc per-demo data. (The domain mirrors a real
-fleet vehicle-to-grid digital-twin deployment built on this engine.)
+examples connect into a single story rather than ad-hoc per-demo data. (The domain models a smart
+electric-vehicle fleet / vehicle-to-grid (V2G) scenario.)
 
 **Basics**
 | Demo | Feature |

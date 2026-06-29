@@ -8,9 +8,11 @@ import java.util.Random;
 /**
  * Example 3 — sliding windows for moving trends.
  *
- * <p>A {@code [SLIDE 4s STEP 2s]} window keeps the trailing 4 seconds of battery readings and
- * re-emits every 2 seconds, so consecutive results overlap — handy for moving trends. Here: each
- * vehicle's moving average / min / max state-of-charge, useful for watching battery drain.
+ * <p>A {@code [SLIDE 4s STEP 2s]} window keeps the trailing 4 seconds of battery readings, so
+ * consecutive results overlap — handy for moving trends. Here: each vehicle's moving average / min /
+ * max state-of-charge, useful for watching battery drain. (This alpha re-evaluates the sliding window
+ * on each arriving reading rather than only at the 2-second step boundary — see the engine note in
+ * {@code examples/README.md}.)
  *
  * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.examples.SlidingWindowTrends}
  */

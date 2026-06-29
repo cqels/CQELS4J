@@ -6,10 +6,10 @@ import org.cqels.engine.DataStream;
 import java.util.Random;
 
 /**
- * Example 2 — tumbling windowed aggregation.
+ * Example 2 — windowed aggregation.
  *
- * <p>Over each 3-second window, compute per-vehicle speed statistics — average, peak, and sample
- * count. A {@code [RANGE 3s]} tumbling window joins each speed {@code sosa:Observation}'s
+ * <p>Over a 3-second window, compute per-vehicle speed statistics — average, peak, and sample
+ * count. A {@code [RANGE 3s]} window joins each speed {@code sosa:Observation}'s
  * {@code observedProperty} ( = {@code vss:Speed}), {@code hasFeatureOfInterest} ( = the vehicle) and
  * {@code hasSimpleResult} ( = km/h), and {@code GROUP BY} aggregates per vehicle.
  *

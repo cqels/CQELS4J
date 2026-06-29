@@ -299,8 +299,11 @@ public final class CqelsMemoryMcpServer {
                         String query = str(request.arguments(), "query");
                         // Ordered CEP must go through detect_sequence: registerCqelsQuery treats
                         // FILTER(SEQ(...)) as an UNORDERED conjunction, so reject it here rather than
-                        // silently matching the steps out of order.
-                        if (SEQ_FILTER.matcher(query).find()) {
+                        // silently matching the steps out of order. Strip line comments first (a `#`
+                        // preceded by whitespace, or `--`) so they can't hide the SEQ from the guard;
+                        // an IRI's `#` (e.g. vss#Speed) has no leading space so it is left intact.
+                        String guardText = query.replaceAll("\\s#[^\\n]*", " ").replaceAll("--[^\\n]*", " ");
+                        if (SEQ_FILTER.matcher(guardText).find()) {
                             return error("this query uses FILTER(SEQ(...)) — register ordered event "
                                     + "sequences with detect_sequence; register_stream_query runs windows "
                                     + "+ aggregates only and would match SEQ steps out of order.");
@@ -446,7 +449,25 @@ public final class CqelsMemoryMcpServer {
                         if (!(stepsObj instanceof List<?> steps) || steps.size() < 2) {
                             return error("'steps' must be an array of at least 2 event-type IRIs");
                         }
-                        long within = (a.get("withinSeconds") instanceof Number n) ? n.longValue() : 30L;
+                        // Validate client-supplied values before interpolating them into CQELS-QL below,
+                        // so they cannot inject query structure or yield opaque parse errors.
+                        if (!stream.matches("[A-Za-z_][A-Za-z0-9_]*")) {
+                            return error("'stream' must be a simple identifier matching [A-Za-z_][A-Za-z0-9_]* — got: " + stream);
+                        }
+                        for (Object step : steps) {
+                            String iri = String.valueOf(step);
+                            if (iri.isEmpty() || iri.matches(".*[\\s<>\"{}|^`\\\\].*")) {
+                                return error("each step must be a valid absolute IRI (no whitespace or <>\"{}|^`\\ chars) — got: " + iri);
+                            }
+                        }
+                        Object wObj = a.get("withinSeconds");
+                        long within = 30L;
+                        if (wObj != null) {
+                            if (!(wObj instanceof Number n) || n.doubleValue() != Math.floor(n.doubleValue()) || n.longValue() <= 0) {
+                                return error("'withinSeconds' must be a positive integer");
+                            }
+                            within = n.longValue();
+                        }
                         ensureStream(engine, stream);
                         // Reserve a buffer under a free generated id (won't clobber an existing query).
                         BlockingQueue<String> buffer = new LinkedBlockingQueue<>(MAX_BUFFER);

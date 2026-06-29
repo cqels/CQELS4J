@@ -18,8 +18,15 @@ semantics, and vehicle ids are pseudonymous asset ids (EV-7Q2 / EV-3K8 / EV-9TZ)
 Shared vocabulary, the canonical observation push, and the seeded static context (depot,
 charging stations, geofenced zones, drivers, GTFS-style service assignments) live in
 [`Fleet.java`](src/main/java/org/cqels/examples/Fleet.java) so the demos form a single
-connected world rather than ad-hoc per-demo data. The domain mirrors a real fleet vehicle-to-grid
-digital-twin deployment built on this engine.
+connected world rather than ad-hoc per-demo data. The domain models a smart electric-vehicle fleet /
+vehicle-to-grid (V2G) scenario.
+
+> **Reading the output:** CQELS is a *continuous* engine — it re-evaluates a query's window as each
+> element arrives and re-emits the current results (RStream-style). Because each observation is pushed
+> as several triples, you'll see a result row or aggregate **printed multiple times** as a reading
+> streams in, and counts climb while the window fills. That repetition is the engine working, not a
+> bug; the **latest / distinct values** are the answer. The demos print every emission so the dynamics
+> are visible.
 
 ## Prerequisites
 
