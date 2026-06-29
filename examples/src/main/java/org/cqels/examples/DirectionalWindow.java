@@ -2,22 +2,19 @@ package org.cqels.examples;
 
 import org.cqels.engine.CQELSEngine;
 import org.cqels.engine.DataStream;
-import org.eclipse.rdf4j.model.IRI;
-import org.eclipse.rdf4j.model.ValueFactory;
-import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
 
 /**
- * Example 8 — Directional (LARS) windows with an emission policy.
+ * Example — directional (LARS-style) window with an emission policy.
  *
- * <p>A distinctive CQELS feature: windows that look <em>forward</em> from an anchor.
- * {@code [FUTURE 2s ...]} groups the events in the 2 seconds after each anchor. Because a
- * forward window can only be complete once enough time has passed, results are emitted at
- * window close — and the {@code EMIT} policy controls what you see in between:
- * {@code ON_UPDATE} (running rows), {@code ON_CLOSE} (final only), or
- * {@code EARLY_AND_FINAL} (both).
+ * <p>Beyond backward-looking windows, CQELS-QL supports <em>directional</em> windows. A
+ * {@code [FUTURE 2s …]} window anchored at an observation covers the next 2 seconds, and
+ * {@code EMIT EARLY_AND_FINAL} reports both running and final results — here, how many readings each
+ * vehicle produces in the forward window during a V2G charging burst (the demo streams charge-power
+ * readings, so the count is of charge readings).
  *
- * <p>Explicit event-time timestamps are used so the window boundaries are deterministic;
- * a trailing event past the window advances the watermark and closes it.
+ * <p>Uses explicit event timestamps ({@link Fleet#pushObservationAt}) so the directional window is
+ * deterministic. Directional ({@code FUTURE}/centered) windows execute as single-pattern windowed
+ * aggregates, so this counts the observation per vehicle rather than joining the signal type.
  *
  * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.examples.DirectionalWindow}
  */
@@ -29,35 +26,28 @@ public class DirectionalWindow {
                 .withMemoryStore()
                 .build()) {
 
-            DataStream events = engine.createStream("Events");
+            DataStream telemetry = engine.createStream("Telemetry");
 
-            String query = """
-                    PREFIX ex: <http://example.org/>
-                    REGISTER QUERY ForwardCountPerKey AS
-                    SELECT ?k (COUNT(*) AS ?c)
-                    FROM STREAM Events [FUTURE 2s EMIT EARLY_AND_FINAL]
-                    WHERE { STREAM Events { ?k ex:value ?v . } }
-                    GROUP BY ?k
+            String query = Fleet.PREFIXES + """
+                    REGISTER QUERY ForwardCharge AS
+                    SELECT ?vehicle (COUNT(*) AS ?c)
+                    FROM STREAM Telemetry [FUTURE 2s EMIT EARLY_AND_FINAL]
+                    WHERE { STREAM Telemetry { ?obs sosa:hasFeatureOfInterest ?vehicle . } }
+                    GROUP BY ?vehicle
                     """;
-
             engine.registerCqelsQuery(query, row ->
                     System.out.println("  [FUTURE 2s] -> " + row));
 
             engine.start();
-            System.out.println("Engine started. Forward 2s window, EARLY_AND_FINAL emission.\n");
+            System.out.println("Engine started. Forward 2s window, running + final charge-reading counts.\n");
 
-            // Anchor at t0 covers (t0, t0+2000]. Push with explicit event-time (ms);
-            // explicit-timestamp push uses the IRI-typed overload.
-            ValueFactory vf = SimpleValueFactory.getInstance();
-            IRI value = vf.createIRI("http://example.org/value");
-            events.push(vf.createIRI("http://example.org/a"), value, vf.createLiteral(1L), 1000L);
-            events.push(vf.createIRI("http://example.org/b"), value, vf.createLiteral(1L), 1500L);
-            events.push(vf.createIRI("http://example.org/a"), value, vf.createLiteral(1L), 2000L);
+            // Anchor at t0; charge readings at +1000/+1500/+2000 ms, then a later one closes the window.
+            Fleet.pushObservationAt(telemetry, Fleet.SENSOR_EV1, Fleet.EV1, Fleet.CHARGE_POWER, 7400.0, 1000L);
+            Fleet.pushObservationAt(telemetry, Fleet.SENSOR_EV2, Fleet.EV2, Fleet.CHARGE_POWER, 11000.0, 1500L);
+            Fleet.pushObservationAt(telemetry, Fleet.SENSOR_EV1, Fleet.EV1, Fleet.CHARGE_POWER, 7300.0, 2000L);
             Thread.sleep(300);
-            // A later event advances the watermark past the window so it closes + finalizes.
-            events.push(vf.createIRI("http://example.org/z"), value, vf.createLiteral(1L), 4000L);
-
-            Thread.sleep(1500);
+            Fleet.pushObservationAt(telemetry, Fleet.SENSOR_EV3, Fleet.EV3, Fleet.CHARGE_POWER, 3600.0, 4000L);
+            Thread.sleep(600);
         }
         System.out.println("\nDone.");
     }

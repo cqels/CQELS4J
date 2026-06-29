@@ -6,21 +6,18 @@ import org.cqels.engine.cep.PatternMatch;
 import org.cqels.stream.StreamElement;
 
 /**
- * Example 11 — CEP with a quantifier (one-or-more).
+ * Example — CEP with a quantifier (one-or-more).
  *
- * <p>Beyond a fixed sequence ({@code SEQ(?a ; ?b)}), CQELS-QL CEP supports quantifiers on a
- * step. Here {@code ?retry+} matches <em>one or more</em> retry events between the initial
- * critical alert and the eventual failure — an escalation signature of variable length.
+ * <p>A CEP step can carry a quantifier. Here the middle step {@code ?e2+} matches <em>one or more</em>
+ * lane-weave events between an initial speed drop and an eventual speed spike — an impaired-driving
+ * pattern of variable length: drop → weave… → spike.
  *
  * <p>Quantifiers: {@code ?e+} (1+), {@code ?e*} (0+), {@code ?e?} (0/1), {@code ?e{n}},
- * {@code ?e{m,n}}. A step can also be negated with {@code NOT ?e} ("must not occur between
- * the neighbours") — see {@code CQELS-QL_SPEC.md} for the full CEP grammar.
+ * {@code ?e{m,n}}; a step can also be negated with {@code NOT ?e} (see {@code CQELS-QL_SPEC.md}).
  *
  * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.examples.CepQuantifier}
  */
 public class CepQuantifier {
-
-    private static final String EX = "http://example.org/";
 
     public static void main(String[] args) throws InterruptedException {
         try (CQELSEngine engine = CQELSEngine.builder()
@@ -28,32 +25,32 @@ public class CepQuantifier {
                 .withMemoryStore()
                 .build()) {
 
-            DataStream alerts = engine.createStream("Alerts");
+            DataStream events = engine.createStream("Events");
 
-            String query = """
-                    PREFIX ex: <http://example.org/>
-                    REGISTER QUERY Escalation AS
+            String query = Fleet.PREFIXES + """
+                    REGISTER QUERY ImpairedDriving AS
                     SELECT ?e1
-                    FROM STREAM Alerts [RANGE 30s]
+                    FROM STREAM Events [RANGE 30s]
                     WHERE {
-                      ?e1 ex:level ex:Critical .
-                      ?e2 ex:level ex:Retry .
-                      ?e3 ex:level ex:Failure .
+                      ?e1 fleet:event fleet:SpeedDropEvent .
+                      ?e2 fleet:event fleet:LaneWeaveEvent .
+                      ?e3 fleet:event fleet:SpeedSpikeEvent .
                       FILTER(SEQ(?e1 ; ?e2+ ; ?e3))
                     }
                     """;
-
             engine.registerCepQuery(query, (PatternMatch<StreamElement> match) ->
-                    System.out.println("  ESCALATION MATCHED (" + match.size() + " events): " + match));
+                    System.out.println("  IMPAIRED DRIVING MATCHED (" + match.size() + " events): " + match));
 
             engine.start();
-            System.out.println("Watching for: Critical, then one+ Retry, then Failure.\n");
+            System.out.println("Watching for: a speed drop, then one+ lane weaves, then a speed spike.\n");
 
-            // Critical -> Retry -> Retry -> Failure : matches (?e2+ consumes both retries).
-            for (String[] ev : new String[][]{
-                    {"a1", "Critical"}, {"a2", "Retry"}, {"a3", "Retry"}, {"a4", "Failure"}}) {
-                System.out.println("push: " + ev[1]);
-                alerts.pushTriple(EX + "alert/" + ev[0], EX + "level", EX + ev[1]);
+            // Drop -> Weave -> Weave -> Spike. The ?e2+ quantifier matches one-or-more weaves, so the
+            // NFA reports the escalation (under relaxed contiguity it may emit more than one match as it
+            // enumerates weave counts — the point is that the variable-length middle is detected).
+            for (String ev : new String[]{
+                    Fleet.SPEED_DROP, Fleet.LANE_WEAVE, Fleet.LANE_WEAVE, Fleet.SPEED_SPIKE}) {
+                System.out.println("push: " + ev.substring(Fleet.FLEET.length()));
+                Fleet.pushDrivingEvent(events, ev);
                 Thread.sleep(300);
             }
             Thread.sleep(1500);

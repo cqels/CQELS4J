@@ -4,21 +4,16 @@ import org.cqels.engine.CQELSEngine;
 import org.cqels.engine.DataStream;
 
 /**
- * Example 12 — CypherQL: continuous property-graph queries.
+ * Example — CypherQL: continuous property-graph queries.
  *
- * <p>CQELS also speaks Cypher. The same streaming model (windows, continuous results)
- * applies, but you match property-graph patterns instead of triple patterns. RDF data maps
- * naturally: {@code rdf:type} becomes a node label, and predicates become node properties.
- *
- * <p>Here a {@code MATCH (p:Person) RETURN p} continuously reports the people appearing on
- * the stream — each {@code rdf:type ex:Person} triple is one labelled node match.
+ * <p>CQELS also speaks Cypher. The same streaming model applies, but you match property-graph
+ * patterns instead of triple patterns; RDF maps naturally — {@code rdf:type} becomes a node label.
+ * Here {@code MATCH (o:Observation) RETURN o} continuously reports the telemetry observations flowing
+ * through the fleet stream (each {@code sosa:Observation} is one labelled node).
  *
  * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.examples.CypherGraphQuery}
  */
 public class CypherGraphQuery {
-
-    private static final String EX = "http://example.org/";
-    private static final String RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
 
     public static void main(String[] args) throws InterruptedException {
         try (CQELSEngine engine = CQELSEngine.builder()
@@ -26,27 +21,26 @@ public class CypherGraphQuery {
                 .withMemoryStore()
                 .build()) {
 
-            DataStream people = engine.createStream("People");
+            DataStream telemetry = engine.createStream("Telemetry");
 
             String cypher = """
-                    FROM STREAM People [NOW]
-                    MATCH (p:Person)
-                    RETURN p
+                    FROM STREAM Telemetry [NOW]
+                    MATCH (o:Observation)
+                    RETURN o
                     """;
-
             engine.registerCypherQuery(cypher, row ->
-                    System.out.println("  person -> " + row));
+                    System.out.println("  observation -> " + row));
 
             engine.start();
-            System.out.println("Engine started. Cypher MATCH (p:Person) over the stream.\n");
+            System.out.println("Engine started. Cypher MATCH (o:Observation) over the telemetry stream.\n");
 
-            // Each person is a label triple (rdf:type Person); MATCH (p:Person) fires per element.
-            for (String name : new String[]{"alice", "bob", "carol"}) {
-                System.out.println("push: " + name + " a Person");
-                people.pushTriple(EX + name, RDF_TYPE, EX + "Person");
+            String[][] fleet = {
+                    {Fleet.SENSOR_EV1, Fleet.EV1}, {Fleet.SENSOR_EV2, Fleet.EV2}, {Fleet.SENSOR_EV3, Fleet.EV3}};
+            for (String[] ev : fleet) {
+                System.out.println("push: observation from " + ev[1].substring(Fleet.EX.length()));
+                Fleet.pushObservation(telemetry, ev[0], ev[1], Fleet.SPEED, 55.0);
                 Thread.sleep(250);
             }
-
             Thread.sleep(800);
         }
         System.out.println("\nDone.");

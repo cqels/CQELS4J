@@ -6,9 +6,12 @@ exposes a **CQELS engine as AI-accessible tools** over stdio — both the static
 client (Claude Desktop, an IDE assistant, or any MCP-capable agent) can use a CQELS RDF
 store as **queryable memory**, and also **register continuous CQELS-QL queries** (windows,
 aggregates, CEP — the same query shapes as the examples), feed them events, and read what
-the engine emits. This example uses `.withMemoryStore()`, so the store is in-memory and
-**session-scoped (cleared when the process exits)**; swap in a durable storage backend for
-persistence across restarts.
+the engine emits. The tools are **vocabulary-agnostic**, so the same server drives the
+[`examples/`](../examples/) **electric-vehicle fleet / V2G** world from an AI client: push VSS
+`sosa:Observation`s, register a per-vehicle speeding monitor, detect a road-rage CEP sequence,
+or teach the `ex:ElectricBus ⊑ vsso:Vehicle` taxonomy (walkthrough below). This example uses
+`.withMemoryStore()`, so the store is in-memory and **session-scoped (cleared when the process
+exits)**; swap in a durable storage backend for persistence across restarts.
 
 Its core dependencies are the published `cqels-engine` and the official
 [MCP Java SDK](https://github.com/modelcontextprotocol/java-sdk) (`io.modelcontextprotocol.sdk:mcp`),
@@ -31,7 +34,7 @@ for wrapping CQELS in your own MCP server.
 | Tool | Arguments | What it does |
 |------|-----------|--------------|
 | `push_event` | `stream`, `subject`, `predicate`, `object` | Push one triple as an event into a named stream (created on first use). Numeric objects become numeric literals so `FILTER`/aggregates work; `http(s)://` becomes an IRI; predicate `"a"` is shorthand for `rdf:type`. |
-| `register_stream_query` | `query` | Register a continuous CQELS-QL query (`REGISTER QUERY … FROM STREAM … [window] …`). Returns a query **id**; emitted rows are buffered server-side (bounded — see below). |
+| `register_stream_query` | `query` | Register a continuous CQELS-QL query (`REGISTER QUERY … FROM STREAM … [window] …`) — windows + aggregates. Returns a query **id**; emitted rows are buffered server-side (bounded — see below). Ordered `FILTER(SEQ(...))` patterns are rejected here — use `detect_sequence`. |
 | `poll_results` | `queryId` | Drain and return up to 100 rows the query has emitted since the last poll; flags if more remain or if any were dropped. |
 | `unregister_stream_query` | `queryId` | Stop a query and free its buffer when you're done with it. |
 
@@ -74,7 +77,7 @@ server keeps running until signalled):
 ( printf '%s\n' \
   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"cli","version":"1.0"}}}' \
   '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
-  '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"store_fact","arguments":{"subject":"http://ex/alice","predicate":"http://ex/knows","object":"http://ex/bob"}}}' \
+  '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"store_fact","arguments":{"subject":"https://example.org/fleet/vehicle/EV-7Q2","predicate":"https://covesa.global/fleet#assignedDriver","object":"https://example.org/fleet/driver/alice"}}}' \
   '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"query","arguments":{"sparql":"SELECT ?s ?p ?o WHERE { ?s ?p ?o }"}}}'; \
   sleep 2 ) | java -jar target/cqels-mcp-server.jar &
 sleep 4; kill %1 2>/dev/null   # stop the long-running server
@@ -86,25 +89,27 @@ sends SIGTERM on shutdown, which the server's hook handles cleanly.)
 
 ### Streaming smoke test
 
-The same way, drive a **continuous query**: register a `[NOW]` filter, push three sensor
-readings, then poll. (Send requests with a small gap so each completes before the next —
-the order must be register → push → poll, just as a real client awaits each response.)
+The same way, drive a **continuous query** over vehicle telemetry: register a `[NOW]` speed
+filter, push three vehicles' `vss:Speed` readings, then poll. `push_event` sends one triple
+per call, so this uses the flat `?vehicle vss:Speed ?kmh` form (the examples' `Fleet` helper
+batches the richer 5-triple `sosa:Observation`). Send requests with a small gap so each
+completes before the next — the order must be register → push → poll.
 
 ```bash
 { emit() { printf '%s\n' "$1"; sleep 0.6; }
   emit '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"cli","version":"1.0"}}}'
   emit '{"jsonrpc":"2.0","method":"notifications/initialized"}'
-  emit '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"register_stream_query","arguments":{"query":"PREFIX ex: <http://ex/> REGISTER QUERY Hot AS SELECT ?sensor ?t FROM STREAM Sensors [NOW] WHERE { STREAM Sensors { ?sensor ex:temp ?t . } FILTER(?t > 30) }"}}}'
-  emit '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"push_event","arguments":{"stream":"Sensors","subject":"http://ex/s1","predicate":"http://ex/temp","object":"35"}}}'
-  emit '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"push_event","arguments":{"stream":"Sensors","subject":"http://ex/s2","predicate":"http://ex/temp","object":"20"}}}'
-  emit '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"push_event","arguments":{"stream":"Sensors","subject":"http://ex/s3","predicate":"http://ex/temp","object":"40"}}}'
-  emit '{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"poll_results","arguments":{"queryId":"Hot"}}}'
+  emit '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"register_stream_query","arguments":{"query":"PREFIX vss: <https://covesa.global/vss#> REGISTER QUERY Speeding AS SELECT ?vehicle ?kmh FROM STREAM Telemetry [NOW] WHERE { STREAM Telemetry { ?vehicle vss:Speed ?kmh . } FILTER(?kmh > 120) }"}}}'
+  emit '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"push_event","arguments":{"stream":"Telemetry","subject":"https://example.org/fleet/vehicle/EV-7Q2","predicate":"https://covesa.global/vss#Speed","object":"135"}}}'
+  emit '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"push_event","arguments":{"stream":"Telemetry","subject":"https://example.org/fleet/vehicle/EV-3K8","predicate":"https://covesa.global/vss#Speed","object":"90"}}}'
+  emit '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"push_event","arguments":{"stream":"Telemetry","subject":"https://example.org/fleet/vehicle/EV-9TZ","predicate":"https://covesa.global/vss#Speed","object":"128"}}}'
+  emit '{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"poll_results","arguments":{"queryId":"Speeding"}}}'
 } | java -jar target/cqels-mcp-server.jar &
 sleep 6; kill %1 2>/dev/null
 ```
 
-The final `poll_results` returns the two readings above the threshold
-(`{t=35, sensor=…/s1}` and `{t=40, sensor=…/s3}`); `s2=20` is correctly filtered out.
+The final `poll_results` returns the two speeding vehicles
+(`{kmh=135, vehicle=…/EV-7Q2}` and `{kmh=128, vehicle=…/EV-9TZ}`); EV-3K8 at 90 km/h is filtered out.
 
 ## Use it from Claude Desktop
 
@@ -129,13 +134,18 @@ Any MCP client works the same way — the launch command is just
 
 ### Try it
 
-> *Memory:* "Store that alice knows bob, and that bob works at Acme." → the assistant calls
-> `store_fact` twice. "Who does alice know?" → it calls `query` with
-> `SELECT ?o WHERE { <http://ex/alice> <http://ex/knows> ?o }`.
+> *Memory:* "Remember that vehicle EV-7Q2 is driven by Alice and hosted at the north depot." →
+> the assistant calls `store_fact`. "What do we know about EV-7Q2?" → it calls `recall` on the
+> vehicle.
 >
-> *Streaming:* "Watch the Sensors stream for readings over 30°C, then send me 35, 20 and 40."
-> → the assistant calls `register_stream_query`, three `push_event`s, then `poll_results` and
-> reports back the two hot readings.
+> *Streaming:* "Watch the Telemetry stream for vehicles over 120 km/h, then send speeds 135, 90
+> and 128." → the assistant calls `register_stream_query`, three `push_event`s, then
+> `poll_results` and reports back the two speeding vehicles.
+>
+> *Event patterns + reasoning:* "Alert me when a vehicle has a speed drop then a speed spike
+> (road rage)." → `detect_sequence` with the two event-type IRIs. "Treat ex:ElectricBus as a
+> kind of vsso:Vehicle." → `define_subclass`, after which an event typed `ex:ElectricBus` also
+> matches a query on `vsso:Vehicle`.
 
 ## Extending it
 

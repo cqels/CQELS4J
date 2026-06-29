@@ -35,7 +35,12 @@ import java.util.regex.Pattern;
  * A minimal Model Context Protocol (MCP) server backed by a CQELS engine.
  *
  * <p>It exposes a CQELS engine as AI-callable tools over stdio — both the static RDF store
- * <em>and</em> the streaming engine that the {@code examples/} demonstrate:
+ * <em>and</em> the streaming engine that the {@code examples/} demonstrate. The tools are
+ * vocabulary-agnostic, so an MCP client can drive the very same <strong>electric-vehicle fleet /
+ * V2G</strong> world the examples run: {@code push_event} a VSS {@code sosa:Observation}
+ * (speed / battery SoC), {@code register_stream_query} a per-vehicle speeding monitor,
+ * {@code detect_sequence} a road-rage CEP pattern, {@code define_subclass} the
+ * {@code ex:ElectricBus ⊑ vsso:Vehicle} taxonomy — see {@code README.md} for the walkthrough:
  * <ul>
  *   <li><b>Memory (static):</b> {@code store_fact} adds a {@code (subject, predicate, object)}
  *       triple; {@code query} runs a SPARQL SELECT over everything stored.</li>
@@ -70,6 +75,8 @@ public final class CqelsMemoryMcpServer {
     private static final Pattern FROM_STREAM = Pattern.compile("FROM\\s+STREAM\\s+(\\w+)", Pattern.CASE_INSENSITIVE);
     /** Matches the `REGISTER QUERY <name>` id so we can reject a colliding registration up front. */
     private static final Pattern REGISTER_NAME = Pattern.compile("REGISTER\\s+QUERY\\s+(\\w+)", Pattern.CASE_INSENSITIVE);
+    /** Matches `FILTER(SEQ(...))` so register_stream_query can route ordered CEP to detect_sequence. */
+    private static final Pattern SEQ_FILTER = Pattern.compile("FILTER\\s*\\(\\s*SEQ", Pattern.CASE_INSENSITIVE);
     /** Streams created so far (created once per name; createStream twice would throw). */
     private static final Map<String, DataStream> STREAMS = new ConcurrentHashMap<>();
     /** Per-registered-query bounded buffer of emitted result rows, drained by poll_results. */
@@ -283,12 +290,24 @@ public final class CqelsMemoryMcpServer {
                 """;
         return new McpServerFeatures.SyncToolSpecification(
                 new McpSchema.Tool("register_stream_query", null,
-                        "Register a continuous CQELS-QL query (windows, aggregates, CEP). Returns a query "
-                                + "id; emitted rows are buffered — read them with poll_results.",
+                        "Register a continuous CQELS-QL query (windows + aggregates). Returns a query "
+                                + "id; emitted rows are buffered — read them with poll_results. For ordered "
+                                + "event sequences (FILTER(SEQ(...))) use detect_sequence instead.",
                         parseSchema(schema), null, null, null),
                 (exchange, request) -> {
                     try {
                         String query = str(request.arguments(), "query");
+                        // Ordered CEP must go through detect_sequence: registerCqelsQuery treats
+                        // FILTER(SEQ(...)) as an UNORDERED conjunction, so reject it here rather than
+                        // silently matching the steps out of order. Strip line comments first (a `#`
+                        // preceded by whitespace, or `--`) so they can't hide the SEQ from the guard;
+                        // an IRI's `#` (e.g. vss#Speed) has no leading space so it is left intact.
+                        String guardText = query.replaceAll("\\s#[^\\n]*", " ").replaceAll("--[^\\n]*", " ");
+                        if (SEQ_FILTER.matcher(guardText).find()) {
+                            return error("this query uses FILTER(SEQ(...)) — register ordered event "
+                                    + "sequences with detect_sequence; register_stream_query runs windows "
+                                    + "+ aggregates only and would match SEQ steps out of order.");
+                        }
                         // Ensure every stream the query references exists before registering.
                         Matcher m = FROM_STREAM.matcher(query);
                         while (m.find()) {
@@ -430,7 +449,25 @@ public final class CqelsMemoryMcpServer {
                         if (!(stepsObj instanceof List<?> steps) || steps.size() < 2) {
                             return error("'steps' must be an array of at least 2 event-type IRIs");
                         }
-                        long within = (a.get("withinSeconds") instanceof Number n) ? n.longValue() : 30L;
+                        // Validate client-supplied values before interpolating them into CQELS-QL below,
+                        // so they cannot inject query structure or yield opaque parse errors.
+                        if (!stream.matches("[A-Za-z_][A-Za-z0-9_]*")) {
+                            return error("'stream' must be a simple identifier matching [A-Za-z_][A-Za-z0-9_]* — got: " + stream);
+                        }
+                        for (Object step : steps) {
+                            String iri = String.valueOf(step);
+                            if (iri.isEmpty() || iri.matches(".*[\\s<>\"{}|^`\\\\].*")) {
+                                return error("each step must be a valid absolute IRI (no whitespace or <>\"{}|^`\\ chars) — got: " + iri);
+                            }
+                        }
+                        Object wObj = a.get("withinSeconds");
+                        long within = 30L;
+                        if (wObj != null) {
+                            if (!(wObj instanceof Number n) || n.doubleValue() != Math.floor(n.doubleValue()) || n.longValue() <= 0) {
+                                return error("'withinSeconds' must be a positive integer");
+                            }
+                            within = n.longValue();
+                        }
                         ensureStream(engine, stream);
                         // Reserve a buffer under a free generated id (won't clobber an existing query).
                         BlockingQueue<String> buffer = new LinkedBlockingQueue<>(MAX_BUFFER);
