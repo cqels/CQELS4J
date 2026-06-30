@@ -86,8 +86,11 @@ try (CQELSEngine engine = CQELSEngine.builder().withMemoryStore().build()) {
 </dependencies>
 ```
 
-GitHub Packages requires a token with `read:packages` — see
-[GETTING_STARTED.md §2](GETTING_STARTED.md#2-authenticate-to-github-packages-one-time).
+> **Heads-up:** GitHub Packages requires a `read:packages` token **even for public packages**
+> — its Maven registry has no anonymous download (a GitHub limitation, not a CQELS choice).
+> A one-time classic PAT in `~/.m2/settings.xml` is all that's needed — see
+> [GETTING_STARTED.md §2](GETTING_STARTED.md#2-authenticate-to-github-packages-one-time).
+> A **Maven Central** release that needs no token is on the [roadmap](#roadmap).
 
 ---
 
@@ -220,6 +223,9 @@ Headline goals:
 2. Support the recommended syntaxes of the [RSP Community Group](https://www.w3.org/community/rsp/)
    and RDF\*/SPARQL\*.
 3. Support Cypher and CEP operators alongside CQELS-QL.
+4. Publish the `org.cqels:*` artifacts to **Maven Central** so the examples build with **no
+   GitHub Packages token** — today, consuming the JARs needs a `read:packages` token because
+   GitHub Packages' Maven registry has no anonymous access, even for public packages.
 
 ---
 
