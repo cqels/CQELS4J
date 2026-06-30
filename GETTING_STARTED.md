@@ -4,7 +4,7 @@ This guide takes you from zero to a running continuous query in a few minutes:
 install the prerequisites, pull the engine from GitHub Packages, run the bundled
 examples, then wire CQELS into your own project.
 
-> **Current release:** `2.0.0-alpha.3` — coordinates `org.cqels:cqels-*`, entry point `cqels-engine`.
+> **Current release:** `2.0.0-alpha.5` — coordinates `org.cqels:cqels-*`, entry point `cqels-engine`.
 
 ---
 
@@ -107,7 +107,7 @@ Add the repository and the engine dependency to your `pom.xml`:
   <dependency>
     <groupId>org.cqels</groupId>
     <artifactId>cqels-engine</artifactId>
-    <version>2.0.0-alpha.3</version>
+    <version>2.0.0-alpha.5</version>
   </dependency>
 </dependencies>
 ```
