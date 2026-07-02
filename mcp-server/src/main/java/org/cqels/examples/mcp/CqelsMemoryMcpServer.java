@@ -8,8 +8,10 @@ import io.modelcontextprotocol.server.transport.StdioServerTransportProvider;
 import io.modelcontextprotocol.spec.McpSchema;
 import org.cqels.engine.CQELSEngine;
 import org.cqels.engine.DataStream;
+import org.cqels.engine.cep.CepExecutionOptions;
 import org.cqels.reasoning.config.RDFSProfile;
 import org.cqels.reasoning.engine.ReactiveReteAdapter;
+import org.eclipse.rdf4j.model.IRI;
 import org.eclipse.rdf4j.model.Value;
 import org.eclipse.rdf4j.model.ValueFactory;
 import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
@@ -48,6 +50,13 @@ import java.util.regex.Pattern;
  *       stream; {@code register_stream_query} registers a continuous CQELS-QL query (windows,
  *       aggregates, CEP — the same shapes as the examples) and buffers its emitted rows;
  *       {@code poll_results} drains the rows a query has emitted so far.</li>
+ *   <li><b>Agent-memory patterns (alpha.7):</b> {@code record_event}/{@code recall_episodes}
+ *       (episodic — timestamped "what happened when"), {@code save_procedure}/
+ *       {@code list_procedures}/{@code run_procedure} (procedural — named stored queries), and
+ *       {@code assemble_context} (working memory — one facts+episodes+procedures bundle per
+ *       entity). These demonstrate the memory-type patterns of the CQELS engine repo's
+ *       {@code cqels-mcp} server on the published engine API; the full production surface
+ *       (19 tools) ships there.</li>
  * </ul>
  *
  * <p>Continuous queries push results asynchronously, but MCP tools are request/response — so
@@ -89,6 +98,31 @@ public final class CqelsMemoryMcpServer {
     private static final String RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
     private static final String RDFS_SUBCLASSOF = "http://www.w3.org/2000/01/rdf-schema#subClassOf";
 
+    // ---- agent-memory demo vocabulary (alpha.7 patterns — see README "Agent memory types") ----
+    // Marker predicates for the episodic/procedural facts this server writes into the same
+    // static store store_fact/query/recall use; the entity/event-type VALUES stay caller-supplied
+    // (vocabulary-agnostic), so the memory tools drive any domain, V2G included.
+    private static final String MEM = "https://example.org/memory#";
+    private static final String EPISODE_CLASS = MEM + "Episode";
+    private static final String EPISODE_EVENT_TYPE = MEM + "eventType";
+    private static final String EPISODE_ABOUT = MEM + "about";
+    private static final String EPISODE_AT_MILLIS = MEM + "atMillis";
+    private static final String EPISODE_DATA = MEM + "data";
+    private static final String PROCEDURE_CLASS = MEM + "Procedure";
+    private static final String PROCEDURE_NAME = MEM + "name";
+    private static final String PROCEDURE_DESCRIPTION = MEM + "description";
+    private static final String PROCEDURE_SPARQL = MEM + "sparql";
+    private static final String EPISODE_NS = "https://example.org/memory/episode/";
+    private static final String PROCEDURE_NS = "https://example.org/memory/procedure/";
+    /** Generates episode IRIs for record_event. */
+    private static final AtomicLong EPISODE_SEQ = new AtomicLong();
+    /** Procedural memory: name → saved procedure. Facts describing each procedure are also
+     *  written to the store, so `query` can find them; execution goes through the registry. */
+    private static final Map<String, Procedure> PROCEDURES = new ConcurrentHashMap<>();
+
+    /** A saved procedure: an optional description plus the SPARQL SELECT it runs. */
+    private record Procedure(String description, String sparql) { }
+
     public static void main(String[] args) throws InterruptedException {
         // RDFS reasoner wired into the stream pipeline: inferred triples (e.g. an instance's
         // superclass types) flow to registered stream queries. Schema is supplied at runtime
@@ -117,6 +151,12 @@ public final class CqelsMemoryMcpServer {
                         storeFactTool(engine),          // static memory (low-level)
                         queryTool(engine),
                         recallTool(engine),             // memory retrieval (intent-shaped)
+                        recordEventTool(engine),        // episodic memory (alpha.7 pattern)
+                        recallEpisodesTool(engine),
+                        saveProcedureTool(engine),      // procedural memory (alpha.7 pattern)
+                        listProceduresTool(),
+                        runProcedureTool(engine),
+                        assembleContextTool(engine),    // working memory / GraphRAG bundle (alpha.7 pattern)
                         pushEventTool(engine),          // streaming (low-level)
                         registerStreamQueryTool(engine),
                         pollResultsTool(),
@@ -237,6 +277,261 @@ public final class CqelsMemoryMcpServer {
                 });
     }
 
+    // ---- tool: record_event (episodic memory, alpha.7 pattern) ------------------------------
+
+    private static McpServerFeatures.SyncToolSpecification recordEventTool(CQELSEngine engine) {
+        String schema = """
+                {
+                  "type": "object",
+                  "required": ["event_type", "entity"],
+                  "properties": {
+                    "event_type":   {"type": "string", "description": "Event-type IRI (e.g. https://covesa.global/fleet#ChargeStartEvent) or a plain label"},
+                    "entity":       {"type": "string", "description": "IRI of the entity the episode is about (e.g. a vehicle)"},
+                    "data":         {"type": "string", "description": "Optional free-form payload stored with the episode"},
+                    "timestamp_ms": {"type": "integer", "description": "Optional event time in epoch millis (default: now)"}
+                  }
+                }
+                """;
+        return new McpServerFeatures.SyncToolSpecification(
+                new McpSchema.Tool("record_event", null,
+                        "Episodic memory: record a timestamped episode — what happened, to which entity, "
+                                + "when. Recall it later with recall_episodes (time-filtered, newest first).",
+                        parseSchema(schema), null, null, null),
+                (exchange, request) -> {
+                    try {
+                        Map<String, Object> a = request.arguments();
+                        String eventType = str(a, "event_type");
+                        String entity = str(a, "entity");
+                        Object data = a.get("data");
+                        Long tsArg = optionalLong(a, "timestamp_ms");
+                        long at = tsArg == null ? System.currentTimeMillis() : tsArg;
+                        String episode = EPISODE_NS + EPISODE_SEQ.incrementAndGet();
+                        try (RepositoryConnection conn = engine.getRepository().getConnection()) {
+                            conn.add(VF.createIRI(episode), VF.createIRI(RDF_TYPE), VF.createIRI(EPISODE_CLASS));
+                            conn.add(VF.createIRI(episode), VF.createIRI(EPISODE_EVENT_TYPE), asValue(eventType));
+                            conn.add(VF.createIRI(episode), VF.createIRI(EPISODE_ABOUT), asValue(entity));
+                            conn.add(VF.createIRI(episode), VF.createIRI(EPISODE_AT_MILLIS), VF.createLiteral(at));
+                            if (data != null) {
+                                conn.add(VF.createIRI(episode), VF.createIRI(EPISODE_DATA),
+                                        VF.createLiteral(data.toString()));
+                            }
+                        }
+                        return text("recorded episode <" + episode + ">: " + eventType + " about "
+                                + entity + " at " + at + " ms");
+                    } catch (Exception e) {
+                        return error("record_event failed: " + e.getMessage());
+                    }
+                });
+    }
+
+    // ---- tool: recall_episodes (episodic recall, alpha.7 pattern) ---------------------------
+
+    private static McpServerFeatures.SyncToolSpecification recallEpisodesTool(CQELSEngine engine) {
+        String schema = """
+                {
+                  "type": "object",
+                  "properties": {
+                    "entity":     {"type": "string", "description": "Only episodes about this entity"},
+                    "event_type": {"type": "string", "description": "Only episodes of this event type"},
+                    "since_ms":   {"type": "integer", "description": "Only episodes at or after this epoch-millis time (inclusive)"},
+                    "until_ms":   {"type": "integer", "description": "Only episodes before this epoch-millis time (exclusive — half-open [since, until))"},
+                    "limit":      {"type": "integer", "description": "Max episodes to return (default 20, max 100)"}
+                  }
+                }
+                """;
+        return new McpServerFeatures.SyncToolSpecification(
+                new McpSchema.Tool("recall_episodes", null,
+                        "Episodic memory: recall recorded episodes, newest first, optionally filtered by "
+                                + "entity, event type, and a [since_ms, until_ms) time range.",
+                        parseSchema(schema), null, null, null),
+                (exchange, request) -> {
+                    try {
+                        Map<String, Object> a = request.arguments();
+                        Object entity = a.get("entity");
+                        Object eventType = a.get("event_type");
+                        Long since = optionalLong(a, "since_ms");
+                        Long until = optionalLong(a, "until_ms");
+                        int limit = intInRange(a, "limit", 20, 1, MAX_ROWS);
+                        return text(runSparql(engine, episodesSparql(
+                                entity == null ? null : entity.toString(),
+                                eventType == null ? null : eventType.toString(),
+                                since, until, limit)));
+                    } catch (Exception e) {
+                        return error("recall_episodes failed: " + e.getMessage());
+                    }
+                });
+    }
+
+    // ---- tool: save_procedure (procedural memory, alpha.7 pattern) --------------------------
+
+    private static McpServerFeatures.SyncToolSpecification saveProcedureTool(CQELSEngine engine) {
+        String schema = """
+                {
+                  "type": "object",
+                  "required": ["name", "sparql"],
+                  "properties": {
+                    "name":        {"type": "string", "description": "Procedure name (simple identifier: letters, digits, _ or -)"},
+                    "description": {"type": "string", "description": "Optional: what the procedure answers"},
+                    "sparql":      {"type": "string", "description": "The SPARQL SELECT to run (same path as the query tool)"}
+                  }
+                }
+                """;
+        return new McpServerFeatures.SyncToolSpecification(
+                new McpSchema.Tool("save_procedure", null,
+                        "Procedural memory: save a named SPARQL SELECT so it can be re-run by name with "
+                                + "run_procedure. Facts describing the procedure are stored too, so query/"
+                                + "assemble_context can find it. Saving an existing name updates it.",
+                        parseSchema(schema), null, null, null),
+                (exchange, request) -> {
+                    try {
+                        Map<String, Object> a = request.arguments();
+                        String name = str(a, "name");
+                        String sparql = str(a, "sparql");
+                        Object desc = a.get("description");
+                        if (!name.matches("[A-Za-z_][A-Za-z0-9_-]*")) {
+                            return error("'name' must be a simple identifier matching "
+                                    + "[A-Za-z_][A-Za-z0-9_-]* — got: " + name);
+                        }
+                        String description = desc == null ? null : desc.toString();
+                        Procedure previous = PROCEDURES.put(name, new Procedure(description, sparql));
+                        IRI proc = VF.createIRI(PROCEDURE_NS + name);
+                        try (RepositoryConnection conn = engine.getRepository().getConnection()) {
+                            conn.remove(proc, null, null);   // idempotent re-save: replace the old facts
+                            conn.add(proc, VF.createIRI(RDF_TYPE), VF.createIRI(PROCEDURE_CLASS));
+                            conn.add(proc, VF.createIRI(PROCEDURE_NAME), VF.createLiteral(name));
+                            if (description != null) {
+                                conn.add(proc, VF.createIRI(PROCEDURE_DESCRIPTION), VF.createLiteral(description));
+                            }
+                            conn.add(proc, VF.createIRI(PROCEDURE_SPARQL), VF.createLiteral(sparql));
+                        }
+                        return text((previous == null ? "saved" : "updated") + " procedure '" + name
+                                + "' — run it with run_procedure, browse with list_procedures.");
+                    } catch (Exception e) {
+                        return error("save_procedure failed: " + e.getMessage());
+                    }
+                });
+    }
+
+    // ---- tool: list_procedures ---------------------------------------------------------------
+
+    private static McpServerFeatures.SyncToolSpecification listProceduresTool() {
+        String schema = """
+                {
+                  "type": "object",
+                  "properties": {}
+                }
+                """;
+        return new McpServerFeatures.SyncToolSpecification(
+                new McpSchema.Tool("list_procedures", null,
+                        "Procedural memory: list the saved procedures (name + description).",
+                        parseSchema(schema), null, null, null),
+                (exchange, request) -> {
+                    try {
+                        if (PROCEDURES.isEmpty()) {
+                            return text("(no procedures saved)");
+                        }
+                        StringBuilder out = new StringBuilder();
+                        PROCEDURES.entrySet().stream()
+                                .sorted(Map.Entry.comparingByKey())
+                                .forEach(e -> out.append(e.getKey()).append(" — ")
+                                        .append(e.getValue().description() == null
+                                                ? "(no description)" : e.getValue().description())
+                                        .append('\n'));
+                        return text(out.toString().trim());
+                    } catch (Exception e) {
+                        return error("list_procedures failed: " + e.getMessage());
+                    }
+                });
+    }
+
+    // ---- tool: run_procedure -----------------------------------------------------------------
+
+    private static McpServerFeatures.SyncToolSpecification runProcedureTool(CQELSEngine engine) {
+        String schema = """
+                {
+                  "type": "object",
+                  "required": ["name"],
+                  "properties": {
+                    "name": {"type": "string", "description": "Name of a procedure saved with save_procedure"}
+                  }
+                }
+                """;
+        return new McpServerFeatures.SyncToolSpecification(
+                new McpSchema.Tool("run_procedure", null,
+                        "Procedural memory: run a saved procedure by name — executes its SPARQL SELECT "
+                                + "through the same path as the query tool and returns the rows.",
+                        parseSchema(schema), null, null, null),
+                (exchange, request) -> {
+                    try {
+                        String name = str(request.arguments(), "name");
+                        Procedure proc = PROCEDURES.get(name);
+                        if (proc == null) {
+                            return error("no procedure named '" + name + "'"
+                                    + (PROCEDURES.isEmpty() ? " (none saved yet)"
+                                    : " — saved: " + new java.util.TreeSet<>(PROCEDURES.keySet())));
+                        }
+                        return text(runSparql(engine, proc.sparql()));
+                    } catch (Exception e) {
+                        return error("run_procedure failed: " + e.getMessage());
+                    }
+                });
+    }
+
+    // ---- tool: assemble_context (working memory / GraphRAG bundle, alpha.7 pattern) ----------
+
+    private static McpServerFeatures.SyncToolSpecification assembleContextTool(CQELSEngine engine) {
+        String schema = """
+                {
+                  "type": "object",
+                  "required": ["entity"],
+                  "properties": {
+                    "entity": {"type": "string", "description": "IRI of the entity to assemble context for"},
+                    "limit":  {"type": "integer", "description": "Max recent episodes to include (default 5, max 100)"}
+                  }
+                }
+                """;
+        return new McpServerFeatures.SyncToolSpecification(
+                new McpSchema.Tool("assemble_context", null,
+                        "Working memory: assemble one compact context bundle for an entity — its direct "
+                                + "facts, its most recent episodes, and saved procedures that mention it — "
+                                + "ready to inject into an agent prompt.",
+                        parseSchema(schema), null, null, null),
+                (exchange, request) -> {
+                    try {
+                        Map<String, Object> a = request.arguments();
+                        String entity = str(a, "entity");
+                        if (!entity.startsWith("http://") && !entity.startsWith("https://")) {
+                            return error("'entity' must be an IRI (http…) — got: " + entity);
+                        }
+                        int limit = intInRange(a, "limit", 5, 1, MAX_ROWS);
+                        StringBuilder ctx = new StringBuilder();
+                        ctx.append("=== context: ").append(entity).append(" ===\n");
+                        ctx.append("-- facts --\n");
+                        ctx.append(runSparql(engine, "SELECT ?predicate ?object WHERE { "
+                                + sparqlTerm(entity) + " ?predicate ?object }")).append('\n');
+                        ctx.append("-- recent episodes (newest first) --\n");
+                        ctx.append(runSparql(engine, episodesSparql(entity, null, null, null, limit)))
+                                .append('\n');
+                        ctx.append("-- procedures mentioning this entity --\n");
+                        String localName = entity.substring(
+                                Math.max(entity.lastIndexOf('/'), entity.lastIndexOf('#')) + 1);
+                        StringBuilder procs = new StringBuilder();
+                        PROCEDURES.entrySet().stream()
+                                .sorted(Map.Entry.comparingByKey())
+                                .filter(e -> mentions(e.getValue(), entity)
+                                        || (!localName.isEmpty() && mentions(e.getValue(), localName)))
+                                .forEach(e -> procs.append(e.getKey()).append(" — ")
+                                        .append(e.getValue().description() == null
+                                                ? "(no description)" : e.getValue().description())
+                                        .append('\n'));
+                        ctx.append(procs.isEmpty() ? "(none)" : procs.toString().trim());
+                        return text(ctx.toString());
+                    } catch (Exception e) {
+                        return error("assemble_context failed: " + e.getMessage());
+                    }
+                });
+    }
+
     // ---- tool: push_event (streaming ingest) -----------------------------------------------
 
     private static McpServerFeatures.SyncToolSpecification pushEventTool(CQELSEngine engine) {
@@ -248,14 +543,16 @@ public final class CqelsMemoryMcpServer {
                     "stream":    {"type": "string", "description": "Stream name (created on first use)"},
                     "subject":   {"type": "string", "description": "Subject IRI"},
                     "predicate": {"type": "string", "description": "Predicate IRI"},
-                    "object":    {"type": "string", "description": "Object: an IRI (http…) or a literal value"}
+                    "object":    {"type": "string", "description": "Object: an IRI (http…) or a literal value"},
+                    "timestamp_ms": {"type": "integer", "description": "Optional explicit EVENT-TIME timestamp in ms (default: arrival time). Needed to demonstrate out-of-order arrival for event_time detect_sequence."}
                   }
                 }
                 """;
         return new McpServerFeatures.SyncToolSpecification(
                 new McpSchema.Tool("push_event", null,
                         "Push one RDF triple as an event into a named CQELS stream (continuous queries "
-                                + "registered on that stream will see it).",
+                                + "registered on that stream will see it). Pass timestamp_ms to stamp an "
+                                + "explicit event time (e.g. to replay out-of-order data).",
                         parseSchema(schema), null, null, null),
                 (exchange, request) -> {
                     try {
@@ -264,11 +561,13 @@ public final class CqelsMemoryMcpServer {
                         String s = str(a, "subject");
                         String p = str(a, "predicate");
                         String o = str(a, "object");
+                        Long timestampMs = optionalLong(a, "timestamp_ms");
                         if (p.equals("a") || p.equals("rdf:type")) {  // convenience: the rdf:type shorthand
                             p = RDF_TYPE;
                         }
-                        pushTyped(ensureStream(engine, streamName), s, p, o);
-                        return text("pushed to stream '" + streamName + "': <" + s + "> <" + p + "> " + o);
+                        pushTyped(ensureStream(engine, streamName), s, p, o, timestampMs);
+                        return text("pushed to stream '" + streamName + "': <" + s + "> <" + p + "> " + o
+                                + (timestampMs == null ? "" : " @ " + timestampMs + " ms"));
                     } catch (Exception e) {
                         return error("push_event failed: " + e.getMessage());
                     }
@@ -431,7 +730,9 @@ public final class CqelsMemoryMcpServer {
                     "stream": {"type": "string", "description": "Stream name to watch"},
                     "steps":  {"type": "array", "items": {"type": "string"},
                                "description": "Ordered event-type IRIs to match in sequence (>= 2)"},
-                    "withinSeconds": {"type": "integer", "description": "Time window for the whole sequence (default 30)"}
+                    "withinSeconds": {"type": "integer", "description": "Time window for the whole sequence (default 30)"},
+                    "event_time":  {"type": "boolean", "description": "Match the sequence in EVENT time (timestamp order) instead of arrival order (default false). Out-of-order arrivals are reordered before matching."},
+                    "lateness_ms": {"type": "integer", "description": "Event-time lateness budget in ms — how far behind the max seen timestamp an event may arrive and still be reordered. REQUIRED when event_time=true: the engine fails fast without a budget (a silent 0 would drop the very out-of-order events the mode exists to reorder)."}
                   }
                 }
                 """;
@@ -439,7 +740,9 @@ public final class CqelsMemoryMcpServer {
                 new McpSchema.Tool("detect_sequence", null,
                         "Watch a stream for an ordered sequence of event types (a CEP pattern) — builds and "
                                 + "registers the FILTER(SEQ(...)) query for you. Returns a query id; push events "
-                                + "as (eventIri, a, typeIri) via push_event, then read matches with poll_results.",
+                                + "as (eventIri, a, typeIri) via push_event, then read matches with poll_results. "
+                                + "By default steps match in ARRIVAL order; set event_time=true (+ lateness_ms) "
+                                + "to match in event-timestamp order even when events arrive out of order.",
                         parseSchema(schema), null, null, null),
                 (exchange, request) -> {
                     try {
@@ -468,6 +771,24 @@ public final class CqelsMemoryMcpServer {
                             }
                             within = n.longValue();
                         }
+                        // Event-time mode (#429 F3, alpha.7): reorder out-of-order arrivals by their
+                        // event timestamps before the sequence matcher. The lateness budget is
+                        // deliberately NOT defaulted here — with lateness_ms absent the engine fails
+                        // fast at registration (its message is surfaced below), because a silent
+                        // 0ms budget would drop the very out-of-order events the mode reorders.
+                        boolean eventTime = Boolean.TRUE.equals(a.get("event_time"));
+                        Long latenessMs = optionalLong(a, "lateness_ms");
+                        if (latenessMs != null && latenessMs < 0) {
+                            return error("'lateness_ms' must be >= 0");
+                        }
+                        if (!eventTime && latenessMs != null) {
+                            return error("'lateness_ms' only applies with event_time=true");
+                        }
+                        CepExecutionOptions options = !eventTime
+                                ? CepExecutionOptions.arrivalOrder()
+                                : latenessMs == null
+                                        ? CepExecutionOptions.eventTime()               // engine fails fast
+                                        : CepExecutionOptions.eventTime(Duration.ofMillis(latenessMs));
                         ensureStream(engine, stream);
                         // Reserve a buffer under a free generated id (won't clobber an existing query).
                         BlockingQueue<String> buffer = new LinkedBlockingQueue<>(MAX_BUFFER);
@@ -498,7 +819,7 @@ public final class CqelsMemoryMcpServer {
                             // this release (unregisterQuery does not cover CEP queries).
                             final BlockingQueue<String> buf = buffer;
                             final AtomicLong drp = dropped;
-                            engine.registerCepQuery(query, match -> {
+                            engine.registerCepQuery(query, options, match -> {
                                 // Deliver only while this id still maps to OUR buffer. After
                                 // unregister (or if the id is later reused) the identity check
                                 // fails, so this un-stoppable CEP matcher can never write into a
@@ -513,7 +834,10 @@ public final class CqelsMemoryMcpServer {
                             return error("detect_sequence failed: " + ex.getMessage());
                         }
                         return text("watching '" + stream + "' for the ORDERED sequence " + steps + " within "
-                                + within + "s — query id='" + qid + "'. Push events with predicate \"a\" and "
+                                + within + "s in " + (eventTime
+                                        ? "EVENT-TIME order (lateness budget " + latenessMs + " ms)"
+                                        : "arrival order")
+                                + " — query id='" + qid + "'. Push events with predicate \"a\" and "
                                 + "object the type IRI via push_event, then poll_results('" + qid + "'). "
                                 + "unregister_stream_query frees the buffer + stops delivery (the CEP matcher "
                                 + "itself keeps running — this alpha has no per-CEP-query stop).");
@@ -613,26 +937,126 @@ public final class CqelsMemoryMcpServer {
     /**
      * Push a triple with a sensibly-typed object so numeric filters/aggregates work:
      * an {@code http(s)} value becomes an IRI; an integer/decimal becomes a numeric literal;
-     * anything else a plain string literal.
+     * anything else a plain string literal. A non-null {@code timestampMs} stamps the element
+     * with that explicit EVENT time (out-of-order replay for event_time detect_sequence);
+     * null keeps the default arrival-time stamping.
      */
-    private static void pushTyped(DataStream stream, String s, String p, String o) {
+    private static void pushTyped(DataStream stream, String s, String p, String o, Long timestampMs) {
+        if (timestampMs == null) {
+            if (o.startsWith("http://") || o.startsWith("https://")) {
+                stream.pushTriple(s, p, o);                 // IRI object
+                return;
+            }
+            try {
+                stream.push(s, p, Long.parseLong(o));       // xsd:integer
+                return;
+            } catch (NumberFormatException ignored) {
+                // not an integer
+            }
+            try {
+                stream.push(s, p, Double.parseDouble(o));   // xsd:double
+                return;
+            } catch (NumberFormatException ignored) {
+                // not a number
+            }
+            stream.push(s, p, o);                           // string literal
+            return;
+        }
+        IRI subject = VF.createIRI(s);
+        IRI predicate = VF.createIRI(p);
+        long ts = timestampMs;
         if (o.startsWith("http://") || o.startsWith("https://")) {
-            stream.pushTriple(s, p, o);                 // IRI object
+            stream.push(subject, predicate, VF.createIRI(o), ts);   // IRI object
             return;
         }
         try {
-            stream.push(s, p, Long.parseLong(o));       // xsd:integer
+            stream.push(subject, predicate, Long.parseLong(o), ts); // xsd:integer
             return;
         } catch (NumberFormatException ignored) {
             // not an integer
         }
         try {
-            stream.push(s, p, Double.parseDouble(o));   // xsd:double
+            stream.push(subject, predicate, Double.parseDouble(o), ts); // xsd:double
             return;
         } catch (NumberFormatException ignored) {
             // not a number
         }
-        stream.push(s, p, o);                           // string literal
+        stream.push(subject, predicate, o, ts);                     // string literal
+    }
+
+    /**
+     * SPARQL for episodes newest-first: optional entity / event-type equality filters and a
+     * half-open {@code [sinceMs, untilMs)} time range, LIMITed. Shared by recall_episodes and
+     * assemble_context.
+     */
+    private static String episodesSparql(String entity, String eventType,
+                                         Long sinceMs, Long untilMs, int limit) {
+        StringBuilder q = new StringBuilder();
+        q.append("SELECT ?episode ?type ?entity ?atMillis ?data WHERE { ")
+                .append("?episode <").append(RDF_TYPE).append("> <").append(EPISODE_CLASS).append("> ; ")
+                .append("<").append(EPISODE_EVENT_TYPE).append("> ?type ; ")
+                .append("<").append(EPISODE_ABOUT).append("> ?entity ; ")
+                .append("<").append(EPISODE_AT_MILLIS).append("> ?atMillis . ")
+                .append("OPTIONAL { ?episode <").append(EPISODE_DATA).append("> ?data } ");
+        if (entity != null) {
+            q.append("FILTER(?entity = ").append(sparqlTerm(entity)).append(") ");
+        }
+        if (eventType != null) {
+            q.append("FILTER(?type = ").append(sparqlTerm(eventType)).append(") ");
+        }
+        if (sinceMs != null) {
+            q.append("FILTER(?atMillis >= ").append(sinceMs).append(") ");
+        }
+        if (untilMs != null) {
+            q.append("FILTER(?atMillis < ").append(untilMs).append(") ");
+        }
+        q.append("} ORDER BY DESC(?atMillis) LIMIT ").append(limit);
+        return q.toString();
+    }
+
+    /** True when the procedure's SPARQL or description mentions the needle (working-memory match). */
+    private static boolean mentions(Procedure proc, String needle) {
+        return proc.sparql().contains(needle)
+                || (proc.description() != null && proc.description().contains(needle));
+    }
+
+    /**
+     * Format a caller value for interpolation into SPARQL, mirroring {@link #asValue}: an
+     * {@code http(s)} value becomes a bracketed IRI (rejected if it can't be one), anything else
+     * an escaped string literal — so recall filters compare equal to what record_event stored.
+     */
+    private static String sparqlTerm(String v) {
+        if (v.startsWith("http://") || v.startsWith("https://")) {
+            if (v.matches(".*[\\s<>\"{}|^`\\\\].*")) {
+                throw new IllegalArgumentException("not a valid IRI: " + v);
+            }
+            return "<" + v + ">";
+        }
+        return "\"" + v.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
+    }
+
+    /** Optional integral argument: {@code null} when absent; rejects non-integral values. */
+    private static Long optionalLong(Map<String, Object> args, String key) {
+        Object v = args.get(key);
+        if (v == null) {
+            return null;
+        }
+        if (!(v instanceof Number n) || n.doubleValue() != Math.floor(n.doubleValue())) {
+            throw new IllegalArgumentException("'" + key + "' must be an integer");
+        }
+        return n.longValue();
+    }
+
+    /** Optional bounded int argument with a default; rejects values outside {@code [min, max]}. */
+    private static int intInRange(Map<String, Object> args, String key, int def, int min, int max) {
+        Long v = optionalLong(args, key);
+        if (v == null) {
+            return def;
+        }
+        if (v < min || v > max) {
+            throw new IllegalArgumentException("'" + key + "' must be between " + min + " and " + max);
+        }
+        return v.intValue();
     }
 
     private static String str(Map<String, Object> args, String key) {
