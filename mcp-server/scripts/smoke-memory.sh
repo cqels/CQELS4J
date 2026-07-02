@@ -4,7 +4,9 @@
 # Drives one JSON-RPC session through: store_fact -> record_event x2 -> recall_episodes ->
 # save_procedure -> list_procedures -> run_procedure -> assemble_context -> detect_sequence
 # (fail-fast without lateness_ms; event-time mode; arrival-order mode) -> out-of-order
-# push_event fixture -> poll_results for both CEP queries, then asserts expected substrings.
+# push_event fixture -> poll_results for both CEP queries -> unregister-CEP proof (a stopped
+# detect_sequence matcher must not surface later would-be matches) -> wrong-type event_time
+# rejection. Then asserts expected substrings.
 #
 # The out-of-order fixture is the #429-F3 story: the REAL order was a speed DROP (t=1000ms)
 # then a speed SPIKE (t=2000ms), but the spike ARRIVES first. Arrival-order matching misses
@@ -59,12 +61,23 @@ EV=https://example.org/fleet/vehicle/EV-7Q2
   sleep 1
   emit '{"jsonrpc":"2.0","id":16,"method":"tools/call","params":{"name":"poll_results","arguments":{"queryId":"seq_2"}}}'
   emit '{"jsonrpc":"2.0","id":17,"method":"tools/call","params":{"name":"poll_results","arguments":{"queryId":"seq_3"}}}'
+  # -- unregister-CEP proof: register a matcher (seq_4), STOP it via unregister_stream_query
+  #    (routes to the engine's unregisterCepQuery), then push events that WOULD match in
+  #    arrival order — nothing may surface: the matcher is disposed, not merely muted --------
+  emit '{"jsonrpc":"2.0","id":18,"method":"tools/call","params":{"name":"detect_sequence","arguments":{"stream":"Unreg","steps":["'"$DROP"'","'"$SPIKE"'"],"withinSeconds":60}}}'
+  emit '{"jsonrpc":"2.0","id":19,"method":"tools/call","params":{"name":"unregister_stream_query","arguments":{"queryId":"seq_4"}}}'
+  emit '{"jsonrpc":"2.0","id":20,"method":"tools/call","params":{"name":"push_event","arguments":{"stream":"Unreg","subject":"https://example.org/fleet/event/u-drop","predicate":"a","object":"'"$DROP"'"}}}'
+  emit '{"jsonrpc":"2.0","id":21,"method":"tools/call","params":{"name":"push_event","arguments":{"stream":"Unreg","subject":"https://example.org/fleet/event/u-spike","predicate":"a","object":"'"$SPIKE"'"}}}'
+  sleep 1
+  emit '{"jsonrpc":"2.0","id":22,"method":"tools/call","params":{"name":"poll_results","arguments":{"queryId":"seq_4"}}}'
+  # -- strict arg typing: a STRING "true" for event_time must be rejected, not coerced/ignored --
+  emit '{"jsonrpc":"2.0","id":23,"method":"tools/call","params":{"name":"detect_sequence","arguments":{"stream":"Incidents","steps":["'"$DROP"'","'"$SPIKE"'"],"event_time":"true","lateness_ms":3000}}}'
   sleep 3
 } | java -jar "$JAR" > "$OUT" 2>/dev/null &
 
-# Wait for the last response (id 17), then stop the long-running server.
+# Wait for the last response (id 23), then stop the long-running server.
 for _ in $(seq 1 90); do
-  grep -q '"id":17' "$OUT" && break
+  grep -q '"id":23' "$OUT" && break
   sleep 1
 done
 kill %1 2>/dev/null
@@ -104,6 +117,17 @@ assert_contains "arrival-order detect_sequence registered"     "arrival order"  
 assert_contains "event-time mode MATCHED the out-of-order SEQ" "PatternMatch{events=2"                     '"id":16'
 assert_contains "event-time match is drop(1000)->spike(2000)"  "startTime=1000, endTime=2000"              '"id":16'
 assert_contains "arrival-order mode missed the same sequence"  "(no new results)"                          '"id":17'
+# Unregister-CEP proof: the response confirms the ENGINE disposed the matcher (unregisterCepQuery
+# returned true), and polling the stopped id surfaces nothing for the would-match pushes.
+assert_contains "detect_sequence registered seq_4 for unregister test" "seq_4"                             '"id":18'
+assert_contains "unregister stopped the CEP matcher"           "(CEP matcher stopped)"                     '"id":19'
+assert_contains "stopped matcher surfaced no rows for would-match events" "unknown query id"               '"id":22'
+if grep -- '"id":22' "$OUT" | grep -qF 'PatternMatch'; then
+  echo "FAIL: stopped seq_4 still surfaced a match"; fail=1
+else
+  echo "ok:   stopped seq_4 surfaced no match"
+fi
+assert_contains "string \"true\" for event_time is rejected"   "'event_time' must be a boolean"            '"id":23'
 
 if [ "$fail" -eq 0 ]; then
   echo "SMOKE PASSED"

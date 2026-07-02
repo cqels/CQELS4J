@@ -47,7 +47,7 @@ for wrapping CQELS in your own MCP server.
 | `push_event` | `stream`, `subject`, `predicate`, `object`, *(opt)* `timestamp_ms` | Push one triple as an event into a named stream (created on first use). Numeric objects become numeric literals so `FILTER`/aggregates work; `http(s)://` becomes an IRI; predicate `"a"` is shorthand for `rdf:type`. `timestamp_ms` stamps an explicit **event time** (needed to replay out-of-order data for event-time CEP). |
 | `register_stream_query` | `query` | Register a continuous CQELS-QL query (`REGISTER QUERY … FROM STREAM … [window] …`) — windows + aggregates. Returns a query **id**; emitted rows are buffered server-side (bounded — see below). Ordered `FILTER(SEQ(...))` patterns are rejected here — use `detect_sequence`. |
 | `poll_results` | `queryId` | Drain and return up to 100 rows the query has emitted since the last poll; flags if more remain or if any were dropped. |
-| `unregister_stream_query` | `queryId` | Stop a query and free its buffer when you're done with it. |
+| `unregister_stream_query` | `queryId` | Stop a query and free its buffer when you're done with it — covers both `register_stream_query` queries and `detect_sequence` CEP matchers (routed to the engine's separate CEP unregister). |
 
 **Intent-shaped streaming (higher-level wrappers):**
 
@@ -139,6 +139,12 @@ knowledge-graph engine. This demo server implements each **pattern** on the same
 - **Working memory** — `assemble_context` bundles an entity's facts + most recent episodes +
   matching procedures into one compact block an agent can inject into its prompt (a
   GraphRAG-style context assembly).
+
+> **Session-scoped demo memory.** Episodes and procedure facts accumulate in the server
+> process's in-memory store for the lifetime of the session — there is no delete/expiry tool
+> here (the procedure registry is capped at 256 distinct names; re-saving a name updates it).
+> The production `cqels-mcp` server owns these lifecycles properly (reserved per-memory-type
+> graphs, governed writes); this demo keeps the surface minimal instead.
 
 A stdio session that exercises all four (same pattern as the smoke tests above; the full
 scripted version with assertions is [`scripts/smoke-memory.sh`](scripts/smoke-memory.sh)):

@@ -24,6 +24,7 @@ import tools.jackson.databind.json.JsonMapper;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
@@ -92,6 +93,11 @@ public final class CqelsMemoryMcpServer {
     private static final Map<String, BlockingQueue<String>> BUFFERS = new ConcurrentHashMap<>();
     /** Per-query count of rows dropped because the buffer was full; surfaced by poll_results. */
     private static final Map<String, AtomicLong> DROPPED = new ConcurrentHashMap<>();
+    /** Ids registered through registerCepQuery (detect_sequence). The engine keeps CEP
+     *  subscriptions in a namespace SEPARATE from registerCqelsQuery's, with a dedicated
+     *  unregisterCepQuery — unregister_stream_query routes by membership here so a CEP
+     *  matcher is actually stopped (not just muted, which would leak live NFA subscriptions). */
+    private static final Set<String> CEP_IDS = ConcurrentHashMap.newKeySet();
     /** Generates ids for detect_sequence's REGISTER QUERY clause. */
     private static final AtomicInteger SEQ_COUNTER = new AtomicInteger();
 
@@ -119,6 +125,9 @@ public final class CqelsMemoryMcpServer {
     /** Procedural memory: name → saved procedure. Facts describing each procedure are also
      *  written to the store, so `query` can find them; execution goes through the registry. */
     private static final Map<String, Procedure> PROCEDURES = new ConcurrentHashMap<>();
+    /** Cap on DISTINCT procedure names (demo server, no delete path — see README
+     *  "Session-scoped demo memory"). Re-saving an existing name always works. */
+    private static final int MAX_PROCEDURES = 256;
 
     /** A saved procedure: an optional description plus the SPARQL SELECT it runs. */
     private record Procedure(String description, String sparql) { }
@@ -300,9 +309,9 @@ public final class CqelsMemoryMcpServer {
                 (exchange, request) -> {
                     try {
                         Map<String, Object> a = request.arguments();
-                        String eventType = str(a, "event_type");
-                        String entity = str(a, "entity");
-                        Object data = a.get("data");
+                        String eventType = requireString(a, "event_type");
+                        String entity = requireString(a, "entity");
+                        String data = optionalString(a, "data");
                         Long tsArg = optionalLong(a, "timestamp_ms");
                         long at = tsArg == null ? System.currentTimeMillis() : tsArg;
                         String episode = EPISODE_NS + EPISODE_SEQ.incrementAndGet();
@@ -313,7 +322,7 @@ public final class CqelsMemoryMcpServer {
                             conn.add(VF.createIRI(episode), VF.createIRI(EPISODE_AT_MILLIS), VF.createLiteral(at));
                             if (data != null) {
                                 conn.add(VF.createIRI(episode), VF.createIRI(EPISODE_DATA),
-                                        VF.createLiteral(data.toString()));
+                                        VF.createLiteral(data));
                             }
                         }
                         return text("recorded episode <" + episode + ">: " + eventType + " about "
@@ -347,15 +356,13 @@ public final class CqelsMemoryMcpServer {
                 (exchange, request) -> {
                     try {
                         Map<String, Object> a = request.arguments();
-                        Object entity = a.get("entity");
-                        Object eventType = a.get("event_type");
+                        String entity = optionalString(a, "entity");
+                        String eventType = optionalString(a, "event_type");
                         Long since = optionalLong(a, "since_ms");
                         Long until = optionalLong(a, "until_ms");
                         int limit = intInRange(a, "limit", 20, 1, MAX_ROWS);
-                        return text(runSparql(engine, episodesSparql(
-                                entity == null ? null : entity.toString(),
-                                eventType == null ? null : eventType.toString(),
-                                since, until, limit)));
+                        return text(runSparql(engine,
+                                episodesSparql(entity, eventType, since, until, limit)));
                     } catch (Exception e) {
                         return error("recall_episodes failed: " + e.getMessage());
                     }
@@ -385,14 +392,20 @@ public final class CqelsMemoryMcpServer {
                 (exchange, request) -> {
                     try {
                         Map<String, Object> a = request.arguments();
-                        String name = str(a, "name");
-                        String sparql = str(a, "sparql");
-                        Object desc = a.get("description");
+                        String name = requireString(a, "name");
+                        String sparql = requireString(a, "sparql");
+                        String description = optionalString(a, "description");
                         if (!name.matches("[A-Za-z_][A-Za-z0-9_-]*")) {
                             return error("'name' must be a simple identifier matching "
                                     + "[A-Za-z_][A-Za-z0-9_-]* — got: " + name);
                         }
-                        String description = desc == null ? null : desc.toString();
+                        // Cap DISTINCT names (no delete path in this demo server); updating an
+                        // existing name is always allowed.
+                        if (!PROCEDURES.containsKey(name) && PROCEDURES.size() >= MAX_PROCEDURES) {
+                            return error("procedure registry is full (" + MAX_PROCEDURES
+                                    + " names) — this demo server has no delete tool; update an "
+                                    + "existing name or restart the server process.");
+                        }
                         Procedure previous = PROCEDURES.put(name, new Procedure(description, sparql));
                         IRI proc = VF.createIRI(PROCEDURE_NS + name);
                         try (RepositoryConnection conn = engine.getRepository().getConnection()) {
@@ -463,7 +476,7 @@ public final class CqelsMemoryMcpServer {
                         parseSchema(schema), null, null, null),
                 (exchange, request) -> {
                     try {
-                        String name = str(request.arguments(), "name");
+                        String name = requireString(request.arguments(), "name");
                         Procedure proc = PROCEDURES.get(name);
                         if (proc == null) {
                             return error("no procedure named '" + name + "'"
@@ -499,7 +512,7 @@ public final class CqelsMemoryMcpServer {
                 (exchange, request) -> {
                     try {
                         Map<String, Object> a = request.arguments();
-                        String entity = str(a, "entity");
+                        String entity = requireString(a, "entity");
                         if (!entity.startsWith("http://") && !entity.startsWith("https://")) {
                             return error("'entity' must be an IRI (http…) — got: " + entity);
                         }
@@ -701,7 +714,8 @@ public final class CqelsMemoryMcpServer {
                 """;
         return new McpServerFeatures.SyncToolSpecification(
                 new McpSchema.Tool("unregister_stream_query", null,
-                        "Stop a continuous query and free its result buffer (call this when you no "
+                        "Stop a continuous query — register_stream_query queries AND detect_sequence "
+                                + "CEP matchers — and free its result buffer (call this when you no "
                                 + "longer need a registered query).",
                         parseSchema(schema), null, null, null),
                 (exchange, request) -> {
@@ -709,9 +723,18 @@ public final class CqelsMemoryMcpServer {
                         String queryId = str(request.arguments(), "queryId");
                         boolean existed = BUFFERS.remove(queryId) != null;
                         DROPPED.remove(queryId);
-                        boolean stopped = engine.unregisterQuery(queryId);
+                        // Route to the matching engine namespace: CEP registrations
+                        // (detect_sequence) live in a separate engine map with their own
+                        // unregisterCepQuery; unregisterQuery would not stop them and the
+                        // NFA matcher would keep running forever.
+                        boolean wasCep = CEP_IDS.remove(queryId);
+                        boolean stopped = wasCep
+                                ? engine.unregisterCepQuery(queryId)
+                                : engine.unregisterQuery(queryId);
                         return text(existed || stopped
-                                ? "unregistered query '" + queryId + "' and freed its buffer."
+                                ? "unregistered query '" + queryId + "'"
+                                        + (wasCep && stopped ? " (CEP matcher stopped)" : "")
+                                        + " and freed its buffer."
                                 : "no such query '" + queryId + "' (already unregistered?).");
                     } catch (Exception e) {
                         return error("unregister_stream_query failed: " + e.getMessage());
@@ -776,7 +799,7 @@ public final class CqelsMemoryMcpServer {
                         // deliberately NOT defaulted here — with lateness_ms absent the engine fails
                         // fast at registration (its message is surfaced below), because a silent
                         // 0ms budget would drop the very out-of-order events the mode reorders.
-                        boolean eventTime = Boolean.TRUE.equals(a.get("event_time"));
+                        boolean eventTime = optionalBoolean(a, "event_time", false);
                         Long latenessMs = optionalLong(a, "lateness_ms");
                         if (latenessMs != null && latenessMs < 0) {
                             return error("'lateness_ms' must be >= 0");
@@ -815,19 +838,22 @@ public final class CqelsMemoryMcpServer {
                             // registerCepQuery enforces event ORDER; registerCqelsQuery treats FILTER(SEQ)
                             // as an unordered conjunction (would match out-of-order), so it is NOT used here.
                             // Look the buffer up by id so unregister_stream_query (which removes it) cleanly
-                            // stops delivery — note the CEP matcher itself can't be individually stopped in
-                            // this release (unregisterQuery does not cover CEP queries).
+                            // stops delivery even in the window between buffer removal and the engine's
+                            // unregisterCepQuery disposing the matcher.
                             final BlockingQueue<String> buf = buffer;
                             final AtomicLong drp = dropped;
                             engine.registerCepQuery(query, options, match -> {
                                 // Deliver only while this id still maps to OUR buffer. After
                                 // unregister (or if the id is later reused) the identity check
-                                // fails, so this un-stoppable CEP matcher can never write into a
+                                // fails, so a not-yet-disposed matcher can never write into a
                                 // different query's buffer.
                                 if (BUFFERS.get(qid) == buf) {
                                     boundedOffer(buf, drp, String.valueOf(match));
                                 }
                             });
+                            // Remember this id is a CEP registration: unregister_stream_query must
+                            // stop it via unregisterCepQuery (separate engine namespace).
+                            CEP_IDS.add(qid);
                         } catch (Exception ex) {
                             BUFFERS.remove(qid);            // don't leave a phantom id on failure
                             DROPPED.remove(qid);
@@ -838,9 +864,9 @@ public final class CqelsMemoryMcpServer {
                                         ? "EVENT-TIME order (lateness budget " + latenessMs + " ms)"
                                         : "arrival order")
                                 + " — query id='" + qid + "'. Push events with predicate \"a\" and "
-                                + "object the type IRI via push_event, then poll_results('" + qid + "'). "
-                                + "unregister_stream_query frees the buffer + stops delivery (the CEP matcher "
-                                + "itself keeps running — this alpha has no per-CEP-query stop).");
+                                + "object the type IRI via push_event, then poll_results('" + qid + "'); "
+                                + "unregister_stream_query('" + qid + "') stops the CEP matcher and frees "
+                                + "the buffer.");
                     } catch (Exception e) {
                         return error("detect_sequence failed: " + e.getMessage());
                     }
@@ -1033,6 +1059,73 @@ public final class CqelsMemoryMcpServer {
             return "<" + v + ">";
         }
         return "\"" + v.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
+    }
+
+    /**
+     * Required JSON-string argument (memory tools): present AND an actual JSON string, else a
+     * clear type error. Unlike the lenient {@link #str} (kept as-is for the original tools),
+     * this refuses to coerce objects/arrays/numbers into Java-ish strings.
+     */
+    private static String requireString(Map<String, Object> args, String key) {
+        Object v = args.get(key);
+        if (v == null) {
+            throw new IllegalArgumentException("missing argument: " + key);
+        }
+        if (!(v instanceof String s)) {
+            throw new IllegalArgumentException("'" + key + "' must be a string, got "
+                    + jsonTypeName(v));
+        }
+        return s;
+    }
+
+    /** Optional JSON-string argument: {@code null} when absent; present-but-not-a-string → type error. */
+    private static String optionalString(Map<String, Object> args, String key) {
+        Object v = args.get(key);
+        if (v == null) {
+            return null;
+        }
+        if (!(v instanceof String s)) {
+            throw new IllegalArgumentException("'" + key + "' must be a string, got "
+                    + jsonTypeName(v));
+        }
+        return s;
+    }
+
+    /**
+     * Optional strict-boolean argument: absent → {@code def}; a JSON boolean → its value;
+     * anything else (e.g. the STRING "true") → a clear type error rather than silently
+     * falling back to {@code def} and changing matching semantics.
+     */
+    private static boolean optionalBoolean(Map<String, Object> args, String key, boolean def) {
+        Object v = args.get(key);
+        if (v == null) {
+            return def;
+        }
+        if (!(v instanceof Boolean b)) {
+            throw new IllegalArgumentException("'" + key + "' must be a boolean (true or false), got "
+                    + jsonTypeName(v) + ": " + v);
+        }
+        return b;
+    }
+
+    /** JSON-ish type name for arg-validation error messages. */
+    private static String jsonTypeName(Object v) {
+        if (v instanceof String) {
+            return "a string";
+        }
+        if (v instanceof Boolean) {
+            return "a boolean";
+        }
+        if (v instanceof Number) {
+            return "a number";
+        }
+        if (v instanceof List) {
+            return "an array";
+        }
+        if (v instanceof Map) {
+            return "an object";
+        }
+        return v.getClass().getSimpleName();
     }
 
     /** Optional integral argument: {@code null} when absent; rejects non-integral values. */
