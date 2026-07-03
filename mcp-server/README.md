@@ -207,10 +207,12 @@ pair; on a live telemetry stream the next reading does this naturally.)
 > **Scope, honestly.** The full production memory surface — **19 tools** including RDF-star
 > statement-level context dimensions (provenance/confidence/validity/access), PROV-O decision
 > lineage (`explain_decision`/`recall_decisions`), fail-closed governance, and vector/hybrid
-> semantic recall — ships in the **CQELS engine repository's `cqels-mcp` server**, which is a
-> shaded runtime jar built from source there (not a published Maven artifact). This demo
-> server shows the memory-type *patterns* on the published `cqels-engine` API so you can build
-> your own; it is not a substitute for that server.
+> semantic recall — ships in the **CQELS engine repository's `cqels-mcp` server**. It is not a
+> published Maven artifact, but from `v2.0.0-alpha.7` onward the ready-to-run shaded jar is
+> attached to each [engine release](https://github.com/cqels/claude/releases) — download
+> `cqels-mcp-<version>-shaded.jar` and `java -jar` it. This demo server shows the memory-type
+> *patterns* on the published `cqels-engine` API so you can build your own; it is not a
+> substitute for that server.
 
 ## Use it from Claude Desktop
 
