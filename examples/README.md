@@ -47,6 +47,7 @@ mvn -q exec:java -Dexec.mainClass=org.cqels.examples.WindowedAggregation
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.SlidingWindowTrends
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.CountWindow
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.DirectionalWindow
+mvn -q exec:java -Dexec.mainClass=org.cqels.examples.DirectionalMultiPatternJoin
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.GroupConcatSummary
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.StreamStaticJoin
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.AdvancedQueryOperators
@@ -80,6 +81,7 @@ in the table + the `Build & run` block above).
 | [`SlidingWindowTrends`](src/main/java/org/cqels/examples/SlidingWindowTrends.java) | `[SLIDE 4s STEP 2s]` + `GROUP BY` | Per-vehicle moving state-of-charge (battery-drain) trend — average / min / max re-emitted every 2s. |
 | [`CountWindow`](src/main/java/org/cqels/examples/CountWindow.java) | `[TRIPLES 30]` count-based window | Observations per vehicle over the most recent stream triples (the last N readings, not seconds). |
 | [`DirectionalWindow`](src/main/java/org/cqels/examples/DirectionalWindow.java) | `[FUTURE 2s EMIT EARLY_AND_FINAL]` (LARS) | Forward-looking charge-reading counts per vehicle during a V2G charging burst (running + final rows). |
+| [`DirectionalMultiPatternJoin`](src/main/java/org/cqels/examples/DirectionalMultiPatternJoin.java) | `[FUTURE 2s]` + 2-pattern star join (opt-in, alpha.7) | V2G readiness: join each vehicle's SoC and charge-power readings observed inside the same forward window — behind `cqels.directional.multiPatternSelect=true` (set in `main()`); rows surface per closed window. |
 | [`GroupConcatSummary`](src/main/java/org/cqels/examples/GroupConcatSummary.java) | `GROUP_CONCAT(…; SEPARATOR=…)` | Per-vehicle observation count + the list of observed VSS signals per 3-second window. |
 
 ### Advanced query patterns
@@ -105,6 +107,11 @@ in the table + the `Build & run` block above).
 | [`RdfsReasoning`](src/main/java/org/cqels/examples/RdfsReasoning.java) | RDFS/OWL inference — `cqels-reasoning-rete` | An `ex:DepotVehicle rdfs:subClassOf vsso:Vehicle` schema lets a query for `vsso:Vehicle` match the EV via inference. |
 | [`ShaclValidation`](src/main/java/org/cqels/examples/ShaclValidation.java) | continuous [SHACL](https://www.w3.org/TR/shacl/) — `cqels-shacl` | Require every `sosa:Observation` to carry a result; `conforms` flips from `false` to `true` as the result arrives for the same observation. |
 | [`AspReasoning`](src/main/java/org/cqels/examples/AspReasoning.java) | Answer-Set Programming — `cqels-asp` | A logic rule derives `convoy(V1,V2)` for two distinct vehicles reporting telemetry together (join + inequality). |
+
+> alpha.7 also ships an opt-in *warm parse-cache* ASP solver backend (`WarmParseCacheAspSolverBackend`,
+> parses the base program once and reuses it across continuous solves) — it is engine-API opt-in via the
+> 5-arg `AspContinuousQuery` constructor and not yet reachable through the `CQELSEngine` facade these
+> examples use, so there is no demo of it here.
 
 ### Geospatial (add-on module)
 | Class | CQELS feature | Scenario |
