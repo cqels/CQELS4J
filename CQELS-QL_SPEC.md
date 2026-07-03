@@ -1,6 +1,6 @@
 # CQELS-QL Language Specification
 
-**Applies to:** CQELS `2.0.0-alpha.5` · **Based on:** SPARQL 1.1, extended with RSP-QL / C-SPARQL / LARS streaming constructs.
+**Applies to:** CQELS `2.0.0-alpha.7` · **Based on:** SPARQL 1.1, extended with RSP-QL / C-SPARQL / LARS streaming constructs.
 
 CQELS-QL (*Continuous Query Evaluation over Linked Streams — Query Language*) is **SPARQL 1.1 plus
 streaming**. If you know SPARQL, you already know most of it: `SELECT`, `FILTER`, `BIND`, `OPTIONAL`,

@@ -4,7 +4,7 @@ This guide takes you from zero to a running continuous query in a few minutes:
 install the prerequisites, pull the engine from GitHub Packages, run the bundled
 examples, then wire CQELS into your own project.
 
-> **Current release:** `2.0.0-alpha.5` — coordinates `org.cqels:cqels-*`, entry point `cqels-engine`.
+> **Current release:** `2.0.0-alpha.7` — coordinates `org.cqels:cqels-*`, entry point `cqels-engine`.
 
 ---
 
@@ -107,7 +107,7 @@ Add the repository and the engine dependency to your `pom.xml`:
   <dependency>
     <groupId>org.cqels</groupId>
     <artifactId>cqels-engine</artifactId>
-    <version>2.0.0-alpha.5</version>
+    <version>2.0.0-alpha.7</version>
   </dependency>
 </dependencies>
 ```
@@ -188,6 +188,6 @@ public class FirstQuery {
   see the spec.)
 - **Cypher & CEP:** `engine.registerCypherQuery(...)` for property-graph patterns and
   `engine.registerCepQuery(...)` for event sequences.
-- **Releases:** https://github.com/cqels/CQELS4J/releases
+- **Releases:** https://github.com/cqels/claude/releases
 
 Questions or issues? Open one at https://github.com/cqels/CQELS4J/issues.
