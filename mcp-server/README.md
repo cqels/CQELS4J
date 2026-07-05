@@ -214,11 +214,17 @@ pair; on a live telemetry stream the next reading does this naturally.)
 > *patterns* on the published `cqels-engine` API so you can build your own; it is not a
 > substitute for that server.
 
-## Use it from Claude Desktop
+## Use it from an MCP client
 
-Add an entry to your `claude_desktop_config.json` (macOS:
-`~/Library/Application Support/Claude/claude_desktop_config.json`; Windows:
-`%APPDATA%\Claude\claude_desktop_config.json`), using the **absolute path** to the jar:
+This is a standard MCP server that speaks JSON-RPC over **stdio** — it is not Claude-specific. Any
+**stdio-capable** MCP client launches it the same way (`java -jar …/cqels-mcp-server.jar`); only the
+config file shape differs. Use the **absolute path** to the jar everywhere below. (Remote **URL**
+clients such as ChatGPT connect differently — see [ChatGPT and other remote clients](#chatgpt-and-other-remote-url-clients).)
+
+### Claude Desktop
+
+Add to `claude_desktop_config.json` (macOS `~/Library/Application Support/Claude/…`; Windows
+`%APPDATA%\Claude\…`):
 
 ```json
 {
@@ -231,9 +237,42 @@ Add an entry to your `claude_desktop_config.json` (macOS:
 }
 ```
 
-Restart Claude Desktop. The `cqels-memory` server's tools appear under the tools menu.
-Any MCP client works the same way — the launch command is just
-`java -jar …/cqels-mcp-server.jar` speaking MCP over stdio.
+Restart Claude Desktop; the `cqels-memory` tools appear under the tools menu.
+
+### Claude Code
+
+Add the same `mcpServers` entry to `.mcp.json` in your project root.
+
+### Codex CLI
+
+Codex CLI launches stdio MCP servers natively. Add to `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.cqels-memory]
+command = "java"
+args = ["-jar", "/absolute/path/to/CQELS4J/mcp-server/target/cqels-mcp-server.jar"]
+```
+
+### Cursor / Windsurf / other MCP clients
+
+Same `command` + `args` (`java -jar …`) in whatever `mcpServers` block your client expects.
+
+### ChatGPT and other remote (URL) clients
+
+ChatGPT connectors reach an MCP server as a **remote HTTPS URL**, not a local stdio process. This demo
+server is stdio-only, so expose it over HTTP with a **stdio→HTTP gateway** — e.g.
+[`supergateway`](https://github.com/supercorp-ai/supergateway), which wraps a stdio server as an
+SSE/Streamable-HTTP endpoint:
+
+```bash
+npx -y supergateway --stdio "java -jar /absolute/path/to/CQELS4J/mcp-server/target/cqels-mcp-server.jar"
+```
+
+Then register the gateway's URL as the ChatGPT connector. For production remote deployments, prefer the
+full engine **`cqels-mcp`** server (see the *Scope, honestly* note above) — it is the maintained
+production server; grab its shaded jar from an [engine release](https://github.com/cqels/claude/releases).
+
+Either way, front the endpoint with **TLS + authentication** and do not expose it directly to the internet.
 
 ### Try it
 
