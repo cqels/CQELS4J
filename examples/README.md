@@ -60,6 +60,7 @@ mvn -q exec:java -Dexec.mainClass=org.cqels.examples.AspReasoning
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.GeoSpatialFilter
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.SosaObservations
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.VehicleSignalsCdsp
+mvn -q exec:java -Dexec.mainClass=org.cqels.examples.RdfMessageIngestion
 ```
 
 Each program prints what it pushes and what the engine emits, then exits on its own.
@@ -123,6 +124,7 @@ in the table + the `Build & run` block above).
 |-------|---------------|----------|
 | [`SosaObservations`](src/main/java/org/cqels/examples/SosaObservations.java) | W3C [SOSA/SSN](https://www.w3.org/TR/vocab-ssn/) + multi-pattern stream join | Average / count per (vehicle × observed VSS signal) — the `observedProperty` keeps speed and battery readings apart. |
 | [`VehicleSignalsCdsp`](src/main/java/org/cqels/examples/VehicleSignalsCdsp.java) | COVESA [VSS](https://covesa.global/) (CDSP) + `GROUP BY` + `HAVING` | The flagship query: per-vehicle top/average speed over a window, emitting only vehicles that were speeding. |
+| [`RdfMessageIngestion`](src/main/java/org/cqels/examples/RdfMessageIngestion.java) | W3C [RSP CG **RDF Messages**](https://w3c-cg.github.io/rsp/spec/messages) N-Quads envelope (`RdfMessageCodec`, alpha.9) | Decode a `VERSION "1.2-messages"` document into atomic observations and push each as one stream element, so a multi-pattern `[NOW]` query binds two predicates of the *same* observation. |
 
 ## Adapting them
 

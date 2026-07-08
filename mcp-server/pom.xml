@@ -16,7 +16,7 @@
     <properties>
         <maven.compiler.release>17</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <cqels.version>2.0.0-alpha.8</cqels.version>
+        <cqels.version>2.0.0-alpha.9</cqels.version>
         <mcp.sdk.version>1.0.0</mcp.sdk.version>
         <mainClass>org.cqels.examples.mcp.CqelsMemoryMcpServer</mainClass>
     </properties>
