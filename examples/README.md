@@ -132,5 +132,6 @@ in the table + the `Build & run` block above).
   (`SUM`, `MIN`), or clauses (`HAVING`, `ORDER BY`, `LIMIT`).
 - `engine.createStream(name)` returns a `DataStream` with several `push(...)`
   overloads (RDF `Statement`, `(subject, predicate, value)` with `String`/`double`/
-  `long`/`IRI` objects, and explicit-timestamp variants).
+  `long`/`IRI` objects, explicit-timestamp variants, and `push(Collection<Statement>, long)`
+  which delivers several triples as **one atomic element** — see `RdfMessageIngestion`).
 - Bump `<cqels.version>` in [`pom.xml`](pom.xml) to track new releases.

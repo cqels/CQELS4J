@@ -14,7 +14,8 @@ import java.util.List;
 /**
  * Example — the <strong>W3C RSP Community Group "RDF Messages"</strong> stream envelope (CQELS 2.0.0-alpha.9).
  *
- * <p>An <em>RDF Message</em> is "an RDF Dataset interpreted atomically as a single communicative act". CQELS
+ * <p>An <em>RDF Message</em> is "an RDF Dataset that is intended to be interpreted atomically as a single
+ * communicative act". CQELS
  * ships a codec for the N-Quads framing (§2.1): a {@code VERSION "1.2-messages"} directive followed by
  * {@code MESSAGE}-delimited datasets. A message maps 1:1 onto one atomic CQELS stream element, so a
  * multi-triple observation (here a five-triple {@code sosa:Observation}) is delivered as ONE unit that never

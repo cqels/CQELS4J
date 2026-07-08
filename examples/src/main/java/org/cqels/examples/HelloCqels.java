@@ -11,8 +11,9 @@ import org.cqels.engine.DataStream;
  * EV's SoC drops below 20 %.
  *
  * <p>This is the smallest possible CQELS-QL program — one stream, one window, one filter — over the
- * shared fleet world (see {@link Fleet}). {@code [NOW]} matches a single triple pattern, so the demo
- * streams only SoC readings.
+ * shared fleet world (see {@link Fleet}). Here each stream element is a single triple, so one triple
+ * pattern suffices. (A multi-triple observation pushed as one atomic element can be matched by several
+ * patterns at once — see {@link RdfMessageIngestion}.)
  *
  * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.examples.HelloCqels}
  */
