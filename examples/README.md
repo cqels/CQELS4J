@@ -60,6 +60,7 @@ mvn -q exec:java -Dexec.mainClass=org.cqels.examples.AspReasoning
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.GeoSpatialFilter
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.SosaObservations
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.VehicleSignalsCdsp
+mvn -q exec:java -Dexec.mainClass=org.cqels.examples.ChargerRangeFilter
 ```
 
 Each program prints what it pushes and what the engine emits, then exits on its own.
@@ -117,6 +118,11 @@ in the table + the `Build & run` block above).
 | Class | CQELS feature | Scenario |
 |-------|---------------|----------|
 | [`GeoSpatialFilter`](src/main/java/org/cqels/examples/GeoSpatialFilter.java) | OGC [GeoSPARQL](https://www.ogc.org/standard/geosparql/) `geof:sfWithin` — `cqels-geo` | Keep only readings whose WKT location falls inside the depot geofence — the vehicles currently in the depot zone. |
+
+### Extension functions (add-on module)
+| Class | CQELS feature | Scenario |
+|-------|---------------|----------|
+| [`ChargerRangeFilter`](src/main/java/org/cqels/examples/ChargerRangeFilter.java) | user-defined function by IRI (SPARQL 1.1 §17.6, alpha.11) — `cqels-functions-ext` | Call `urn:cqels:fn:haversine(...)` from the query to keep only vehicles within 5 km of the depot charge hub. The reference function self-registers via `ServiceLoader` — on the classpath, no Java glue. |
 
 ### Standard vocabularies & domains
 | Class | CQELS feature | Scenario |
