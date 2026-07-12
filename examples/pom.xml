@@ -16,7 +16,7 @@
         <maven.compiler.release>17</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <!-- Bump to the latest published CQELS release as new versions ship. -->
-        <cqels.version>2.0.0-alpha.8</cqels.version>
+        <cqels.version>2.0.0-alpha.10</cqels.version>
         <!-- Default example for `mvn exec:java`; override with -Dexec.mainClass=... -->
         <exec.mainClass>org.cqels.examples.HelloCqels</exec.mainClass>
     </properties>
