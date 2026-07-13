@@ -28,7 +28,7 @@ plain triple store. The standard SPARQL surface is summarized briefly in
 | Stream–static composition | `FROM [STATIC] <iri> [WITH DEPTH n] [CACHE d]` (lookup join) | [§6](#6-streamstatic-composition) |
 | Complex Event Processing | `FILTER(SEQ(?a ; ?b ; …))` with quantifiers & negation | [§7](#7-complex-event-processing-cep) |
 | Stream output operators | RStream / IStream / DStream | [§8](#8-stream-output-operators-rsp-ql) |
-| Extension functions (§17.6) | `PREFIX cqfn: <urn:cqels:fn:> … FILTER(cqfn:haversine(…) < 5000)` | [§9](#9-standard-sparql-features-supported-as-is) |
+| Extension functions (§17.6) | `PREFIX cqfn: <urn:cqels:fn:> … FILTER(cqfn:haversine(…) <= 5.0)` | [§9](#9-standard-sparql-features-supported-as-is) |
 
 CQELS-QL also has a property-graph dialect, **CypherQL** ([§10](#10-cypherql-property-graph-dialect)).
 
