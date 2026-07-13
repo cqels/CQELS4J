@@ -61,6 +61,14 @@ mvn -q exec:java -Dexec.mainClass=org.cqels.examples.GeoSpatialFilter
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.SosaObservations
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.VehicleSignalsCdsp
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.ChargerRangeFilter
+
+# Advanced CDSP analytics & CEP (org.cqels.examples.cdsp):
+mvn -q exec:java -Dexec.mainClass=org.cqels.examples.cdsp.CorrelatedFaultCascade
+mvn -q exec:java -Dexec.mainClass=org.cqels.examples.cdsp.DriverAttentionWatchdog
+mvn -q exec:java -Dexec.mainClass=org.cqels.examples.cdsp.SuddenSwerveDetector
+mvn -q exec:java -Dexec.mainClass=org.cqels.examples.cdsp.WetRoadBraking
+mvn -q exec:java -Dexec.mainClass=org.cqels.examples.cdsp.FleetRiskLeaderboard
+mvn -q exec:java -Dexec.mainClass=org.cqels.examples.cdsp.LiveEfficiencyTicker
 ```
 
 Each program prints what it pushes and what the engine emits, then exits on its own.
@@ -96,6 +104,23 @@ in the table + the `Build & run` block above).
 |-------|---------------|----------|
 | [`ComplexEventPattern`](src/main/java/org/cqels/examples/ComplexEventPattern.java) | declarative CEP `FILTER(SEQ(...))` | Road-rage detection: a sharp speed **drop** then a sharp speed **spike** within a window (order matters). |
 | [`CepQuantifier`](src/main/java/org/cqels/examples/CepQuantifier.java) | CEP quantifier `?e+` | Impaired driving: a speed drop, then one-or-more lane-weaves, then a speed spike — a variable-length sequence. |
+
+### Advanced CDSP analytics & CEP (`org.cqels.examples.cdsp`)
+
+Deeper query shapes adapted from the COVESA CDSP vehicle-signal scenario suite — multi-triple
+CEP events with cross-event correlation, a negated sequence step, two-reading temporal
+self-joins, and heavier windowed analytics. The detector demos push both a matching scenario
+and a counter-example that must stay silent, so the discriminating power of each construct is
+visible; the ticker instead demonstrates window eviction (the run outlasts the window).
+
+| Class | CQELS feature | Scenario |
+|-------|---------------|----------|
+| [`CorrelatedFaultCascade`](src/main/java/org/cqels/examples/cdsp/CorrelatedFaultCascade.java) | CEP multi-triple (reified) events + cross-event `STR()` correlation filters + `FILTER(SEQ(?e1; ?e2; ?e3))` | Fault cascade: three **different** subsystem alerts (inverter over-temp, brake wear, tire pressure) from the **same** vehicle within 15 s → send it to the depot; the same alerts spread across two vehicles stay silent. |
+| [`DriverAttentionWatchdog`](src/main/java/org/cqels/examples/cdsp/DriverAttentionWatchdog.java) | CEP negated sequence step `FILTER(SEQ(?e1; NOT ?e2; ?e3))` + same-vehicle pairing guard on the fast readings | Driver-attention watchdog: fast (> 80 km/h), then **no** braking reading (< 40) before the next fast reading (> 60) → attention alert; a hard-brake in the gap keeps it quiet, and two fast readings from *different* vehicles cannot pair. |
+| [`SuddenSwerveDetector`](src/main/java/org/cqels/examples/cdsp/SuddenSwerveDetector.java) | Two-reading temporal self-join in one `[RANGE 3s]` window + `BIND(ABS(…))` delta + compound `FILTER` | Sudden-swerve incident: the steering wheel swings > 90° between two readings while above 50 km/h — a cruise wiggle and a hard swing at parking speed both stay silent. |
+| [`WetRoadBraking`](src/main/java/org/cqels/examples/cdsp/WetRoadBraking.java) | Context-gated self-join: the deceleration pair counts only when a rain triple accompanies the first reading | Hard braking specifically on a wet road: a > 20 km/h drop fires only when it was raining as braking began — the identical drop on a dry road stays silent. |
+| [`FleetRiskLeaderboard`](src/main/java/org/cqels/examples/cdsp/FleetRiskLeaderboard.java) | Windowed `GROUP BY` + `COUNT(*)`/`AVG` over a multi-pattern reading join, compound `OR` `FILTER`, `HAVING` floor | Rolling per-vehicle risk score: speeding / violent-steering violations per 10 s window — the hard-driven EV tops the board, a two-slip vehicle is gated out by `HAVING`, the clean one never groups. |
+| [`LiveEfficiencyTicker`](src/main/java/org/cqels/examples/cdsp/LiveEfficiencyTicker.java) | `[SLIDE 3s STEP 1s]` sliding window + `GROUP BY` over two co-bound metrics on a per-tick reading node | Live per-vehicle efficiency ticker: trailing average battery power vs speed — the hard-driven EV draws ~3× the power of the economical one at only ~2× the speed, the depot-parked EV shows positive (V2G charging) power at 0 km/h, and early ticks demonstrably age out of the window. |
 
 ### Query dialects
 | Class | CQELS feature | Scenario |
