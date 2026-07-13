@@ -69,7 +69,7 @@ mvn -q compile
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.HelloCqels
 ```
 
-A few representative scenarios (the full categorized list of 17 is in
+A few representative scenarios (the full categorized list of 30 is in
 [`examples/README.md`](examples/README.md)) — run any with `-Dexec.mainClass`:
 
 | Class | What it shows |
@@ -86,8 +86,9 @@ A few representative scenarios (the full categorized list of 17 is in
 | `org.cqels.examples.VehicleSignalsCdsp` | COVESA VSS (CDSP) — per-vehicle speeding via `GROUP BY` + `HAVING` |
 
 See [`examples/README.md`](examples/README.md) for a description of each (grouped by
-category: Basics, Windowing, Advanced query, CEP, Query dialects, Reasoning & validation,
-Geospatial, Standard vocabularies).
+category: Basics, Windowing, Advanced query, CEP, Advanced CDSP analytics & CEP, Query
+dialects, Reasoning & validation, Reasoning showcase, Geospatial, Extension functions,
+Standard vocabularies).
 
 ---
 
@@ -114,7 +115,9 @@ Add the repository and the engine dependency to your `pom.xml`:
 
 Optional add-on modules (same group/version): `cqels-reasoning-rete` (RDFS/OWL
 inference), `cqels-shacl` (validation), `cqels-geo` (GeoSPARQL), `cqels-asp`
-(Answer-Set Programming), `cqels-storage-*` (durable backends).
+(Answer-Set Programming), `cqels-storage-*` (durable backends), `cqels-functions-ext`
+(user-defined SPARQL functions by IRI — e.g. `urn:cqels:fn:haversine`,
+`urn:cqels:fn:levenshtein` — self-registering via ServiceLoader).
 
 ---
 

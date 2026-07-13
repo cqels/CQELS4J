@@ -13,7 +13,8 @@ or teach the `ex:ElectricBus ⊑ vsso:Vehicle` taxonomy (walkthrough below). Thi
 `.withMemoryStore()`, so the store is in-memory and **session-scoped (cleared when the process
 exits)**; swap in a durable storage backend for persistence across restarts.
 
-Its core dependencies are the published `cqels-engine` and the official
+Its core dependencies are the published `cqels-engine` (plus `cqels-reasoning-rete` for the
+`define_subclass` reasoning tool) and the official
 [MCP Java SDK](https://github.com/modelcontextprotocol/java-sdk) (`io.modelcontextprotocol.sdk:mcp`),
 plus an `slf4j-simple` binding (so logs go to **stderr**, keeping stdout clean for JSON-RPC)
 and a `jackson-annotations` version pin (see the pom). It's a self-contained starting point
@@ -204,10 +205,13 @@ happened. The **arrival-order** query (`seq_2`) sees spike-then-drop and returns
 release is watermark-gated, so a later event must advance the watermark past the buffered
 pair; on a live telemetry stream the next reading does this naturally.)
 
-> **Scope, honestly.** The full production memory surface — **19 tools** including RDF-star
-> statement-level context dimensions (provenance/confidence/validity/access), PROV-O decision
-> lineage (`explain_decision`/`recall_decisions`), fail-closed governance, and vector/hybrid
-> semantic recall — ships in the **CQELS engine repository's `cqels-mcp` server**. It is not a
+> **Scope, honestly.** The full production memory surface — **24 tools** (plus 10 resources and 10
+> prompt templates) including RDF-star statement-level context dimensions
+> (provenance/confidence/validity/access), PROV-O decision lineage
+> (`explain_decision`/`recall_decisions`), fail-closed governance, vector/hybrid semantic recall,
+> continuous SHACL watches (`watch_invariant`), continuous ASP rules (`register_rules`), and atomic
+> stream ingestion (`create_stream`/`push_stream_events`) — ships in the **CQELS engine
+> repository's `cqels-mcp` server**. It is not a
 > published Maven artifact, but from `v2.0.0-alpha.7` onward the ready-to-run shaded jar is
 > attached to each [engine release](https://github.com/cqels/claude/releases) — download
 > `cqels-mcp-<version>-shaded.jar` and `java -jar` it. This demo server shows the memory-type
