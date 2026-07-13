@@ -28,6 +28,7 @@ plain triple store. The standard SPARQL surface is summarized briefly in
 | Stream–static composition | `FROM [STATIC] <iri> [WITH DEPTH n] [CACHE d]` (lookup join) | [§6](#6-streamstatic-composition) |
 | Complex Event Processing | `FILTER(SEQ(?a ; ?b ; …))` with quantifiers & negation | [§7](#7-complex-event-processing-cep) |
 | Stream output operators | RStream / IStream / DStream | [§8](#8-stream-output-operators-rsp-ql) |
+| Extension functions (§17.6) | `PREFIX cqfn: <urn:cqels:fn:> … FILTER(cqfn:haversine(…) < 5000)` | [§9](#9-standard-sparql-features-supported-as-is) |
 
 CQELS-QL also has a property-graph dialect, **CypherQL** ([§10](#10-cypherql-property-graph-dialect)).
 
@@ -122,7 +123,8 @@ CQELS extension.
 | `[PAST Ns FUTURE Ms]` | Same, with explicit backward keyword. |
 | `[TRIPLES PAST n FUTURE m]` | Count-based directional extents. |
 
-Directional windows accept an optional **emission policy** and **lateness budget**:
+Directional windows accept an optional **emission policy** and **lateness budget** (the lateness
+budget is not directional-only — see below):
 
 ```sparql
 FROM STREAM VehicleSignals [FUTURE 20s STEP 1s EMIT ON_CLOSE LATENESS 2s]
@@ -139,6 +141,18 @@ windows produce **exact, delayed** results at window close (one result per ancho
 latency for tolerance of out-of-order arrivals. The `EMIT` policy governs emission for **windowed
 aggregation** queries; complex-event (`SEQ`) matching over a directional window instead emits one final
 match per anchor (see [§7](#7-complex-event-processing-cep)).
+
+> **`LATENESS` on backward windows.** `LATENESS d` also parses on the backward forms and is
+> **honoured on single-stream `[RANGE Ns]` aggregate queries** (`COUNT`/`SUM`/`AVG`/`MIN`/`MAX`,
+> optional `GROUP BY` — e.g. `FROM STREAM Sensors [RANGE 10s LATENESS 2s]`). On every other
+> backward shape it **fails loud** rather than being silently ignored: `[SLIDE … STEP …]` and
+> `[RANGE … STEP …]` are rejected at compile time, and multi-stream joins, non-aggregate windowed
+> `SELECT`s, and `FILTER(SEQ(...))` on a non-directional window are rejected at registration.
+> (`EMIT`, by contrast, is directional-only — an explicit `EMIT` on a backward window is rejected.)
+>
+> **Default.** Without `LATENESS`, every event-time (`RANGE`/`FUTURE`) window drops late-arriving
+> events **silently** (allowed-lateness is 0; `[NOW]` and `[TRIPLES n]` use no watermark, so
+> lateness does not apply). If late data matters, say so in the window spec.
 
 ---
 
@@ -314,6 +328,17 @@ are called out.
 - **`FILTER(expr)`** — operators `= != < > <= >= && || !` `+ - * /`, plus built-ins (`BOUND`, `IF`,
   `CONCAT`, `STR`, `year(...)`, …); full SPARQL effective-boolean-value semantics.
 - **`BIND(expr AS ?v)`** — computed variables (evaluated after `FILTER`).
+- **Extension functions (SPARQL 1.1 §17.6)** — since `2.0.0-alpha.11`, a `FILTER` / `BIND` /
+  `SELECT`-expression call to an **explicit function IRI** — `<urn:cqels:fn:haversine>(…)` or a
+  declared-prefix form such as `cqfn:haversine(…)` with `PREFIX cqfn: <urn:cqels:fn:>` — resolves
+  against RDF4J's `ServiceLoader`-fed `FunctionRegistry`. Any jar on the classpath shipping a
+  `META-INF/services/org.eclipse.rdf4j.query.algebra.evaluation.function.Function` entry adds
+  functions with **zero registration code** — e.g. the `org.cqels:cqels-functions-ext` pack
+  (`urn:cqels:fn:levenshtein`, `urn:cqels:fn:haversine`; see the runnable
+  [`ChargerRangeFilter`](examples/) example). Bare keyword names (`year(…)`, `ABS(…)`, …) never
+  consult the registry — the built-in namespace is frozen — and built-ins plus `geof:` still
+  resolve first. A call to an *unregistered* IRI (or with an unbound argument) remains a **silent
+  SPARQL type error**: `FILTER` drops the row, `BIND` leaves the variable unbound.
 - **`OPTIONAL { … }`** — left outer join (unmatched optional variables are unbound).
 - **`{ … } UNION { … }`** — alternative patterns merged before `FILTER`.
 - **`FILTER NOT EXISTS { … }`** — anti-join (exclude rows with a match). (`MINUS` is parsed but not yet

@@ -22,6 +22,9 @@ rebuilt for edge-to-cloud deployments — code name **COSMO**.
 - **Reasoning & validation** — RDFS/OWL inference (RETE), SHACL validation, and
   Answer-Set Programming over windowed streams.
 - **Geospatial** — GeoSPARQL spatial relations with R-tree (JTS) indexing.
+- **Extensible functions** — call user-defined functions by IRI in queries (SPARQL 1.1 §17.6);
+  `cqels-functions-ext` ships reference functions (`cqfn:haversine`, `cqfn:levenshtein`) that
+  self-register via `ServiceLoader` — on the classpath, no Java glue.
 - **Aggregation & joins** — incremental (F-IVM) and parallel windowed aggregation,
   multi-way stream joins, and stream + static-graph composition.
 - **Durable & embeddable** — pluggable storage backends (LMDB, RocksDB, IoTDB) with
@@ -118,6 +121,7 @@ electric-vehicle fleet / vehicle-to-grid (V2G) scenario.)
 | [`SlidingWindowTrends`](examples/src/main/java/org/cqels/examples/SlidingWindowTrends.java) | sliding `[SLIDE … STEP …]` windows |
 | [`CountWindow`](examples/src/main/java/org/cqels/examples/CountWindow.java) | count-based `[TRIPLES N]` window |
 | [`DirectionalWindow`](examples/src/main/java/org/cqels/examples/DirectionalWindow.java) | directional/LARS `[FUTURE … EMIT …]` window |
+| [`DirectionalMultiPatternJoin`](examples/src/main/java/org/cqels/examples/DirectionalMultiPatternJoin.java) | `[FUTURE …]` + 2-pattern star join (opt-in, alpha.7) |
 | [`GroupConcatSummary`](examples/src/main/java/org/cqels/examples/GroupConcatSummary.java) | `GROUP_CONCAT` string aggregation |
 
 **Advanced query patterns**
@@ -132,6 +136,16 @@ electric-vehicle fleet / vehicle-to-grid (V2G) scenario.)
 | [`ComplexEventPattern`](examples/src/main/java/org/cqels/examples/ComplexEventPattern.java) | declarative CEP `FILTER(SEQ(…))` sequence detection |
 | [`CepQuantifier`](examples/src/main/java/org/cqels/examples/CepQuantifier.java) | CEP quantifier `?e+` (one-or-more) |
 
+**Advanced CDSP analytics & CEP** (`org.cqels.examples.cdsp`)
+| Demo | Feature | Scenario |
+|------|---------|----------|
+| [`CorrelatedFaultCascade`](examples/src/main/java/org/cqels/examples/cdsp/CorrelatedFaultCascade.java) | CEP multi-triple (reified) events + cross-event `STR()` correlation filters + `FILTER(SEQ(?e1; ?e2; ?e3))` | Fault cascade: three different subsystem alerts from the same vehicle within 15 s → send it to the depot; the same alerts spread across two vehicles stay silent. |
+| [`DriverAttentionWatchdog`](examples/src/main/java/org/cqels/examples/cdsp/DriverAttentionWatchdog.java) | CEP negated sequence step `FILTER(SEQ(?e1; NOT ?e2; ?e3))` + same-vehicle pairing guard | Driver-attention watchdog: fast driving, then no braking reading before the next fast reading → attention alert. |
+| [`SuddenSwerveDetector`](examples/src/main/java/org/cqels/examples/cdsp/SuddenSwerveDetector.java) | Two-reading temporal self-join in one `[RANGE 3s]` window + `BIND(ABS(…))` delta | Sudden-swerve incident: the steering wheel swings > 90° between two readings while above 50 km/h. |
+| [`WetRoadBraking`](examples/src/main/java/org/cqels/examples/cdsp/WetRoadBraking.java) | Context-gated self-join (rain triple gates the reading pair) | Hard braking specifically on a wet road: a > 20 km/h drop fires only when it was raining as braking began. |
+| [`FleetRiskLeaderboard`](examples/src/main/java/org/cqels/examples/cdsp/FleetRiskLeaderboard.java) | Windowed `GROUP BY` + `COUNT(*)`/`AVG` over a multi-pattern join + `HAVING` floor | Rolling per-vehicle risk score: speeding / violent-steering violations per 10 s window. |
+| [`LiveEfficiencyTicker`](examples/src/main/java/org/cqels/examples/cdsp/LiveEfficiencyTicker.java) | `[SLIDE 3s STEP 1s]` sliding window + `GROUP BY` over two co-bound metrics | Live per-vehicle efficiency ticker: trailing average battery power vs speed. |
+
 **Query dialects**
 | Demo | Feature |
 |------|---------|
@@ -144,10 +158,24 @@ electric-vehicle fleet / vehicle-to-grid (V2G) scenario.)
 | [`ShaclValidation`](examples/src/main/java/org/cqels/examples/ShaclValidation.java) | continuous [SHACL](https://www.w3.org/TR/shacl/) validation (`cqels-shacl`) |
 | [`AspReasoning`](examples/src/main/java/org/cqels/examples/AspReasoning.java) | Answer-Set Programming rules (`cqels-asp`) |
 
+**Reasoning showcase** (`org.cqels.examples.reasoning`)
+| Demo | Feature | Scenario |
+|------|---------|----------|
+| [`TaxonomyEntailment`](examples/src/main/java/org/cqels/examples/reasoning/TaxonomyEntailment.java) | Multi-hop RDFS entailment — subclass-chain + type lifting + sub-property propagation (`cqels-reasoning-rete`) | A two-level depot taxonomy: queries against the top class and super-property still find a vehicle registered only at the bottom. |
+| [`BoundedTransitiveClosure`](examples/src/main/java/org/cqels/examples/reasoning/BoundedTransitiveClosure.java) | Recursive (transitive-closure) inference with a work bound — `enableRecursiveInference` + `maxRecursionDepth` | A 4-level site containment chain: one transitive rule derives the long-range containments under a depth cap. |
+| [`RetractableInference`](examples/src/main/java/org/cqels/examples/reasoning/RetractableInference.java) | Opt-in truth maintenance — `enableTruthMaintenance(true)` + `ReteNetwork.retract(...)` (`cqels-reasoning-rete`) | An overheat alert derived from a coolant reading is withdrawn when the reading is retracted. |
+| [`MissionPreservationAsp`](examples/src/main/java/org/cqels/examples/reasoning/MissionPreservationAsp.java) | ASP negation-as-failure default rule (`cqels-asp`) | Mission preservation: a low-SoC vehicle is only "at risk" if it is not currently charging. |
+| [`PersistentViolationAsp`](examples/src/main/java/org/cqels/examples/reasoning/PersistentViolationAsp.java) | ASP temporal persistence with stratified negation-as-failure (`cqels-asp`) | Persistent depot-zone speeding: flagged only on the 3rd consecutive over-limit reading. |
+
 **Geospatial** (add-on module)
 | Demo | Feature |
 |------|---------|
 | [`GeoSpatialFilter`](examples/src/main/java/org/cqels/examples/GeoSpatialFilter.java) | OGC [GeoSPARQL](https://www.ogc.org/standard/geosparql/) `geof:sfWithin` (`cqels-geo`) |
+
+**Extension functions** (add-on module)
+| Demo | Feature |
+|------|---------|
+| [`ChargerRangeFilter`](examples/src/main/java/org/cqels/examples/ChargerRangeFilter.java) | user-defined function by IRI (SPARQL 1.1 §17.6, alpha.11) — `cqels-functions-ext`, e.g. `cqfn:haversine(...)` |
 
 **Standard vocabularies & domains**
 | Demo | Feature |
@@ -161,7 +189,9 @@ electric-vehicle fleet / vehicle-to-grid (V2G) scenario.)
 
 [`mcp-server/`](mcp-server/) is a self-contained [Model Context Protocol](https://modelcontextprotocol.io/)
 server that exposes a CQELS engine as **AI-accessible tools** over stdio — static memory
-(`store_fact`, `query`, `recall`), the **streaming** engine (`push_event`,
+(`store_fact`, `query`, `recall`), agent-memory patterns (episodic `record_event`/
+`recall_episodes`, procedural `save_procedure`/`run_procedure`, working-memory
+`assemble_context`), the **streaming** engine (`push_event`,
 `register_stream_query`, `poll_results`, `unregister_stream_query`), and intent-shaped
 capability tools (`detect_sequence` for CEP event-pattern matching, `define_subclass` for
 RDFS reasoning). So an MCP client such as Claude Desktop can run the same continuous
