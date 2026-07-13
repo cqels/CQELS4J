@@ -69,6 +69,13 @@ mvn -q exec:java -Dexec.mainClass=org.cqels.examples.cdsp.SuddenSwerveDetector
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.cdsp.WetRoadBraking
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.cdsp.FleetRiskLeaderboard
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.cdsp.LiveEfficiencyTicker
+
+# Reasoning showcase (org.cqels.examples.reasoning):
+mvn -q exec:java -Dexec.mainClass=org.cqels.examples.reasoning.TaxonomyEntailment
+mvn -q exec:java -Dexec.mainClass=org.cqels.examples.reasoning.BoundedTransitiveClosure
+mvn -q exec:java -Dexec.mainClass=org.cqels.examples.reasoning.RetractableInference
+mvn -q exec:java -Dexec.mainClass=org.cqels.examples.reasoning.MissionPreservationAsp
+mvn -q exec:java -Dexec.mainClass=org.cqels.examples.reasoning.PersistentViolationAsp
 ```
 
 Each program prints what it pushes and what the engine emits, then exits on its own.
@@ -138,6 +145,20 @@ visible; the ticker instead demonstrates window eviction (the run outlasts the w
 > parses the base program once and reuses it across continuous solves) — it is engine-API opt-in via the
 > 5-arg `AspContinuousQuery` constructor and not yet reachable through the `CQELSEngine` facade these
 > examples use, so there is no demo of it here.
+
+### Reasoning showcase (`org.cqels.examples.reasoning`)
+
+Deeper reasoning shapes across the RETE (`cqels-reasoning-rete`) and ASP (`cqels-asp`) add-ons —
+multi-hop entailment, bounded recursion, truth maintenance, and negation-as-failure defaults.
+Each demo pairs the derivation with a case that must NOT derive, so the semantics are visible.
+
+| Class | CQELS feature | Scenario |
+|-------|---------------|----------|
+| [`TaxonomyEntailment`](src/main/java/org/cqels/examples/reasoning/TaxonomyEntailment.java) | Multi-hop RDFS entailment — rdfs11 subclass-chain transitivity + rdfs9 type lifting + rdfs7 sub-property propagation (`cqels-reasoning-rete`) | Two-level depot taxonomy + a property axiom: EV-3K8 registers only at the bottom class and reports only the specific property, yet queries against the TOP class and SUPER property still find it; a class with no axiom into the taxonomy stays invisible. |
+| [`BoundedTransitiveClosure`](src/main/java/org/cqels/examples/reasoning/BoundedTransitiveClosure.java) | Recursive (transitive-closure) inference with a work bound — `enableRecursiveInference` + `maxRecursionDepth` and an observable truncation counter | A 4-level site containment chain streamed as direct `ex:partOf` edges: one transitive rule derives the long-range containments; a disconnected edge derives nothing. Dedup reaches the fixpoint naturally; the depth cap is a hard ceiling on cascade work. |
+| [`RetractableInference`](src/main/java/org/cqels/examples/reasoning/RetractableInference.java) | Opt-in truth maintenance — `enableTruthMaintenance(true)` + `ReteNetwork.retract(...)` (`cqels-reasoning-rete`) | An over-95 °C coolant reading derives an overheat alert; retracting the glitched reading also withdraws the alert — working memory before/after shows assert-then-retract ≡ never-asserted. |
+| [`MissionPreservationAsp`](src/main/java/org/cqels/examples/reasoning/MissionPreservationAsp.java) | ASP negation-as-failure default rule (`cqels-asp`): `mission_at_risk(V) :- needs_charge(V), not charging(V)` | Mission preservation: SoC below the vehicle's next-duty reserve derives `needs_charge`, but the mission is only at risk if the EV is **not** plugged in — the charging vehicle needs charge yet never goes at-risk. |
+| [`PersistentViolationAsp`](src/main/java/org/cqels/examples/reasoning/PersistentViolationAsp.java) | ASP temporal persistence with two-level stratified negation-as-failure (`cqels-asp`) | Persistent depot-zone speeding: flagged only on the 3rd **consecutive** over-limit reading; an interleaved vehicle whose compliant reading breaks every chain is never flagged. |
 
 ### Geospatial (add-on module)
 | Class | CQELS feature | Scenario |
