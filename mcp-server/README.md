@@ -1,230 +1,153 @@
 # CQELS as an MCP server
 
-A minimal [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server that
-exposes a **CQELS engine as AI-accessible tools** over stdio — both the static RDF store
-*and* the **streaming engine** that the [`examples/`](../examples/) demonstrate. An MCP
-client (Claude Desktop, an IDE assistant, or any MCP-capable agent) can use a CQELS RDF
-store as **queryable memory**, and also **register continuous CQELS-QL queries** (windows,
-aggregates, CEP — the same query shapes as the examples), feed them events, and read what
-the engine emits. The tools are **vocabulary-agnostic**, so the same server drives the
-[`examples/`](../examples/) **electric-vehicle fleet / V2G** world from an AI client: push VSS
-`sosa:Observation`s, register a per-vehicle speeding monitor, detect a road-rage CEP sequence,
-or teach the `ex:ElectricBus ⊑ vsso:Vehicle` taxonomy (walkthrough below). This example uses
-`.withMemoryStore()`, so the store is in-memory and **session-scoped (cleared when the process
-exits)**; swap in a durable storage backend for persistence across restarts.
+This module packages the **published CQELS MCP server** — `org.cqels:cqels-mcp` on GitHub
+Packages — as a single runnable jar, wrapped in a thin launcher that seeds the same
+**electric-vehicle fleet / V2G** world the [`examples/`](../examples/) run. An MCP client
+(Claude Desktop, an IDE assistant, or any [Model Context Protocol](https://modelcontextprotocol.io/)
+agent) connects over **stdio** and gets the full production tool surface — agent memory
+(semantic / episodic / procedural / working), continuous CQELS-QL/Cypher stream queries, CEP,
+RDFS/OWL reasoning, SHACL validation and standing SHACL invariants, ASP solving and standing
+ASP rules, decision lineage, and fail-closed governance — with a fleet knowledge graph already
+loaded, so there is something to query, watch, and reason over from the first tool call.
 
-Its core dependencies are the published `cqels-engine` (plus `cqels-reasoning-rete` for the
-`define_subclass` reasoning tool) and the official
-[MCP Java SDK](https://github.com/modelcontextprotocol/java-sdk) (`io.modelcontextprotocol.sdk:mcp`),
-plus an `slf4j-simple` binding (so logs go to **stderr**, keeping stdout clean for JSON-RPC)
-and a `jackson-annotations` version pin (see the pom). It's a self-contained starting point
-for wrapping CQELS in your own MCP server.
+The launcher ([`FleetMcpServerLauncher`](src/main/java/org/cqels/examples/mcp/FleetMcpServerLauncher.java))
+does exactly two things — in an order that leaves no startup race:
 
-## Tools exposed
+1. **Seeds the V2G world first.** It writes the examples' fleet background graph — three
+   pseudonymous EVs with drivers and depot assignments, two charging stations, three geofenced
+   zones with speed limits, a traffic sensor, and signal→unit facts (W3C SOSA/SSN → VSSo →
+   COVESA VSS layering) — into a per-launch RDF store (an RDF4J NativeStore in a fresh temp
+   directory), under the server's **long-term memory graph** (`cqels://memory/longterm`), the
+   graph `store_memory` writes to and `recall_memory` pattern recall reads. Then it shuts the
+   store down, releasing its lock.
+2. **Embeds the real server, pointed at that store.** It builds a `CqelsMcpServerConfig` with
+   demo defaults (stdio transport) plus `rdfStorePath` set to the seeded directory, and starts
+   `org.cqels.mcp.server.CqelsMcpServer` — the same server class the published `-shaded` jar
+   runs. No tools are re-implemented here, and because the world is on disk **before the
+   transport comes up**, even a client's very first `tools/call` sees the seed. Seeded facts
+   are indistinguishable from client-stored knowledge for SPARQL `query` and pattern
+   `recall_memory`. (One boundary: `recall_memory`'s free-text / vector search only indexes
+   facts that arrive through `store_memory` at runtime, so use SPARQL or pattern recall to
+   reach the seed.)
 
-**Static memory (request/response):**
+The per-launch temp store keeps demo semantics **ephemeral** (a fresh world each run — the
+directory is removed on shutdown, and two launches can never collide on a store lock). Set
+`CQELS_FLEET_STORE_DIR=/some/dir` to keep the store — facts and saved procedures then survive
+restarts (re-seeding an existing store is idempotent). The embedded server also supports a
+durable operator-state backend via `CqelsMcpServerConfig.builder()` if you adapt the launcher
+(see [Extending it](#extending-it)).
 
-| Tool | Arguments | What it does |
-|------|-----------|--------------|
-| `store_fact` | `subject`, `predicate`, `object` | Add one RDF triple to memory. `object` is an IRI if it starts with `http(s)://`, otherwise a literal. |
-| `query` | `sparql` | Run a SPARQL `SELECT` over everything stored so far; returns the rows as text (first 100, with a truncation marker beyond that). |
-| `recall` | `subject`, *(opt)* `predicate` | **Intent-shaped memory retrieval** — returns what's known about an entity (builds the SPARQL for you, so the model needn't write a query). |
+## Tools exposed (24)
 
-**Agent-memory demo tools (alpha.7 patterns — see [Agent memory types](#agent-memory-types-alpha7)):**
+Enumerated from a live `tools/list` against this jar.
 
-| Tool | Arguments | What it does |
-|------|-----------|--------------|
-| `record_event` | `event_type`, `entity`, *(opt)* `data`, *(opt)* `timestamp_ms` | **Episodic memory** — record a timestamped episode (what happened, to which entity, when). Defaults to "now"; pass `timestamp_ms` to backfill history. |
-| `recall_episodes` | *(all opt)* `entity`, `event_type`, `since_ms`, `until_ms`, `limit` | Recall episodes **newest first**, filtered by entity / event type / a half-open `[since_ms, until_ms)` time range. |
-| `save_procedure` | `name`, *(opt)* `description`, `sparql` | **Procedural memory** — save a named SPARQL SELECT. Facts describing the procedure are stored too, so `query` can find them; re-saving a name updates it. |
-| `list_procedures` | — | List saved procedures (name + description). |
-| `run_procedure` | `name` | Run a saved procedure by name — through the same path as the `query` tool. |
-| `assemble_context` | `entity`, *(opt)* `limit` | **Working memory / GraphRAG** — one compact bundle per entity: its direct facts + its most recent episodes + saved procedures that mention it, ready to inject into an agent prompt. |
+**Memory (the four agent-memory types):**
 
-**Streaming (continuous queries — mirrors the [`examples/`](../examples/)):**
+| Tool | What it does |
+|------|--------------|
+| `store_memory` | Store facts into long-term (RDF knowledge graph) or short-term (time-windowed stream) memory — subject/predicate/object triples or a Turtle block. |
+| `recall_memory` | Retrieve knowledge via SPARQL, natural-language text search, graph pattern matching — or **drain buffered results of a registered stream query** by `queryId`. |
+| `forget_memory` | Remove facts: individual triples, a SPARQL DELETE, or clear a named graph. |
+| `record_event` | Episodic memory: record a timestamped event (subject/predicate/object + time). |
+| `recall_episodes` | Recall past events by time range and/or entity, ordered by time. |
+| `save_procedure` | Procedural memory: save a named, runnable procedure (ASP/SHACL/SPARQL/CQELS-QL/Cypher/CEP) with `{{param}}` placeholders. |
+| `list_procedures` | List saved procedures with kind and description. |
+| `run_procedure` | Run a saved procedure by name, binding `{{param}}` values. |
+| `assemble_context` | Working memory: a ranked, budget-bounded context bundle for a task — relevant facts (with KG neighborhood) plus matching procedures. |
 
-| Tool | Arguments | What it does |
-|------|-----------|--------------|
-| `push_event` | `stream`, `subject`, `predicate`, `object`, *(opt)* `timestamp_ms` | Push one triple as an event into a named stream (created on first use). Numeric objects become numeric literals so `FILTER`/aggregates work; `http(s)://` becomes an IRI; predicate `"a"` is shorthand for `rdf:type`. `timestamp_ms` stamps an explicit **event time** (needed to replay out-of-order data for event-time CEP). |
-| `register_stream_query` | `query` | Register a continuous CQELS-QL query (`REGISTER QUERY … FROM STREAM … [window] …`) — windows + aggregates. Returns a query **id**; emitted rows are buffered server-side (bounded — see below). Ordered `FILTER(SEQ(...))` patterns are rejected here — use `detect_sequence`. |
-| `poll_results` | `queryId` | Drain and return up to 100 rows the query has emitted since the last poll; flags if more remain or if any were dropped. |
-| `unregister_stream_query` | `queryId` | Stop a query and free its buffer when you're done with it — covers both `register_stream_query` queries and `detect_sequence` CEP matchers (routed to the engine's separate CEP unregister). |
+**Query + streaming:**
 
-**Intent-shaped streaming (higher-level wrappers):**
+| Tool | What it does |
+|------|--------------|
+| `query` | One-shot SPARQL / CQELS-QL / Cypher query over the knowledge graph and streams. |
+| `create_stream` | Create a named stream (idempotent) so a query can be registered over it **before** events arrive — streams are hot, with no replay. |
+| `push_stream_events` | Push timestamped observations onto a named stream. Each event is one atomic observation: simple `facts` triples or an RDF-Messages `nquads` body (typed literals, multi-triple observations). |
+| `register_stream_query` | Register a standing CQELS-QL or Cypher continuous query; results are buffered and drained via `recall_memory(queryId)` (CEP `FILTER(SEQ(...))` via `cep: true`). |
+| `validate_stream_query` | Dry-run: statically validate CQELS-QL without registering it. |
+| `forget_stream_query` | Stop a continuous query and discard its buffer. |
 
-| Tool | Arguments | What it does |
-|------|-----------|--------------|
-| `detect_sequence` | `stream`, `steps[]`, *(opt)* `withinSeconds`, *(opt)* `event_time`, *(opt)* `lateness_ms` | **Event-pattern matching** — builds + registers a CEP `FILTER(SEQ(...))` from an ordered list of event-type IRIs, returns a query id. Push events as `(eventIri, "a", typeIri)`, then `poll_results`. Default matches in **arrival order**; `event_time: true` matches in **event-timestamp order** (out-of-order arrivals are reordered) and **requires `lateness_ms`** — the engine fails fast without a budget (see below). |
-| `define_subclass` | `stream`, `subclass`, `superclass` | **RDFS reasoning** — declares `subclass ⊑ superclass`; afterwards an event `(x, a, subclass)` is also inferred as `(x, a, superclass)` for stream queries. The reasoner is engine-wide (applies to all streams) and stream-side only (does not affect `recall`/the static store). |
+**Standing reasoning over streams:**
 
-> Continuous queries push results asynchronously, but MCP tools are request/response — so a
-> registered query's rows are **buffered** and returned on demand. The natural call order is
-> **register → push_event(s) → poll_results** (a client awaits each response before the next,
-> so the query is registered before events arrive), and **unregister_stream_query** when done.
-> Each query's buffer is **bounded** (10 000 rows): if a hot query is left unpolled, the
-> oldest rows are dropped and `poll_results` reports the count — so the server can't grow
-> memory without bound.
+| Tool | What it does |
+|------|--------------|
+| `watch_invariant` | Register a **continuous SHACL invariant** over a stream — each pushed observation is validated whole; violations are buffered like query results. |
+| `register_rules` | Register a **standing ASP program** over a stream — facts accumulate as `rdf(S,P,O)` atoms, each observation triggers a solve, new derivations are buffered. |
+
+**One-shot reasoning:**
+
+| Tool | What it does |
+|------|--------------|
+| `reason` | RDFS/OWL inference over the knowledge graph (RDFS_MINIMAL … OWL2_RL profiles). |
+| `validate` | SHACL validation with violation details and repair suggestions. |
+| `solve` | ASP (Answer Set Programming, ASP-Core-2) solving. |
+| `register_reasoning` | Materialize the entailment closure of semantic memory; `recall_memory(entail: true)` then returns asserted + inferred facts. |
+
+**Lineage + governance:**
+
+| Tool | What it does |
+|------|--------------|
+| `explain_decision` | Reconstruct a recorded decision trace: inputs, procedure, output, policy, override flag. |
+| `recall_decisions` | Find recorded decisions by time range / policy / override flag. |
+| `set_access_policy` | PRIVILEGED: grant a caller role a set of access labels; any active policy fail-closes the read surface. |
+
+**Resources (9 + 1 template):** `cqels://engine/status`, `cqels://kg/stats`,
+`cqels://kg/namespaces`, `cqels://streams`, `cqels://queries`,
+`cqels://reasoning/capabilities`, and three syntax/usage docs — `cqels://docs/cqelsql`,
+`cqels://docs/cep`, `cqels://docs/memory-profile`. Per-query buffered results are readable
+(and subscribable) at the `cqels://queries/{queryId}/results` template.
+
+**Prompts (10):** `recent_events_window`, `value_over_window`, `entity_by_type`,
+`recall_about`, `store_knowledge`, `extract_facts`, `validate_data`, `reasoning_workflow`,
+`memory_routing`, `spatial_recall`.
+
+> The natural streaming order is **create_stream → register_stream_query →
+> push_stream_events → recall_memory(queryId)**: streams are hot with no replay, so register
+> the standing query before feeding it. The server's `initialize` response carries these usage
+> instructions, and `cqels://docs/*` resources document the CQELS-QL/CEP syntax — an agent can
+> discover all of this without reading this README.
 >
-> **stdout is reserved for the JSON-RPC protocol** — this server logs only to stderr, and
-> never prints results to stdout. Keep it that way: don't set
-> `org.slf4j.simpleLogger.logFile=System.out`, and don't `System.out.println` from a tool
-> handler — either would interleave bytes into the JSON-RPC stream and break the protocol.
+> **stdout is reserved for the JSON-RPC protocol** — the server and launcher log only to
+> stderr. Keep it that way if you extend the launcher: don't `System.out.println`, and don't
+> set `org.slf4j.simpleLogger.logFile=System.out`.
 
 ## Build
 
 ```bash
 # One-time: a GitHub Packages token with read:packages in ~/.m2/settings.xml
-# (see ../GETTING_STARTED.md) — needed only to download cqels-engine at build time.
+# (see ../GETTING_STARTED.md) — needed only to download org.cqels:cqels-mcp at build time.
 mvn -q package
 # -> target/cqels-mcp-server.jar  (a single runnable jar)
 ```
 
-Quick smoke test without an MCP client (pipe a JSON-RPC session in). The server is
-**long-running** — like a real MCP client, you hold the connection open and then terminate
-the process, so the snippet below backgrounds it and kills it after the replies arrive
-(piping straight into `java …` would print the replies and then appear to hang, because the
-server keeps running until signalled):
+### Smoke test
+
+[`scripts/smoke.sh`](scripts/smoke.sh) drives one scripted JSON-RPC session over stdio —
+`initialize` → SPARQL over the **seeded** fleet as the **first, zero-delay** `tools/call`
+(proving the seed is in place before the server accepts requests) → `tools/list` → pattern
+recall → `store_memory` → `create_stream` → `register_stream_query` (a `[NOW]` speeding
+monitor) → `push_stream_events` (three typed speed readings) → drain → `forget_stream_query`
+— and asserts the responses, including that the 135 and 128 km/h vehicles surface while the
+90 km/h one is filtered out, and that stdout carried only JSON-RPC frames:
 
 ```bash
-( printf '%s\n' \
-  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"cli","version":"1.0"}}}' \
-  '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
-  '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"store_fact","arguments":{"subject":"https://example.org/fleet/vehicle/EV-7Q2","predicate":"https://covesa.global/fleet#assignedDriver","object":"https://example.org/fleet/driver/alice"}}}' \
-  '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"query","arguments":{"sparql":"SELECT ?s ?p ?o WHERE { ?s ?p ?o }"}}}'; \
-  sleep 2 ) | java -jar target/cqels-mcp-server.jar &
-sleep 4; kill %1 2>/dev/null   # stop the long-running server
+scripts/smoke.sh
+# ...
+# ok:   drain surfaced the 135 km/h speeder
+# ok:   90 km/h reading filtered out
+# ok:   stdout carried only JSON-RPC frames
+# SMOKE OK
 ```
 
-You should see the `initialize` result, then `Stored: …`, then the queried triple. (An MCP
-client such as Claude Desktop manages this lifecycle for you — it launches the process and
-sends SIGTERM on shutdown, which the server's hook handles cleanly.)
-
-### Streaming smoke test
-
-The same way, drive a **continuous query** over vehicle telemetry: register a `[NOW]` speed
-filter, push three vehicles' `vss:Speed` readings, then poll. `push_event` sends one triple
-per call, so this uses the flat `?vehicle vss:Speed ?kmh` form (the examples' `Fleet` helper
-batches the richer 5-triple `sosa:Observation`). Send requests with a small gap so each
-completes before the next — the order must be register → push → poll.
-
-```bash
-{ emit() { printf '%s\n' "$1"; sleep 0.6; }
-  emit '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"cli","version":"1.0"}}}'
-  emit '{"jsonrpc":"2.0","method":"notifications/initialized"}'
-  emit '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"register_stream_query","arguments":{"query":"PREFIX vss: <https://covesa.global/vss#> REGISTER QUERY Speeding AS SELECT ?vehicle ?kmh FROM STREAM Telemetry [NOW] WHERE { STREAM Telemetry { ?vehicle vss:Speed ?kmh . } FILTER(?kmh > 120) }"}}}'
-  emit '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"push_event","arguments":{"stream":"Telemetry","subject":"https://example.org/fleet/vehicle/EV-7Q2","predicate":"https://covesa.global/vss#Speed","object":"135"}}}'
-  emit '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"push_event","arguments":{"stream":"Telemetry","subject":"https://example.org/fleet/vehicle/EV-3K8","predicate":"https://covesa.global/vss#Speed","object":"90"}}}'
-  emit '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"push_event","arguments":{"stream":"Telemetry","subject":"https://example.org/fleet/vehicle/EV-9TZ","predicate":"https://covesa.global/vss#Speed","object":"128"}}}'
-  emit '{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"poll_results","arguments":{"queryId":"Speeding"}}}'
-} | java -jar target/cqels-mcp-server.jar &
-sleep 6; kill %1 2>/dev/null
-```
-
-The final `poll_results` returns the two speeding vehicles
-(`{kmh=135, vehicle=…/EV-7Q2}` and `{kmh=128, vehicle=…/EV-9TZ}`); EV-3K8 at 90 km/h is filtered out.
-
-## Agent memory types (alpha.7)
-
-CQELS 2.0.0-alpha.7's headline is an **agent-memory surface**: the four cognitive memory
-types an AI agent needs — *semantic* (facts), *episodic* (what happened when), *procedural*
-(how to do things), and *working* (what's relevant right now) — backed by one streaming
-knowledge-graph engine. This demo server implements each **pattern** on the same published
-`cqels-engine` store that `store_fact`/`query`/`recall` already use:
-
-- **Semantic memory** — `store_fact` / `recall` (facts about entities; unchanged).
-- **Episodic memory** — `record_event` stores a timestamped episode; `recall_episodes`
-  replays them newest-first, filtered by entity, event type, and time range.
-- **Procedural memory** — `save_procedure` names a SPARQL SELECT; `run_procedure` re-runs it
-  by name through the same path as `query`; `list_procedures` browses them. Facts describing
-  each procedure land in the store too, so plain `query` can discover them.
-- **Working memory** — `assemble_context` bundles an entity's facts + most recent episodes +
-  matching procedures into one compact block an agent can inject into its prompt (a
-  GraphRAG-style context assembly).
-
-> **Session-scoped demo memory.** Episodes and procedure facts accumulate in the server
-> process's in-memory store for the lifetime of the session — there is no delete/expiry tool
-> here (the procedure registry is capped at 256 distinct names; re-saving a name updates it).
-> The production `cqels-mcp` server owns these lifecycles properly (reserved per-memory-type
-> graphs, governed writes); this demo keeps the surface minimal instead.
-
-A stdio session that exercises all four (same pattern as the smoke tests above; the full
-scripted version with assertions is [`scripts/smoke-memory.sh`](scripts/smoke-memory.sh)):
-
-```bash
-{ emit() { printf '%s\n' "$1"; sleep 0.6; }
-  emit '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"cli","version":"1.0"}}}'
-  emit '{"jsonrpc":"2.0","method":"notifications/initialized"}'
-  emit '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"store_fact","arguments":{"subject":"https://example.org/fleet/vehicle/EV-7Q2","predicate":"https://covesa.global/fleet#assignedDriver","object":"https://example.org/fleet/driver/alice"}}}'
-  emit '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"record_event","arguments":{"event_type":"https://covesa.global/fleet#ChargeStartEvent","entity":"https://example.org/fleet/vehicle/EV-7Q2","data":"station=depot-north","timestamp_ms":1000000}}}'
-  emit '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"record_event","arguments":{"event_type":"https://covesa.global/fleet#ChargeStopEvent","entity":"https://example.org/fleet/vehicle/EV-7Q2","timestamp_ms":2000000}}}'
-  emit '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"recall_episodes","arguments":{"entity":"https://example.org/fleet/vehicle/EV-7Q2","since_ms":0}}}'
-  emit '{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"save_procedure","arguments":{"name":"vehicle_profile","description":"Everything known about EV-7Q2","sparql":"SELECT ?p ?o WHERE { <https://example.org/fleet/vehicle/EV-7Q2> ?p ?o }"}}}'
-  emit '{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"run_procedure","arguments":{"name":"vehicle_profile"}}}'
-  emit '{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"assemble_context","arguments":{"entity":"https://example.org/fleet/vehicle/EV-7Q2"}}}'
-} | java -jar target/cqels-mcp-server.jar &
-sleep 8; kill %1 2>/dev/null
-```
-
-`recall_episodes` returns the two charge episodes newest-first (stop before start);
-`run_procedure` returns the stored driver fact; `assemble_context` returns one
-`facts / recent episodes / procedures` block for EV-7Q2.
-
-### Event-time sequence detection (out-of-order events)
-
-`detect_sequence` matches steps in **arrival order** by default — fine when events arrive in
-the order they happened, wrong when they don't (multi-hop vehicle uplinks routinely deliver
-telemetry late). alpha.7's engine adds opt-in **event-time SEQ ordering**: pass
-`event_time: true` plus a `lateness_ms` budget and out-of-order arrivals are reordered by
-their event timestamps before matching. The budget is **required** — the engine *fails fast*
-at registration without one, because a silent `0` would drop exactly the out-of-order events
-the mode exists to reorder (the tool surfaces that error verbatim).
-
-The V2G road-rage fixture, delivered out of order — the REAL order was a speed **drop**
-(t=1000 ms) then a speed **spike** (t=2000 ms), but the spike *arrives* first:
-
-```bash
-{ emit() { printf '%s\n' "$1"; sleep 0.6; }
-  emit '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"cli","version":"1.0"}}}'
-  emit '{"jsonrpc":"2.0","method":"notifications/initialized"}'
-  emit '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"detect_sequence","arguments":{"stream":"Incidents","steps":["https://covesa.global/fleet#SpeedDropEvent","https://covesa.global/fleet#SpeedSpikeEvent"],"withinSeconds":60,"event_time":true,"lateness_ms":3000}}}'
-  emit '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"detect_sequence","arguments":{"stream":"Incidents","steps":["https://covesa.global/fleet#SpeedDropEvent","https://covesa.global/fleet#SpeedSpikeEvent"],"withinSeconds":60}}}'
-  emit '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"push_event","arguments":{"stream":"Incidents","subject":"https://example.org/fleet/event/e-spike","predicate":"a","object":"https://covesa.global/fleet#SpeedSpikeEvent","timestamp_ms":2000}}}'
-  emit '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"push_event","arguments":{"stream":"Incidents","subject":"https://example.org/fleet/event/e-drop","predicate":"a","object":"https://covesa.global/fleet#SpeedDropEvent","timestamp_ms":1000}}}'
-  emit '{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"push_event","arguments":{"stream":"Incidents","subject":"https://example.org/fleet/event/e-heartbeat","predicate":"a","object":"https://covesa.global/fleet#HeartbeatEvent","timestamp_ms":10000}}}'
-  sleep 1
-  emit '{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"poll_results","arguments":{"queryId":"seq_1"}}}'
-  emit '{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"poll_results","arguments":{"queryId":"seq_2"}}}'
-} | java -jar target/cqels-mcp-server.jar &
-sleep 12; kill %1 2>/dev/null
-```
-
-The **event-time** query (`seq_1`) reorders within its 3 s budget and matches —
-`PatternMatch{events=2, … startTime=1000, endTime=2000}`, i.e. drop-then-spike as it really
-happened. The **arrival-order** query (`seq_2`) sees spike-then-drop and returns
-`(no new results)` — it *missed* the sequence. (The `t=10000` heartbeat matters: event-time
-release is watermark-gated, so a later event must advance the watermark past the buffered
-pair; on a live telemetry stream the next reading does this naturally.)
-
-> **Scope, honestly.** The full production memory surface — **24 tools** (plus 10 resources and 10
-> prompt templates) including RDF-star statement-level context dimensions
-> (provenance/confidence/validity/access), PROV-O decision lineage
-> (`explain_decision`/`recall_decisions`), fail-closed governance, vector/hybrid semantic recall,
-> continuous SHACL watches (`watch_invariant`), continuous ASP rules (`register_rules`), and atomic
-> stream ingestion (`create_stream`/`push_stream_events`) — ships in the **CQELS engine
-> repository's `cqels-mcp` server**. Since `v2.0.0-alpha.12` it is published to GitHub
-> Packages as `org.cqels:cqels-mcp` — a thin jar for embedding, plus a ready-to-run
-> **`-shaded` classifier**: fetch it with
-> `mvn dependency:copy -Dartifact=org.cqels:cqels-mcp:2.0.0-alpha.13:jar:shaded`
-> (same GitHub Packages token setup as in GETTING_STARTED) and `java -jar` it. This demo server shows the memory-type
-> *patterns* on the published `cqels-engine` API so you can build your own; it is not a
-> substitute for that server.
+The server is **long-running** — like a real MCP client, the script holds the connection open
+and terminates the process when done. If you drive it by hand, follow the same pattern
+(background the pipeline, `kill` when finished).
 
 ## Use it from an MCP client
 
-This is a standard MCP server that speaks JSON-RPC over **stdio** — it is not Claude-specific. Any
-**stdio-capable** MCP client launches it the same way (`java -jar …/cqels-mcp-server.jar`); only the
-config file shape differs. Use the **absolute path** to the jar everywhere below. (Remote **URL**
-clients such as ChatGPT connect differently — see [ChatGPT and other remote clients](#chatgpt-and-other-remote-url-clients).)
+A standard stdio MCP server: any stdio-capable client launches it the same way
+(`java -jar …/cqels-mcp-server.jar`); only the config file shape differs. Use the **absolute
+path** to the jar everywhere below. (Remote **URL** clients such as ChatGPT connect
+differently — see [ChatGPT and other remote clients](#chatgpt-and-other-remote-url-clients).)
 
 ### Claude Desktop
 
@@ -234,7 +157,7 @@ Add to `claude_desktop_config.json` (macOS `~/Library/Application Support/Claude
 ```json
 {
   "mcpServers": {
-    "cqels-memory": {
+    "cqels-fleet": {
       "command": "java",
       "args": ["-jar", "/absolute/path/to/CQELS4J/mcp-server/target/cqels-mcp-server.jar"]
     }
@@ -242,7 +165,7 @@ Add to `claude_desktop_config.json` (macOS `~/Library/Application Support/Claude
 }
 ```
 
-Restart Claude Desktop; the `cqels-memory` tools appear under the tools menu.
+Restart Claude Desktop; the `cqels-fleet` tools appear under the tools menu.
 
 ### Claude Code
 
@@ -250,10 +173,10 @@ Add the same `mcpServers` entry to `.mcp.json` in your project root.
 
 ### Codex CLI
 
-Codex CLI launches stdio MCP servers natively. Add to `~/.codex/config.toml`:
+Add to `~/.codex/config.toml`:
 
 ```toml
-[mcp_servers.cqels-memory]
+[mcp_servers.cqels-fleet]
 command = "java"
 args = ["-jar", "/absolute/path/to/CQELS4J/mcp-server/target/cqels-mcp-server.jar"]
 ```
@@ -264,44 +187,61 @@ Same `command` + `args` (`java -jar …`) in whatever `mcpServers` block your cl
 
 ### ChatGPT and other remote (URL) clients
 
-ChatGPT connectors reach an MCP server as a **remote HTTPS URL**, not a local stdio process. This demo
-server is stdio-only, so expose it over HTTP with a **stdio→HTTP gateway** — e.g.
-[`supergateway`](https://github.com/supercorp-ai/supergateway), which wraps a stdio server as an
-SSE/Streamable-HTTP endpoint:
+ChatGPT connectors reach an MCP server as a **remote HTTPS URL**, not a local stdio process.
+Two options:
 
-```bash
-npx -y supergateway --stdio "java -jar /absolute/path/to/CQELS4J/mcp-server/target/cqels-mcp-server.jar"
-```
+- **The published server, natively.** `org.cqels:cqels-mcp` ships a ready-to-run `-shaded`
+  jar with a built-in Streamable-HTTP transport: fetch it with
+  `mvn dependency:copy -Dartifact=org.cqels:cqels-mcp:2.0.0-alpha.13:jar:shaded` (same GitHub
+  Packages token setup as in GETTING_STARTED) and run it with `CQELS_MCP_TRANSPORT=http`
+  (host/port/path, bearer-token auth, and origin allow-lists are configurable via
+  `CQELS_MCP_HTTP_*` environment variables). This is the production remote path — it starts
+  empty (no fleet seed).
+- **This launcher, via a gateway.** This jar is stdio-only; wrap it with a stdio→HTTP gateway
+  such as [`supergateway`](https://github.com/supercorp-ai/supergateway) to keep the V2G seed:
 
-Then register the gateway's URL as the ChatGPT connector. For production remote deployments, prefer the
-full engine **`cqels-mcp`** server (see the *Scope, honestly* note above) — it is the maintained
-production server; grab its `-shaded` jar from GitHub Packages (`org.cqels:cqels-mcp`, classifier `shaded`).
+  ```bash
+  npx -y supergateway --stdio "java -jar /absolute/path/to/CQELS4J/mcp-server/target/cqels-mcp-server.jar"
+  ```
 
-Either way, front the endpoint with **TLS + authentication** and do not expose it directly to the internet.
+Either way, front the endpoint with **TLS + authentication** and do not expose it directly to
+the internet.
 
 ### Try it
 
-> *Memory:* "Remember that vehicle EV-7Q2 is driven by Alice and hosted at the north depot." →
-> the assistant calls `store_fact`. "What do we know about EV-7Q2?" → it calls `recall` on the
-> vehicle.
+> *Memory:* "What do we know about vehicle EV-7Q2?" → the assistant calls `recall_memory` (or
+> `query` with SPARQL) and finds the seeded driver, depot, route, and duty-reserve facts.
+> "Remember that EV-7Q2 is back in service." → `store_memory`.
 >
-> *Streaming:* "Watch the Telemetry stream for vehicles over 120 km/h, then send speeds 135, 90
-> and 128." → the assistant calls `register_stream_query`, three `push_event`s, then
-> `poll_results` and reports back the two speeding vehicles.
+> *Streaming:* "Watch the telemetry stream for vehicles over 120 km/h, then send speeds 135,
+> 90 and 128." → `create_stream`, `register_stream_query`, `push_stream_events`, then
+> `recall_memory(queryId)` reports the two speeding vehicles.
 >
-> *Event patterns + reasoning:* "Alert me when a vehicle has a speed drop then a speed spike
-> (road rage)." → `detect_sequence` with the two event-type IRIs. "Treat ex:ElectricBus as a
-> kind of vsso:Vehicle." → `define_subclass`, after which an event typed `ex:ElectricBus` also
-> matches a query on `vsso:Vehicle`.
+> *Standing invariants:* "Alert me if any battery reading drops below the vehicle's next-duty
+> reserve." → `watch_invariant` with a SHACL shape, or `register_rules` with an ASP program —
+> then every pushed observation is checked continuously.
 
 ## Extending it
 
-`CqelsMemoryMcpServer` registers its tools on the builder before serving:
-`McpServer.sync(transport)…​.tools(storeFactTool(engine), queryTool(engine), pushEventTool(engine), …).build()`.
-To add your own (e.g. SHACL validation, or a directional/CEP query tool), write another
-`SyncToolSpecification` — a `McpSchema.Tool` with a JSON input schema plus a handler
-returning a `CallToolResult` — and pass it to `.tools(…)` alongside the existing ones.
-(You can also register at runtime on the built server via `server.addTool(spec)`, but
-registering before `build()` avoids any startup race.) The engine is a full `CQELSEngine`,
-so the streaming, CEP, reasoning, and SHACL APIs are all available — the `register_stream_query`
-tool already routes arbitrary CQELS-QL (windows, aggregates, CEP) through to it.
+The launcher is deliberately small — the embedding API is two classes from
+`org.cqels:cqels-mcp`:
+
+```java
+CqelsMcpServerConfig config = CqelsMcpServerConfig.builder()
+        .serverName("cqels-fleet-mcp")
+        .engineId("cqels-fleet-engine")
+        .rdfStorePath(storeDir.toString())           // the pre-seeded RDF store (NativeStore)
+        // .storageBackend("lmdb")                      // durable operator-state backend
+        //     .storageBackendPath("/var/lib/cqels/state")
+        // .streamReasoning("rdfs")                     // incremental RDFS inference over streams
+        // .transport(CqelsMcpServerConfig.Transport.HTTP) // Streamable-HTTP instead of stdio
+        .build();
+CqelsMcpServer server = new CqelsMcpServer(config);
+server.start();                       // reopens the store, wires tools/resources/prompts, starts the engine
+```
+
+Swap the seed for your own domain by editing `seedFleetWorld` — write your background graph
+into `cqels://memory/longterm` (or a `cqels://memory/user/...` graph) so `recall_memory`
+pattern recall sees it, and shut your seeding repository down before `start()` (NativeStore
+holds a directory lock). To add domain-specific tools alongside the built-ins, register them
+on `server.getMcpServer()` after `start()`.
