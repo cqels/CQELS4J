@@ -4,7 +4,7 @@ This guide takes you from zero to a running continuous query in a few minutes:
 install the prerequisites, pull the engine from GitHub Packages, run the bundled
 examples, then wire CQELS into your own project.
 
-> **Current release:** `2.0.0-alpha.11` — coordinates `org.cqels:cqels-*`, entry point `cqels-engine`.
+> **Current release:** `2.0.0-alpha.13` — coordinates `org.cqels:cqels-*`, entry point `cqels-engine`.
 
 ---
 
@@ -108,7 +108,7 @@ Add the repository and the engine dependency to your `pom.xml`:
   <dependency>
     <groupId>org.cqels</groupId>
     <artifactId>cqels-engine</artifactId>
-    <version>2.0.0-alpha.11</version>
+    <version>2.0.0-alpha.13</version>
   </dependency>
 </dependencies>
 ```
@@ -187,8 +187,8 @@ public class FirstQuery {
   joins, CEP, the grammar). Beyond the examples, the language also supports `OPTIONAL` / `UNION` /
   `FILTER NOT EXISTS`, `BIND`, `HAVING` / `ORDER BY` / `LIMIT`, joins against a static graph
   (`FROM STATIC`), and declarative CEP (`FILTER(SEQ(...))` with quantifiers `?e+` / `?e{m,n}` and
-  negation `NOT ?e`). (`MINUS` and `FROM NAMED WINDOW` parse but are not yet executed in this alpha —
-  see the spec.)
+  negation `NOT ?e`). (`MINUS` is not executed — registration rejects it with a hint to use
+  `FILTER NOT EXISTS`; `FROM NAMED WINDOW` parses but is not yet executed in this alpha — see the spec.)
 - **Cypher & CEP:** `engine.registerCypherQuery(...)` for property-graph patterns and
   `engine.registerCepQuery(...)` for event sequences.
 - **Releases:** https://github.com/cqels/CQELS4J/releases

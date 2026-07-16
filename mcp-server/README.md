@@ -211,10 +211,11 @@ pair; on a live telemetry stream the next reading does this naturally.)
 > (`explain_decision`/`recall_decisions`), fail-closed governance, vector/hybrid semantic recall,
 > continuous SHACL watches (`watch_invariant`), continuous ASP rules (`register_rules`), and atomic
 > stream ingestion (`create_stream`/`push_stream_events`) — ships in the **CQELS engine
-> repository's `cqels-mcp` server**. It is not a
-> published Maven artifact, but from `v2.0.0-alpha.7` onward the ready-to-run shaded jar is
-> attached to each [engine release](https://github.com/cqels/claude/releases) — download
-> `cqels-mcp-<version>-shaded.jar` and `java -jar` it. This demo server shows the memory-type
+> repository's `cqels-mcp` server**. Since `v2.0.0-alpha.12` it is published to GitHub
+> Packages as `org.cqels:cqels-mcp` — a thin jar for embedding, plus a ready-to-run
+> **`-shaded` classifier**: fetch it with
+> `mvn dependency:copy -Dartifact=org.cqels:cqels-mcp:2.0.0-alpha.13:jar:shaded`
+> (same GitHub Packages token setup as in GETTING_STARTED) and `java -jar` it. This demo server shows the memory-type
 > *patterns* on the published `cqels-engine` API so you can build your own; it is not a
 > substitute for that server.
 
@@ -274,7 +275,7 @@ npx -y supergateway --stdio "java -jar /absolute/path/to/CQELS4J/mcp-server/targ
 
 Then register the gateway's URL as the ChatGPT connector. For production remote deployments, prefer the
 full engine **`cqels-mcp`** server (see the *Scope, honestly* note above) — it is the maintained
-production server; grab its shaded jar from an [engine release](https://github.com/cqels/claude/releases).
+production server; grab its `-shaded` jar from GitHub Packages (`org.cqels:cqels-mcp`, classifier `shaded`).
 
 Either way, front the endpoint with **TLS + authentication** and do not expose it directly to the internet.
 
