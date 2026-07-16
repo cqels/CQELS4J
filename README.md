@@ -187,17 +187,18 @@ electric-vehicle fleet / vehicle-to-grid (V2G) scenario.)
 
 ## Use CQELS as an MCP server
 
-[`mcp-server/`](mcp-server/) is a self-contained [Model Context Protocol](https://modelcontextprotocol.io/)
-server that exposes a CQELS engine as **AI-accessible tools** over stdio — static memory
-(`store_fact`, `query`, `recall`), agent-memory patterns (episodic `record_event`/
-`recall_episodes`, procedural `save_procedure`/`run_procedure`, working-memory
-`assemble_context`), the **streaming** engine (`push_event`,
-`register_stream_query`, `poll_results`, `unregister_stream_query`), and intent-shaped
-capability tools (`detect_sequence` for CEP event-pattern matching, `define_subclass` for
-RDFS reasoning). So an MCP client such as Claude Desktop can run the same continuous
-windows/aggregates/CEP/reasoning the [`examples/`](examples/) demonstrate. Its core dependencies
-are the published `cqels-engine` (+ `cqels-reasoning-rete` for the reasoning tool) and the MCP Java
-SDK (plus an `slf4j-simple` binding and a `jackson-annotations` pin — see the pom).
+[`mcp-server/`](mcp-server/) packages the **published CQELS MCP server**
+(`org.cqels:cqels-mcp`, a [Model Context Protocol](https://modelcontextprotocol.io/) server)
+as a runnable jar behind a thin launcher that seeds the [`examples/`](examples/)'
+**EV-fleet / V2G** world, so an MCP client such as Claude Desktop gets the full production
+tool surface — **24 tools** covering the four agent-memory types
+(`store_memory`/`recall_memory`, episodic `record_event`/`recall_episodes`, procedural
+`save_procedure`/`run_procedure`, working-memory `assemble_context`), continuous stream
+queries (`create_stream`, `push_stream_events`, `register_stream_query`), standing SHACL
+invariants (`watch_invariant`) and ASP rules (`register_rules`), one-shot RDFS/OWL/SHACL/ASP
+reasoning, decision lineage, and governance — plus 9 resources and 10 prompt templates, with
+a fleet knowledge graph already loaded to query, watch, and reason over. Its single
+dependency is the published `org.cqels:cqels-mcp`.
 
 ```bash
 cd mcp-server

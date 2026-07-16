@@ -6,58 +6,30 @@
 
     <groupId>org.cqels.examples</groupId>
     <artifactId>cqels-mcp-server-example</artifactId>
-    <version>0.1.0</version>
+    <version>0.2.0</version>
     <packaging>jar</packaging>
 
-    <name>CQELS Engine — MCP Server Example</name>
-    <description>A minimal Model Context Protocol (MCP) server that exposes a CQELS engine as
-        AI-accessible memory/query tools over stdio.</description>
+    <name>CQELS Engine — MCP Server (V2G fleet launcher)</name>
+    <description>A thin launcher that embeds the published CQELS MCP server (org.cqels:cqels-mcp)
+        over stdio and seeds the examples' electric-vehicle fleet / V2G world, so an AI client
+        gets the full CQELS memory/streaming/reasoning tool surface with demo context.</description>
 
     <properties>
         <maven.compiler.release>17</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <cqels.version>2.0.0-alpha.13</cqels.version>
-        <mcp.sdk.version>1.0.0</mcp.sdk.version>
-        <mainClass>org.cqels.examples.mcp.CqelsMemoryMcpServer</mainClass>
+        <mainClass>org.cqels.examples.mcp.FleetMcpServerLauncher</mainClass>
     </properties>
 
     <dependencies>
-        <!-- CQELS engine facade (provides the in-memory RDF repository + query APIs). -->
+        <!-- The published CQELS MCP server — the full tool/resource/prompt surface (memory,
+             streaming, CEP, reasoning, SHACL/ASP watches, governance). Brings the engine, the
+             MCP Java SDK, and an slf4j-simple binding (logs to stderr, keeping stdout clean
+             for JSON-RPC) transitively. -->
         <dependency>
             <groupId>org.cqels</groupId>
-            <artifactId>cqels-engine</artifactId>
+            <artifactId>cqels-mcp</artifactId>
             <version>${cqels.version}</version>
-        </dependency>
-
-        <!-- RDFS/OWL stream reasoning (the define_subclass tool wires a RETE reasoner). -->
-        <dependency>
-            <groupId>org.cqels</groupId>
-            <artifactId>cqels-reasoning-rete</artifactId>
-            <version>${cqels.version}</version>
-        </dependency>
-
-        <!-- Official MCP Java SDK: mcp-core + Jackson-3 JSON mapper + stdio transport. -->
-        <dependency>
-            <groupId>io.modelcontextprotocol.sdk</groupId>
-            <artifactId>mcp</artifactId>
-            <version>${mcp.sdk.version}</version>
-        </dependency>
-
-        <!-- Pin jackson-annotations to a single recent version so RDF4J's older transitive
-             copy doesn't win the classpath; this is the version the build was verified against. -->
-        <dependency>
-            <groupId>com.fasterxml.jackson.core</groupId>
-            <artifactId>jackson-annotations</artifactId>
-            <version>2.20</version>
-        </dependency>
-
-        <!-- Logs MUST go to stderr — stdout is reserved for the JSON-RPC protocol.
-             slf4j-simple writes to System.err by default, which is exactly what we want. -->
-        <dependency>
-            <groupId>org.slf4j</groupId>
-            <artifactId>slf4j-simple</artifactId>
-            <version>2.0.16</version>
-            <scope>runtime</scope>
         </dependency>
     </dependencies>
 
