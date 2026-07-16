@@ -11,25 +11,31 @@ ASP rules, decision lineage, and fail-closed governance — with a fleet knowled
 loaded, so there is something to query, watch, and reason over from the first tool call.
 
 The launcher ([`FleetMcpServerLauncher`](src/main/java/org/cqels/examples/mcp/FleetMcpServerLauncher.java))
-does exactly two things:
+does exactly two things — in an order that leaves no startup race:
 
-1. **Embeds the real server.** It builds a `CqelsMcpServerConfig` with demo defaults (stdio
-   transport, in-memory store) and starts `org.cqels.mcp.server.CqelsMcpServer` — the same
-   server class the published `-shaded` jar runs. No tools are re-implemented here.
-2. **Seeds the V2G world.** Through the server's engine handle it writes the examples' fleet
-   background graph — three pseudonymous EVs with drivers and depot assignments, two charging
-   stations, three geofenced zones with speed limits, a traffic sensor, and signal→unit facts
-   (W3C SOSA/SSN → VSSo → COVESA VSS layering) — into the server's **long-term memory graph**
-   (`cqels://memory/longterm`), the graph `store_memory` writes to and `recall_memory` pattern
-   recall reads. Seeded facts are therefore indistinguishable from client-stored knowledge for
-   SPARQL `query` and pattern `recall_memory`. (One boundary: `recall_memory`'s free-text /
-   vector search only indexes facts that arrive through `store_memory` at runtime, so use
-   SPARQL or pattern recall to reach the seed.)
+1. **Seeds the V2G world first.** It writes the examples' fleet background graph — three
+   pseudonymous EVs with drivers and depot assignments, two charging stations, three geofenced
+   zones with speed limits, a traffic sensor, and signal→unit facts (W3C SOSA/SSN → VSSo →
+   COVESA VSS layering) — into a per-launch RDF store (an RDF4J NativeStore in a fresh temp
+   directory), under the server's **long-term memory graph** (`cqels://memory/longterm`), the
+   graph `store_memory` writes to and `recall_memory` pattern recall reads. Then it shuts the
+   store down, releasing its lock.
+2. **Embeds the real server, pointed at that store.** It builds a `CqelsMcpServerConfig` with
+   demo defaults (stdio transport) plus `rdfStorePath` set to the seeded directory, and starts
+   `org.cqels.mcp.server.CqelsMcpServer` — the same server class the published `-shaded` jar
+   runs. No tools are re-implemented here, and because the world is on disk **before the
+   transport comes up**, even a client's very first `tools/call` sees the seed. Seeded facts
+   are indistinguishable from client-stored knowledge for SPARQL `query` and pattern
+   `recall_memory`. (One boundary: `recall_memory`'s free-text / vector search only indexes
+   facts that arrive through `store_memory` at runtime, so use SPARQL or pattern recall to
+   reach the seed.)
 
-The store is in-memory and **session-scoped** (cleared when the process exits). The embedded
-server also supports durable options — a persistent RDF store and a durable operator-state
-backend — via `CqelsMcpServerConfig.builder()` if you adapt the launcher (see
-[Extending it](#extending-it)).
+The per-launch temp store keeps demo semantics **ephemeral** (a fresh world each run — the
+directory is removed on shutdown, and two launches can never collide on a store lock). Set
+`CQELS_FLEET_STORE_DIR=/some/dir` to keep the store — facts and saved procedures then survive
+restarts (re-seeding an existing store is idempotent). The embedded server also supports a
+durable operator-state backend via `CqelsMcpServerConfig.builder()` if you adapt the launcher
+(see [Extending it](#extending-it)).
 
 ## Tools exposed (24)
 
@@ -116,10 +122,11 @@ mvn -q package
 ### Smoke test
 
 [`scripts/smoke.sh`](scripts/smoke.sh) drives one scripted JSON-RPC session over stdio —
-`initialize` → `tools/list` → SPARQL over the **seeded** fleet → pattern recall →
-`store_memory` → `create_stream` → `register_stream_query` (a `[NOW]` speeding monitor) →
-`push_stream_events` (three typed speed readings) → drain → `forget_stream_query` — and
-asserts the responses, including that the 135 and 128 km/h vehicles surface while the
+`initialize` → SPARQL over the **seeded** fleet as the **first, zero-delay** `tools/call`
+(proving the seed is in place before the server accepts requests) → `tools/list` → pattern
+recall → `store_memory` → `create_stream` → `register_stream_query` (a `[NOW]` speeding
+monitor) → `push_stream_events` (three typed speed readings) → drain → `forget_stream_query`
+— and asserts the responses, including that the 135 and 128 km/h vehicles surface while the
 90 km/h one is filtered out, and that stdout carried only JSON-RPC frames:
 
 ```bash
@@ -223,18 +230,18 @@ The launcher is deliberately small — the embedding API is two classes from
 CqelsMcpServerConfig config = CqelsMcpServerConfig.builder()
         .serverName("cqels-fleet-mcp")
         .engineId("cqels-fleet-engine")
-        // .rdfStorePath("/var/lib/cqels/rdf")          // persistent RDF store (survives restart)
+        .rdfStorePath(storeDir.toString())           // the pre-seeded RDF store (NativeStore)
         // .storageBackend("lmdb")                      // durable operator-state backend
         //     .storageBackendPath("/var/lib/cqels/state")
         // .streamReasoning("rdfs")                     // incremental RDFS inference over streams
         // .transport(CqelsMcpServerConfig.Transport.HTTP) // Streamable-HTTP instead of stdio
         .build();
 CqelsMcpServer server = new CqelsMcpServer(config);
-server.start();                       // wires tools/resources/prompts, starts the engine
-CQELSEngine engine = server.getEngine();  // seed/inspect through the engine handle
+server.start();                       // reopens the store, wires tools/resources/prompts, starts the engine
 ```
 
 Swap the seed for your own domain by editing `seedFleetWorld` — write your background graph
 into `cqels://memory/longterm` (or a `cqels://memory/user/...` graph) so `recall_memory`
-pattern recall sees it. To add domain-specific tools alongside the built-ins, register them on
-`server.getMcpServer()` after `start()`.
+pattern recall sees it, and shut your seeding repository down before `start()` (NativeStore
+holds a directory lock). To add domain-specific tools alongside the built-ins, register them
+on `server.getMcpServer()` after `start()`.
