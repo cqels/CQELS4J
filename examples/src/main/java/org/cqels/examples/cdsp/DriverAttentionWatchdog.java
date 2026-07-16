@@ -23,11 +23,12 @@ import org.cqels.stream.StreamElement;
  *
  * <p>Each reading's subject is the vehicle IRI, so the cross-event guard
  * {@code FILTER(STR(?e1) = STR(?e3))} pins the two <em>fast</em> readings to one vehicle — one
- * vehicle's 90 km/h can never pair with another's 75. The <em>negated</em> step, however, is
- * vehicle-agnostic in this alpha: the kill condition applies its own filter ({@code ?s2 < 40})
- * but not cross-event guards, so <em>any</em> vehicle's braking reading inside the gap clears the
+ * vehicle's 90 km/h can never pair with another's 75. The <em>negated</em> step here is left
+ * deliberately vehicle-agnostic: its kill condition applies only its own filter
+ * ({@code ?s2 < 40}), so <em>any</em> vehicle's braking reading inside the gap clears the
  * pending watchdog (conservative for a safety alert — it can only suppress, never create, an
- * alert).
+ * alert). Since {@code 2.0.0-alpha.13} negated steps honor cross-event guards too, so adding
+ * {@code FILTER(STR(?e1) = STR(?e2))} would pin the braking reading to the same vehicle.
  *
  * <p>The demo pushes a matching episode (fast, coasts without braking, fast again), a non-matching
  * one (fast, <em>brakes hard</em>, fast again) that must stay quiet, and a two-vehicle episode

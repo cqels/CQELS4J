@@ -211,8 +211,8 @@ pair; on a live telemetry stream the next reading does this naturally.)
 > (`explain_decision`/`recall_decisions`), fail-closed governance, vector/hybrid semantic recall,
 > continuous SHACL watches (`watch_invariant`), continuous ASP rules (`register_rules`), and atomic
 > stream ingestion (`create_stream`/`push_stream_events`) — ships in the **CQELS engine
-> repository's `cqels-mcp` server**. It is not a
-> published Maven artifact, but from `v2.0.0-alpha.7` onward the ready-to-run shaded jar is
+> repository's `cqels-mcp` server**. Since `v2.0.0-alpha.12` it is published to GitHub
+> Packages as `org.cqels:cqels-mcp`, and from `v2.0.0-alpha.7` onward the ready-to-run shaded jar is
 > attached to each [engine release](https://github.com/cqels/claude/releases) — download
 > `cqels-mcp-<version>-shaded.jar` and `java -jar` it. This demo server shows the memory-type
 > *patterns* on the published `cqels-engine` API so you can build your own; it is not a

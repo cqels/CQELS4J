@@ -1,11 +1,12 @@
 # CQELS-QL Language Specification
 
-**Applies to:** CQELS `2.0.0-alpha.11` · **Based on:** SPARQL 1.1, extended with RSP-QL / C-SPARQL / LARS streaming constructs.
+**Applies to:** CQELS `2.0.0-alpha.13` · **Based on:** SPARQL 1.1, extended with RSP-QL / C-SPARQL / LARS streaming constructs.
 
 CQELS-QL (*Continuous Query Evaluation over Linked Streams — Query Language*) is **SPARQL 1.1 plus
 streaming**. If you know SPARQL, you already know most of it: `SELECT`, `FILTER`, `BIND`, `OPTIONAL`,
 `UNION`, aggregates and `GROUP BY` / `HAVING` behave as in SPARQL 1.1. (`ORDER BY` / `LIMIT` are
-supported with a streaming caveat, and `MINUS` parses but is not yet executed — see [§9](#9-standard-sparql-features-supported-as-is).)
+supported with a streaming caveat, and `MINUS` is not yet executed — registration rejects it with a
+hint to use `FILTER NOT EXISTS` — see [§9](#9-standard-sparql-features-supported-as-is).)
 
 This document focuses on **what CQELS-QL adds on top of SPARQL** — the constructs you won't find in a
 plain triple store. The standard SPARQL surface is summarized briefly in
@@ -47,7 +48,7 @@ WHERE {
   STREAM <name> { <triple patterns> }                -- classic mode
   WINDOW :w   { <triple patterns> }                  -- named-window mode
   <static triple patterns>                           -- matched against the background graph
-  [OPTIONAL { … }] [{ … } UNION { … }] [MINUS { … }]   -- MINUS parses but is not yet executed (use FILTER NOT EXISTS)
+  [OPTIONAL { … }] [{ … } UNION { … }] [MINUS { … }]   -- MINUS parses but is rejected at registration (use FILTER NOT EXISTS)
   [FILTER(<expr>)] [FILTER NOT EXISTS { … }] [BIND(<expr> AS ?v)]
   [FILTER(SEQ(?a ; ?b ; …))]                         -- CEP sequence (see §7)
 }
@@ -341,8 +342,9 @@ are called out.
   SPARQL type error**: `FILTER` drops the row, `BIND` leaves the variable unbound.
 - **`OPTIONAL { … }`** — left outer join (unmatched optional variables are unbound).
 - **`{ … } UNION { … }`** — alternative patterns merged before `FILTER`.
-- **`FILTER NOT EXISTS { … }`** — anti-join (exclude rows with a match). (`MINUS` is parsed but not yet
-  executed in the current alpha line — use `FILTER NOT EXISTS`.)
+- **`FILTER NOT EXISTS { … }`** — anti-join (exclude rows with a match). (`MINUS` is not yet executed;
+  since `2.0.0-alpha.13` registering a query containing `MINUS` **fails loud** with a hint to rewrite it
+  as `FILTER NOT EXISTS` — earlier alphas parsed it but silently skipped it.)
 - **`GROUP BY ?a, ?b`** · **`HAVING(expr)`** — aggregation (required for aggregates to apply) +
   post-aggregation filter; `HAVING` references the **SELECT aliases** (e.g. `HAVING(?cnt > 1)`, not
   `HAVING(COUNT(*) > 1)`).
