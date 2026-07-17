@@ -122,7 +122,7 @@ CQELS extension.
 | `[FUTURE Ns]` | Forward extent of N seconds after the anchor. |
 | `[RANGE Ns FUTURE Ms]` | Combined backward N + forward M extent around the anchor. |
 | `[PAST Ns FUTURE Ms]` | Same, with explicit backward keyword. |
-| `[TRIPLES PAST n FUTURE m]` | Count-based directional extents. |
+| `[TRIPLES PAST n FUTURE m]` | Count-based directional extents. **Parses but is not yet executable** — registration fails loud; use the time-based directional forms. |
 
 Directional windows accept an optional **emission policy** and **lateness budget** (the lateness
 budget is not directional-only — see below):
