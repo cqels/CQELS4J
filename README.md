@@ -89,8 +89,10 @@ try (CQELSEngine engine = CQELSEngine.builder().withMemoryStore().build()) {
 </dependencies>
 ```
 
-GitHub Packages requires a token with `read:packages` — see
-[GETTING_STARTED.md §2](GETTING_STARTED.md#2-authenticate-to-github-packages-one-time).
+> **Heads-up:** GitHub Packages requires a `read:packages` token **even for public packages**
+> — its Maven registry has no anonymous download (a GitHub limitation, not a CQELS choice).
+> A one-time classic PAT in `~/.m2/settings.xml` is all that's needed — see
+> [GETTING_STARTED.md §2](GETTING_STARTED.md#2-authenticate-to-github-packages-one-time).
 
 ---
 
