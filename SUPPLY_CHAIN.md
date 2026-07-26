@@ -83,7 +83,7 @@ matters.
 ```bash
 # path as it appears in the manifest
 REL=org/cqels/cqels-engine/2.0.0-alpha.16/cqels-engine-2.0.0-alpha.16.jar
-want=$(grep "  $REL$" SHA256SUMS | cut -d' ' -f1)
+want=$(awk -v p="$REL" '$2 == p {print $1}' SHA256SUMS)
 got=$(shasum -a 256 ~/.m2/repository/$REL | cut -d' ' -f1)
 if [ -n "$want" ] && [ "$want" = "$got" ]; then
   echo "OK   $REL"
@@ -169,7 +169,7 @@ however you obtained it, verify it against its manifest entry:
 ```bash
 VERSION=2.0.0-alpha.16
 REL=org/cqels/cqels-mcp/$VERSION/cqels-mcp-$VERSION-shaded.jar
-want=$(grep "  $REL$" SHA256SUMS | cut -d' ' -f1)
+want=$(awk -v p="$REL" '$2 == p {print $1}' SHA256SUMS)
 got=$(shasum -a 256 cqels-mcp-$VERSION-shaded.jar | cut -d' ' -f1)
 if [ -n "$want" ] && [ "$want" = "$got" ]; then
   echo "OK   shaded jar"
