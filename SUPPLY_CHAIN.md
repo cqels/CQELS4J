@@ -135,7 +135,7 @@ while IFS= read -r rel; do
   # release signed?" — and the legitimate shaded jar IS in SHA256SUMS, so it
   # passes on its own merit. Skipping the suffix instead lets any injected
   # *-shaded.jar through unexamined.
-  grep -q "  $rel\$" /path/to/SHA256SUMS || {
+  awk -v p="$rel" 'BEGIN{f=0} $2 == p {f=1} END{exit !f}' /path/to/SHA256SUMS || {
     echo "UNLISTED $rel (present locally, absent from the signed manifest)" >&2
     rc=1
   }
