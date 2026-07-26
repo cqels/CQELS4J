@@ -118,7 +118,11 @@ while read -r want rel; do
     echo "FAIL $rel (signed $want, local $got)"
     rc=1
   fi
-done < <(grep -E '^[0-9a-f]{64}  org/cqels/' /path/to/SHA256SUMS | grep -vE -- '-shaded\.jar$')
+done < <(grep -E '^[0-9a-f]{64}  org/cqels/' /path/to/SHA256SUMS)
+# No `-shaded.jar` exclusion. `[ -f "$rel" ] || continue` above already skips it
+# when you have not obtained it; when it IS present locally it must be hashed
+# like anything else. Filtering the path instead means tampered bytes sitting at
+# the signed shaded path are never checked by either pass.
 
 if [ "$checked" -eq 0 ]; then
   echo "checked nothing — wrong directory, or no org.cqels artifacts resolved yet" >&2
