@@ -100,9 +100,15 @@ exit $rc
 ## The shaded server jar
 
 The runnable shaded jar (`cqels-mcp-<version>-shaded.jar`, ~62 MB) is **not** served from the
-Maven repository — it is most of a release's bytes and the repository is size-bounded. It ships
-as a container image, and is also obtainable as a release asset and via the `shaded` classifier
-from the authenticated GitHub Packages registry.
+Maven repository — it is most of a release's bytes and the repository is size-bounded.
+
+**As of `2.0.0-alpha.16` it has no anonymous download route.** Every channel that carries it
+today needs credentials: the `shaded` classifier on the GitHub Packages Maven registry
+(HTTP 401 unauthenticated), the container image (currently a private package), and the release
+asset (attached to a repository that is not publicly readable). If you are reading this expecting
+to `curl` the jar, you cannot yet — that is a gap, not an oversight in these instructions.
+
+Everything else a release produces *is* anonymously available from the Maven repository.
 
 It *is* listed in `SHA256SUMS` — which is why the bulk loop above skips it — so however you
 obtained it, verify it against its manifest entry:
