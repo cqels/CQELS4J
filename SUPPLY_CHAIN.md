@@ -97,6 +97,7 @@ failure flag set inside it would be discarded and the script would always succee
 
 ```bash
 #!/usr/bin/env bash
+VERSION=2.0.0-alpha.16          # the release you are verifying
 cd ~/.m2/repository || exit 1
 rc=0
 checked=0
@@ -127,7 +128,7 @@ while IFS= read -r rel; do
     echo "UNLISTED $rel (present locally, absent from the signed manifest)" >&2
     rc=1
   }
-done < <(find org/cqels -name '*.jar' 2>/dev/null)
+done < <(find org/cqels -path "*/$VERSION/*" -name '*.jar' 2>/dev/null)
 
 exit $rc
 ```
