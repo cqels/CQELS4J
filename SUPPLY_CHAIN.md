@@ -59,10 +59,17 @@ The URL above tracks the **current** key. When the signing key is rotated, that 
 new key and the fingerprint above stops matching — which is correct for new releases and useless
 for old ones.
 
-Each release therefore publishes its own `supply-chain/<version>/VERIFY.md` containing a URL
-**pinned to the exact commit that held the key when that release was published**. To verify a
-historical release, use that release's `VERIFY.md`, not this page. Retired key fingerprints are
-published here at rotation time so an old release stays independently checkable.
+Releases published **after this key was made available here** carry their own
+`supply-chain/<version>/VERIFY.md` containing a URL **pinned to the exact commit that held the
+key at publication time**. Where such a file exists, use it rather than this page to verify that
+release.
+
+Be aware of the current state rather than assuming it: the deployed
+`supply-chain/2.0.0-alpha.16/VERIFY.md` predates this mechanism and still fetches the key from
+`master`, and releases before alpha.16 publish no `VERIFY.md` at all. For those, verification
+after a key rotation depends on a fingerprint you recorded at the time or your own vendored copy
+of the key. Retired key fingerprints are published here at rotation time for exactly that
+reason.
 
 `--insecure-ignore-tlog` is expected here: these signatures are deliberately made without a
 transparency-log entry, so the pinned key is the whole trust anchor. That is exactly why step 1
@@ -123,7 +130,11 @@ fi
 # stale artifact hides precisely by not being listed. Walk the local tree too
 # and require every jar to be accounted for.
 while IFS= read -r rel; do
-  case "$rel" in *-shaded.jar) continue ;; esac        # listed but not mirrored
+  # No suffix exceptions here. The forward pass skips the shaded jar because you
+  # cannot download it; this pass asks a different question — "is this file the
+  # release signed?" — and the legitimate shaded jar IS in SHA256SUMS, so it
+  # passes on its own merit. Skipping the suffix instead lets any injected
+  # *-shaded.jar through unexamined.
   grep -q "  $rel\$" /path/to/SHA256SUMS || {
     echo "UNLISTED $rel (present locally, absent from the signed manifest)" >&2
     rc=1
