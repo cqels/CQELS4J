@@ -147,10 +147,8 @@ today needs credentials: the `shaded` classifier on the GitHub Packages Maven re
 asset (attached to a repository that is not publicly readable). If you are reading this expecting
 to `curl` the jar, you cannot yet — that is a gap, not an oversight in these instructions.
 
-Everything else a release produces *is* anonymously available from the Maven repository.
-
-It *is* listed in `SHA256SUMS` — which is why the bulk loop above skips it — so however you
-obtained it, verify it against its manifest entry:
+The shaded jar *is* listed in `SHA256SUMS` — which is why the bulk loop above skips it — so
+however you obtained it, verify it against its manifest entry:
 
 ```bash
 VERSION=2.0.0-alpha.16
@@ -167,6 +165,18 @@ fi
 
 Verify the manifest signature first (above) — a manifest entry is only meaningful once you have
 established that the manifest itself is authentic.
+
+## What else is, and is not, anonymously available
+
+Every other **versioned artifact** — jars, POMs, SBOMs and their `.md5`/`.sha1` sidecars — *is*
+anonymously available from the Maven repository.
+
+Repository **metadata** is not: `maven-metadata.xml` and its checksum sidecars are absent by
+design (a release stages only its own version, so copying that metadata would overwrite the
+accumulated version list with a single entry). Fixed-version resolution never reads them, which
+is what every dependency declaration does; version ranges and `LATEST` are not supported here.
+They remain listed in `SHA256SUMS` because the manifest records everything the release produced,
+which is why the bulk check filters to `org/cqels/**` jars.
 
 ## Reproducibility — and its limits
 
