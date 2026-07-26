@@ -1,8 +1,10 @@
 # Supply chain: verifying CQELS releases
 
-CQELS release artifacts are published to an anonymous Maven repository and are covered by a
-cosign-signed manifest. This page exists so you can obtain the **verification key from a
-different origin than the artifacts it verifies**.
+CQELS **Maven** artifacts are published to an anonymous Maven repository and are covered by a
+cosign-signed manifest. (The runnable shaded server jar is the one exception — it has no
+anonymous route today; see [The shaded server jar](#the-shaded-server-jar) below.) This page
+exists so you can obtain the **verification key from a different origin than the artifacts it
+verifies**.
 
 ## Why the key lives here
 
@@ -23,7 +25,16 @@ an announcement here, stop and ask.
 
 ## Verifying a release
 
+`set -e` on the first line is load-bearing, not boilerplate. Without it a failing fingerprint
+check only sets a non-zero status for that one command; the script would carry on and run
+`cosign verify-blob`, which succeeds against a valid-but-wrong key and its matching manifest —
+so the block as a whole would exit 0 and a swapped key would pass unnoticed. Making the
+individual command fail is not enough; the sequence has to stop.
+
 ```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
 VERSION=2.0.0-alpha.16
 BASE=https://maven.cqels.org/releases/supply-chain/$VERSION
 
@@ -41,6 +52,17 @@ curl -fsSLO "$BASE/SHA256SUMS" -O "$BASE/SHA256SUMS.bundle"
 cosign verify-blob --key cosign.pub --bundle SHA256SUMS.bundle \
   --new-bundle-format=false --insecure-ignore-tlog SHA256SUMS
 ```
+
+### Verifying an older release after a key rotation
+
+The URL above tracks the **current** key. When the signing key is rotated, that URL serves the
+new key and the fingerprint above stops matching — which is correct for new releases and useless
+for old ones.
+
+Each release therefore publishes its own `supply-chain/<version>/VERIFY.md` containing a URL
+**pinned to the exact commit that held the key when that release was published**. To verify a
+historical release, use that release's `VERIFY.md`, not this page. Retired key fingerprints are
+published here at rotation time so an old release stays independently checkable.
 
 `--insecure-ignore-tlog` is expected here: these signatures are deliberately made without a
 transparency-log entry, so the pinned key is the whole trust anchor. That is exactly why step 1
@@ -94,8 +116,25 @@ if [ "$checked" -eq 0 ]; then
   echo "checked nothing — wrong directory, or no org.cqels artifacts resolved yet" >&2
   rc=1
 fi
+
+# Reverse direction: the loop above walks the MANIFEST, so a local org.cqels jar
+# that appears in no manifest entry would never be looked at — an injected or
+# stale artifact hides precisely by not being listed. Walk the local tree too
+# and require every jar to be accounted for.
+while IFS= read -r rel; do
+  case "$rel" in *-shaded.jar) continue ;; esac        # listed but not mirrored
+  grep -q "  $rel\$" /path/to/SHA256SUMS || {
+    echo "UNLISTED $rel (present locally, absent from the signed manifest)" >&2
+    rc=1
+  }
+done < <(find org/cqels -name '*.jar' 2>/dev/null)
+
 exit $rc
 ```
+
+The two directions answer different questions: the first asks "does everything the release signed
+still match?", the second asks "is anything sitting in my repository that the release never
+signed?". A verification that only walks the manifest silently tolerates the second case.
 
 ## The shaded server jar
 
