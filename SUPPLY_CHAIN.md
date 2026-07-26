@@ -56,23 +56,65 @@ shasum -a 256 ~/.m2/repository/$REL
 ```
 
 The two digests must match. To check everything Maven resolved, run the comparison from your
-local repository root so the manifest's relative paths line up:
+local repository root so the manifest's relative paths line up.
+
+This script **exits non-zero** on any mismatch, and also when it checked nothing at all — a
+verification step that cannot fail is worse than no verification, because it looks like a pass.
+Note the `< <(...)` redirect rather than a pipe: a piped `while` runs in a subshell, so the
+failure flag set inside it would be discarded and the script would always succeed.
 
 ```bash
-cd ~/.m2/repository
-grep -E '^[0-9a-f]{64}  org/cqels/' /path/to/SHA256SUMS \
-  | grep -vE -- '-shaded\.jar$' \
-  | while read -r want rel; do
-      [ -f "$rel" ] || continue
-      got=$(shasum -a 256 "$rel" | cut -d' ' -f1)
-      [ "$got" = "$want" ] && echo "OK   $rel" || echo "FAIL $rel"
-    done
+#!/usr/bin/env bash
+cd ~/.m2/repository || exit 1
+rc=0
+checked=0
+while read -r want rel; do
+  [ -f "$rel" ] || continue                       # not resolved locally; skip
+  checked=$((checked + 1))
+  got=$(shasum -a 256 "$rel" | cut -d' ' -f1)
+  if [ "$got" = "$want" ]; then
+    echo "OK   $rel"
+  else
+    echo "FAIL $rel (signed $want, local $got)"
+    rc=1
+  fi
+done < <(grep -E '^[0-9a-f]{64}  org/cqels/' /path/to/SHA256SUMS | grep -vE -- '-shaded\.jar$')
+
+if [ "$checked" -eq 0 ]; then
+  echo "checked nothing — wrong directory, or no org.cqels artifacts resolved yet" >&2
+  rc=1
+fi
+exit $rc
 ```
 
-## Notes
+## The shaded server jar
 
-- The runnable shaded server jar is not served from the Maven repository (size); it ships as a
-  container image. It is still listed in `SHA256SUMS`, which is why the loop above skips it.
-- Builds are reproducible from source from `2.0.0-alpha.16` onward
-  (`project.build.outputTimestamp` is pinned), so a release can be independently reconstructed
-  and compared against the signed digests.
+The runnable shaded jar (`cqels-mcp-<version>-shaded.jar`, ~62 MB) is **not** served from the
+Maven repository — it is most of a release's bytes and the repository is size-bounded. It ships
+as a container image, and is also obtainable as a release asset and via the `shaded` classifier
+from the authenticated GitHub Packages registry.
+
+It *is* listed in `SHA256SUMS` — which is why the bulk loop above skips it — so however you
+obtained it, verify it against its manifest entry:
+
+```bash
+VERSION=2.0.0-alpha.16
+REL=org/cqels/cqels-mcp/$VERSION/cqels-mcp-$VERSION-shaded.jar
+grep " $REL\$" SHA256SUMS
+shasum -a 256 cqels-mcp-$VERSION-shaded.jar
+```
+
+The two digests must match. Verify the manifest signature first (above) — the manifest entry is
+only meaningful once you have established that the manifest itself is authentic.
+
+## Reproducibility — and its limits
+
+From `2.0.0-alpha.16` onward `project.build.outputTimestamp` is pinned, so builds are
+reproducible from source: rebuilding the exact tag with Temurin 17 and
+`-Drevision=<version>` reproduces the **plain Maven artifacts** byte-for-byte, and they can be
+compared against the signed manifest.
+
+**The shaded jar is not covered by that.** Rebuilding it has been observed to produce an archive
+whose *contents* are identical but whose bytes differ, so its digest will not match the manifest
+even though nothing is wrong with your build. Exclude it when reproducing a release; verify it
+by digest against the manifest instead, as above.
