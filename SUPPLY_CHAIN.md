@@ -28,8 +28,11 @@ VERSION=2.0.0-alpha.16
 BASE=https://maven.cqels.org/releases/supply-chain/$VERSION
 
 # 1. Key from THIS repository — a different origin from the artifacts.
+#    --check FAILS on a mismatch; printing the digest to compare by eye does
+#    not, so a swapped key would pass unnoticed.
 curl -fsSLO https://raw.githubusercontent.com/cqels/CQELS4J/master/cosign.pub
-shasum -a 256 cosign.pub   # must equal the fingerprint above
+echo "36dd8daa9988f23eb40c4f3550fa7bdfa3796e5e58cce8d23b9cc6a99f47f30b  cosign.pub" \
+  | shasum -a 256 --check -
 
 # 2. Manifest and signature from the artifact repository.
 curl -fsSLO "$BASE/SHA256SUMS" -O "$BASE/SHA256SUMS.bundle"
@@ -51,14 +54,21 @@ matters.
 ```bash
 # path as it appears in the manifest
 REL=org/cqels/cqels-engine/2.0.0-alpha.16/cqels-engine-2.0.0-alpha.16.jar
-grep " $REL\$" SHA256SUMS
-shasum -a 256 ~/.m2/repository/$REL
+want=$(grep "  $REL$" SHA256SUMS | cut -d' ' -f1)
+got=$(shasum -a 256 ~/.m2/repository/$REL | cut -d' ' -f1)
+if [ -n "$want" ] && [ "$want" = "$got" ]; then
+  echo "OK   $REL"
+else
+  echo "MISMATCH $REL (signed ${want:-<absent from manifest>}, local $got)" >&2
+  exit 1
+fi
 ```
 
-The two digests must match. To check everything Maven resolved, run the comparison from your
-local repository root so the manifest's relative paths line up.
+This compares rather than printing two digests for you to eyeball — the printing form succeeds
+even when they differ.
 
-This script **exits non-zero** on any mismatch, and also when it checked nothing at all — a
+To check everything Maven resolved, run the comparison from your local repository root so the
+manifest's relative paths line up. This script **exits non-zero** on any mismatch, and also when it checked nothing at all — a
 verification step that cannot fail is worse than no verification, because it looks like a pass.
 Note the `< <(...)` redirect rather than a pipe: a piped `while` runs in a subshell, so the
 failure flag set inside it would be discarded and the script would always succeed.
@@ -100,12 +110,18 @@ obtained it, verify it against its manifest entry:
 ```bash
 VERSION=2.0.0-alpha.16
 REL=org/cqels/cqels-mcp/$VERSION/cqels-mcp-$VERSION-shaded.jar
-grep " $REL\$" SHA256SUMS
-shasum -a 256 cqels-mcp-$VERSION-shaded.jar
+want=$(grep "  $REL$" SHA256SUMS | cut -d' ' -f1)
+got=$(shasum -a 256 cqels-mcp-$VERSION-shaded.jar | cut -d' ' -f1)
+if [ -n "$want" ] && [ "$want" = "$got" ]; then
+  echo "OK   shaded jar"
+else
+  echo "MISMATCH shaded jar (signed ${want:-<absent from manifest>}, local $got)" >&2
+  exit 1
+fi
 ```
 
-The two digests must match. Verify the manifest signature first (above) — the manifest entry is
-only meaningful once you have established that the manifest itself is authentic.
+Verify the manifest signature first (above) — a manifest entry is only meaningful once you have
+established that the manifest itself is authentic.
 
 ## Reproducibility — and its limits
 
