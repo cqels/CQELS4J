@@ -75,8 +75,8 @@ try (CQELSEngine engine = CQELSEngine.builder().withMemoryStore().build()) {
 ```xml
 <repositories>
   <repository>
-    <id>github-cqels</id>
-    <url>https://maven.pkg.github.com/cqels/CQELS4J</url>
+    <id>cqels</id>
+    <url>https://maven.cqels.org/releases</url>
   </repository>
 </repositories>
 
@@ -89,10 +89,14 @@ try (CQELSEngine engine = CQELSEngine.builder().withMemoryStore().build()) {
 </dependencies>
 ```
 
-> **Heads-up:** GitHub Packages requires a `read:packages` token **even for public packages**
-> — its Maven registry has no anonymous download (a GitHub limitation, not a CQELS choice).
-> A one-time classic PAT in `~/.m2/settings.xml` is all that's needed — see
-> [GETTING_STARTED.md §2](GETTING_STARTED.md#2-authenticate-to-github-packages-one-time).
+> **No credentials needed.** Artifacts are served anonymously over HTTPS and every published
+> byte is covered by a cosign-signed manifest you can verify yourself — see
+> [SUPPLY_CHAIN.md](SUPPLY_CHAIN.md).
+>
+> Releases are also published to GitHub Packages, which still works but requires a
+> `read:packages` token (its Maven registry has no anonymous download — a GitHub limitation,
+> not a CQELS choice). The one artifact that still needs that token is the runnable shaded
+> `cqels-mcp` jar; see [mcp-server/README.md](mcp-server/README.md).
 
 ---
 

@@ -1,8 +1,8 @@
 # Getting Started with CQELS 2.0
 
 This guide takes you from zero to a running continuous query in a few minutes:
-install the prerequisites, pull the engine from GitHub Packages, run the bundled
-examples, then wire CQELS into your own project.
+install the prerequisites, pull the engine from the public CQELS Maven repository, run the
+bundled examples, then wire CQELS into your own project.
 
 > **Current release:** `2.0.0-alpha.16` — coordinates `org.cqels:cqels-*`, entry point `cqels-engine`.
 
@@ -25,31 +25,22 @@ No databases or external services are required — the quick-start uses an in-me
 
 ---
 
-## 2. Authenticate to GitHub Packages (one-time)
+## 2. No authentication (nothing to do)
 
-CQELS artifacts are published to **GitHub Packages**, which requires authentication
-even for public packages. You need a GitHub **Personal Access Token (classic)** with
-the **`read:packages`** scope.
+CQELS artifacts are served anonymously from `https://maven.cqels.org/releases`. There is no
+token, no `~/.m2/settings.xml`, and no GitHub account involved — add the repository (section 4)
+and build.
 
-1. Create the token: GitHub → *Settings → Developer settings → Personal access tokens
-   → Tokens (classic)* → *Generate new token (classic)* → tick **`read:packages`**.
-2. Add a matching server to your `~/.m2/settings.xml` (create the file if it doesn't
-   exist). The `<id>` must match the repository id used in the POM (`github-cqels`):
+Verify what you downloaded against the release's cosign-signed manifest:
+[SUPPLY_CHAIN.md](SUPPLY_CHAIN.md).
 
-```xml
-<settings>
-  <servers>
-    <server>
-      <id>github-cqels</id>
-      <username>YOUR_GITHUB_USERNAME</username>
-      <password>YOUR_GITHUB_TOKEN</password>
-    </server>
-  </servers>
-</settings>
-```
-
-> Keep the token out of source control. For CI, inject it via a secret and a generated
-> `settings.xml` rather than committing it.
+> **If you previously used the GitHub Packages URL** you needed a classic PAT with
+> `read:packages`, because that registry rejects unauthenticated reads even for public
+> packages — a GitHub limitation, not a CQELS choice. Releases are still published there and
+> that route still works, but it is no longer the recommended one.
+>
+> One artifact still requires it: the runnable shaded `cqels-mcp` jar is not served from the
+> anonymous repository. See [mcp-server/README.md](mcp-server/README.md).
 
 ---
 
@@ -99,8 +90,8 @@ Add the repository and the engine dependency to your `pom.xml`:
 ```xml
 <repositories>
   <repository>
-    <id>github-cqels</id>
-    <url>https://maven.pkg.github.com/cqels/CQELS4J</url>
+    <id>cqels</id>
+    <url>https://maven.cqels.org/releases</url>
   </repository>
 </repositories>
 

@@ -17,7 +17,7 @@
     <properties>
         <maven.compiler.release>17</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <cqels.version>2.0.0-alpha.13</cqels.version>
+        <cqels.version>2.0.0-alpha.16</cqels.version>
         <mainClass>org.cqels.examples.mcp.FleetMcpServerLauncher</mainClass>
     </properties>
 
@@ -35,9 +35,9 @@
 
     <repositories>
         <repository>
-            <id>github-cqels</id>
-            <name>GitHub Packages — cqels/CQELS4J</name>
-            <url>https://maven.pkg.github.com/cqels/CQELS4J</url>
+            <id>cqels</id>
+            <name>CQELS Releases</name>
+            <url>https://maven.cqels.org/releases</url>
             <releases><enabled>true</enabled></releases>
             <snapshots><enabled>true</enabled></snapshots>
         </repository>

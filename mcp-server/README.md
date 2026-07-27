@@ -113,8 +113,8 @@ Enumerated from a live `tools/list` against this jar.
 ## Build
 
 ```bash
-# One-time: a GitHub Packages token with read:packages in ~/.m2/settings.xml
-# (see ../GETTING_STARTED.md) — needed only to download org.cqels:cqels-mcp at build time.
+# No credentials needed: org.cqels:cqels-mcp resolves anonymously from
+# https://maven.cqels.org/releases (configured in this module's pom.xml).
 mvn -q package
 # -> target/cqels-mcp-server.jar  (a single runnable jar)
 ```
@@ -192,11 +192,32 @@ Two options:
 
 - **The published server, natively.** `org.cqels:cqels-mcp` ships a ready-to-run `-shaded`
   jar with a built-in Streamable-HTTP transport: fetch it with
-  `mvn dependency:copy -Dartifact=org.cqels:cqels-mcp:2.0.0-alpha.16:jar:shaded` (same GitHub
-  Packages token setup as in GETTING_STARTED) and run it with `CQELS_MCP_TRANSPORT=http`
+  `mvn dependency:copy -Dartifact=org.cqels:cqels-mcp:2.0.0-alpha.16:jar:shaded` and run it with
+  `CQELS_MCP_TRANSPORT=http`
   (host/port/path, bearer-token auth, and origin allow-lists are configurable via
   `CQELS_MCP_HTTP_*` environment variables). This is the production remote path — it starts
   empty (no fleet seed).
+
+  > **This one artifact still needs a GitHub Packages token.** The `-shaded` classifier is not
+  > served from the anonymous repository (it is ~62 MB, and that repository is size-bounded), so
+  > fetching it needs a classic PAT with `read:packages` and a matching server in
+  > `~/.m2/settings.xml`:
+  >
+  > ```xml
+  > <settings>
+  >   <servers>
+  >     <server>
+  >       <id>github</id>
+  >       <username>YOUR_GITHUB_USERNAME</username>
+  >       <password>YOUR_GITHUB_TOKEN</password>
+  >     </server>
+  >   </servers>
+  > </settings>
+  > ```
+  >
+  > Everything else — including the thin `cqels-mcp` library jar this module builds against —
+  > resolves anonymously and needs none of this. Keep the token out of source control; in CI,
+  > inject it via a secret and a generated `settings.xml`.
 - **This launcher, via a gateway.** This jar is stdio-only; wrap it with a stdio→HTTP gateway
   such as [`supergateway`](https://github.com/supercorp-ai/supergateway) to keep the V2G seed:
 
