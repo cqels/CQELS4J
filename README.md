@@ -5,7 +5,7 @@ continuous querying and reasoning over high-throughput RDF / graph streams. This
 the next generation of the [CQELS engine prototyped in 2013](https://github.com/cqels/CQELS-1.x),
 rebuilt for edge-to-cloud deployments — code name **COSMO**.
 
-> **Latest release:** `2.0.0-alpha.13` · **License:** MIT · **Requires:** JDK 17+
+> **Latest release:** `2.0.0-alpha.16` · **License:** MIT · **Requires:** JDK 17+
 >
 > **New here? → [GETTING_STARTED.md](GETTING_STARTED.md)** &nbsp;·&nbsp; **Runnable demos → [examples/](examples/)**
 
@@ -84,7 +84,7 @@ try (CQELSEngine engine = CQELSEngine.builder().withMemoryStore().build()) {
   <dependency>
     <groupId>org.cqels</groupId>
     <artifactId>cqels-engine</artifactId>
-    <version>2.0.0-alpha.13</version>
+    <version>2.0.0-alpha.16</version>
   </dependency>
 </dependencies>
 ```
@@ -246,7 +246,7 @@ CQELS builds on and interoperates with these standards:
 
 CQELS 2.0 (COSMO) is under active development toward a public release, aligned with the
 [SmartEdge](https://smart-edge.eu/) project's open-source timeline; the current line is
-the `2.0.0-alpha` series ([latest release](https://github.com/cqels/CQELS4J/releases)).
+the `2.0.0-alpha` series ([release verification](SUPPLY_CHAIN.md)).
 Headline goals:
 
 1. Run on ARM hardware (Raspberry Pi, Jetson Nano, …) as well as servers.
