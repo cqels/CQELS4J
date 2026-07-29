@@ -1,10 +1,10 @@
 # Supply chain: verifying CQELS releases
 
 CQELS **Maven** artifacts are published to an anonymous Maven repository and are covered by a
-cosign-signed manifest. (The runnable shaded server jar is the one exception — it has no
-anonymous route today; see [The shaded server jar](#the-shaded-server-jar) below.) This page
-exists so you can obtain the **verification key from a different origin than the artifacts it
-verifies**.
+cosign-signed manifest. The runnable shaded server jar is served from the GitHub release page
+rather than the Maven repository — see [The shaded server jar](#the-shaded-server-jar) below —
+and is covered by the same manifest. This page exists so you can obtain the **verification key
+from a different origin than the artifacts it verifies**.
 
 ## Why the key lives here
 
@@ -120,7 +120,8 @@ while read -r want rel; do
   fi
 done < <(grep -E '^[0-9a-f]{64}  org/cqels/' /path/to/SHA256SUMS)
 # No `-shaded.jar` exclusion. `[ -f "$rel" ] || continue` above already skips it
-# when you have not obtained it; when it IS present locally it must be hashed
+# when you have not fetched it (it comes from the release page, not this
+# repository, so it is often absent); when it IS present it must be hashed
 # like anything else. Filtering the path instead means tampered bytes sitting at
 # the signed shaded path are never checked by either pass.
 
@@ -134,8 +135,8 @@ fi
 # stale artifact hides precisely by not being listed. Walk the local tree too
 # and require every jar to be accounted for.
 while IFS= read -r rel; do
-  # No suffix exceptions here. The forward pass skips the shaded jar because you
-  # cannot download it; this pass asks a different question — "is this file the
+  # No suffix exceptions here. The forward pass skips the shaded jar when it is
+  # simply absent; this pass asks a different question — "is this file the
   # release signed?" — and the legitimate shaded jar IS in SHA256SUMS, so it
   # passes on its own merit. Skipping the suffix instead lets any injected
   # *-shaded.jar through unexamined.
@@ -157,11 +158,16 @@ signed?". A verification that only walks the manifest silently tolerates the sec
 The runnable shaded jar (`cqels-mcp-<version>-shaded.jar`, ~62 MB) is **not** served from the
 Maven repository — it is most of a release's bytes and the repository is size-bounded.
 
-**As of `2.0.0-alpha.16` it has no anonymous download route.** Every channel that carries it
-today needs credentials: the `shaded` classifier on the GitHub Packages Maven registry
-(HTTP 401 unauthenticated), the container image (currently a private package), and the release
-asset (attached to a repository that is not publicly readable). If you are reading this expecting
-to `curl` the jar, you cannot yet — that is a gap, not an oversight in these instructions.
+**Since `2.0.0-alpha.16` it is attached to the GitHub release**, which needs no credentials:
+
+```bash
+VERSION=2.0.0-alpha.16
+curl -fsSLO https://github.com/cqels/CQELS4J/releases/download/v$VERSION/cqels-mcp-$VERSION-shaded.jar
+```
+
+Two other channels carry it and both still need credentials, so prefer the release page: the
+`shaded` classifier on the GitHub Packages Maven registry (HTTP 401 unauthenticated) and the
+container image (currently a private package).
 
 The shaded jar *is* listed in `SHA256SUMS` — which is why the bulk loop above skips it — so
 however you obtained it, verify it against its manifest entry:

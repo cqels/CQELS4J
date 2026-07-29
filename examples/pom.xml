@@ -16,7 +16,7 @@
         <maven.compiler.release>17</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <!-- Bump to the latest published CQELS release as new versions ship. -->
-        <cqels.version>2.0.0-alpha.13</cqels.version>
+        <cqels.version>2.0.0-alpha.16</cqels.version>
         <!-- Default example for `mvn exec:java`; override with -Dexec.mainClass=... -->
         <exec.mainClass>org.cqels.examples.HelloCqels</exec.mainClass>
     </properties>
@@ -71,15 +71,17 @@
         </dependency>
     </dependencies>
 
-    <!-- CQELS artifacts are published to GitHub Packages. Consuming them requires a
-         GitHub token with read:packages in your ~/.m2/settings.xml — see ../GETTING_STARTED.md. -->
+    <!-- Served anonymously: no account, no token, no ~/.m2/settings.xml.
+         GitHub Packages' Maven registry has no anonymous read even for public
+         packages, so pointing here instead is what makes `mvn compile` work for
+         someone who just cloned this repository. -->
     <repositories>
         <repository>
-            <id>github-cqels</id>
-            <name>GitHub Packages — cqels/CQELS4J</name>
-            <url>https://maven.pkg.github.com/cqels/CQELS4J</url>
+            <id>cqels</id>
+            <name>CQELS Releases</name>
+            <url>https://maven.cqels.org/releases</url>
             <releases><enabled>true</enabled></releases>
-            <snapshots><enabled>true</enabled></snapshots>
+            <snapshots><enabled>false</enabled></snapshots>
         </repository>
     </repositories>
 
