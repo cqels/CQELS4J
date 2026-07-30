@@ -41,10 +41,15 @@ repository to your POM and build.
 </repositories>
 ```
 
-> These artifacts are also published to GitHub Packages, but its Maven registry requires a
-> token even for public packages, so it is not the route documented here. Every release is
-> mirrored byte-for-byte to the URL above from the same cosign-signed manifest — see
-> [SUPPLY_CHAIN.md](SUPPLY_CHAIN.md) to verify what you downloaded.
+> **If you previously used the GitHub Packages URL** you needed a classic PAT with
+> `read:packages`, because that registry rejects unauthenticated reads even for public
+> packages — a GitHub limitation, not a CQELS choice. Existing setups keep working; the URL
+> above is simply the recommended route now, and needs nothing.
+>
+> Every release is mirrored byte-for-byte to it from the same cosign-signed manifest — see
+> [SUPPLY_CHAIN.md](SUPPLY_CHAIN.md) to verify what you downloaded. The one artifact not
+> served there is the runnable shaded `cqels-mcp` jar, which is attached to the
+> [GitHub release](https://github.com/cqels/CQELS4J/releases/latest) instead.
 
 ---
 
