@@ -27,19 +27,26 @@ No databases or external services are required — the quick-start uses an in-me
 
 ## 2. Add the repository (no account needed)
 
-CQELS artifacts are served anonymously from `https://maven.cqels.org/releases`. There is
-nothing to sign up for, no token to create, and no `~/.m2/settings.xml` to edit — add the
-repository to your POM and build.
+CQELS artifacts are served anonymously. There is nothing to sign up for, no token to create,
+and no `~/.m2/settings.xml` to edit — add the repository to your POM and build.
 
 ```xml
 <repositories>
   <repository>
     <id>cqels</id>
     <name>CQELS Releases</name>
-    <url>https://maven.cqels.org/releases</url>
+    <url>https://raw.githubusercontent.com/cqels/maven/main/releases</url>
   </repository>
 </repositories>
 ```
+
+That URL reads the release repository directly. `https://maven.cqels.org/releases` is a
+friendlier alias for the same repository and serves the same bytes — use whichever you
+prefer. The examples here use the direct form so a clean clone builds without depending on
+the alias resolving.
+
+Fixed versions only: neither URL serves repository metadata, so version ranges and `LATEST`
+do not resolve. Pin the version, as the snippet below does.
 
 > **If you previously used the GitHub Packages URL** you needed a classic PAT with
 > `read:packages`, because that registry rejects unauthenticated reads even for public

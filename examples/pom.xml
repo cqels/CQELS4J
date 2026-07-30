@@ -79,7 +79,7 @@
         <repository>
             <id>cqels</id>
             <name>CQELS Releases</name>
-            <url>https://maven.cqels.org/releases</url>
+            <url>https://raw.githubusercontent.com/cqels/maven/main/releases</url>
             <releases><enabled>true</enabled></releases>
             <snapshots><enabled>false</enabled></snapshots>
         </repository>
