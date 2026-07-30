@@ -31,8 +31,10 @@ vehicle-to-grid (V2G) scenario.
 ## Prerequisites
 
 - JDK 17+ and Maven 3.8+
-- A GitHub Packages token configured in `~/.m2/settings.xml` (one-time setup) —
-  see [`../GETTING_STARTED.md`](../GETTING_STARTED.md#2-authenticate-to-github-packages-one-time).
+
+That is the whole list. Dependencies resolve anonymously from
+`https://maven.cqels.org/releases`, which this project's POM already points at — no account,
+no token, no `~/.m2/settings.xml`.
 
 ## Build & run
 

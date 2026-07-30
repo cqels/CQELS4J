@@ -5,7 +5,7 @@ continuous querying and reasoning over high-throughput RDF / graph streams. This
 the next generation of the [CQELS engine prototyped in 2013](https://github.com/cqels/CQELS-1.x),
 rebuilt for edge-to-cloud deployments — code name **COSMO**.
 
-> **Latest release:** `2.0.0-alpha.16` · **License:** MIT · **Requires:** JDK 17+
+> **Latest release:** [`2.0.0-alpha.16`](https://github.com/cqels/CQELS4J/releases/tag/v2.0.0-alpha.16) · **License:** MIT · **Requires:** JDK 17+
 >
 > **New here? → [GETTING_STARTED.md](GETTING_STARTED.md)** &nbsp;·&nbsp; **Runnable demos → [examples/](examples/)**
 
@@ -41,8 +41,8 @@ specifications CQELS builds on and aligns with.
 
 ## Quick start
 
-Run a continuous query in under a minute (full setup, including the one-time GitHub
-Packages token, is in **[GETTING_STARTED.md](GETTING_STARTED.md)**):
+Run a continuous query in under a minute — no credentials required at any point
+(full setup in **[GETTING_STARTED.md](GETTING_STARTED.md)**):
 
 ```bash
 git clone https://github.com/cqels/CQELS4J.git
@@ -76,7 +76,7 @@ try (CQELSEngine engine = CQELSEngine.builder().withMemoryStore().build()) {
 <repositories>
   <repository>
     <id>github-cqels</id>
-    <url>https://maven.pkg.github.com/cqels/CQELS4J</url>
+    <url>https://maven.cqels.org/releases</url>
   </repository>
 </repositories>
 
@@ -89,10 +89,10 @@ try (CQELSEngine engine = CQELSEngine.builder().withMemoryStore().build()) {
 </dependencies>
 ```
 
-> **Heads-up:** GitHub Packages requires a `read:packages` token **even for public packages**
-> — its Maven registry has no anonymous download (a GitHub limitation, not a CQELS choice).
-> A one-time classic PAT in `~/.m2/settings.xml` is all that's needed — see
-> [GETTING_STARTED.md §2](GETTING_STARTED.md#2-authenticate-to-github-packages-one-time).
+> **No account, no token, no `settings.xml`.** `https://maven.cqels.org/releases` serves
+> `org.cqels` artifacts anonymously. (GitHub Packages' Maven registry, where these are also
+> published, has no anonymous read even for public packages — a GitHub limitation, not a CQELS
+> choice — which is why the coordinates above point here instead.)
 
 ---
 

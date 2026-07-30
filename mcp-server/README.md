@@ -113,8 +113,8 @@ Enumerated from a live `tools/list` against this jar.
 ## Build
 
 ```bash
-# One-time: a GitHub Packages token with read:packages in ~/.m2/settings.xml
-# (see ../GETTING_STARTED.md) — needed only to download org.cqels:cqels-mcp at build time.
+# org.cqels:cqels-mcp resolves anonymously from https://maven.cqels.org/releases,
+# which this POM already points at. No token, no ~/.m2/settings.xml.
 mvn -q package
 # -> target/cqels-mcp-server.jar  (a single runnable jar)
 ```
@@ -192,8 +192,9 @@ Two options:
 
 - **The published server, natively.** `org.cqels:cqels-mcp` ships a ready-to-run `-shaded`
   jar with a built-in Streamable-HTTP transport: fetch it with
-  `mvn dependency:copy -Dartifact=org.cqels:cqels-mcp:2.0.0-alpha.16:jar:shaded` (same GitHub
-  Packages token setup as in GETTING_STARTED) and run it with `CQELS_MCP_TRANSPORT=http`
+  download it from the
+  [2.0.0-alpha.16 release](https://github.com/cqels/CQELS4J/releases/tag/v2.0.0-alpha.16)
+  (no credentials needed) and run it with `CQELS_MCP_TRANSPORT=http`
   (host/port/path, bearer-token auth, and origin allow-lists are configurable via
   `CQELS_MCP_HTTP_*` environment variables). This is the production remote path — it starts
   empty (no fleet seed).

@@ -25,31 +25,31 @@ No databases or external services are required — the quick-start uses an in-me
 
 ---
 
-## 2. Authenticate to GitHub Packages (one-time)
+## 2. Add the repository (no account needed)
 
-CQELS artifacts are published to **GitHub Packages**, which requires authentication
-even for public packages. You need a GitHub **Personal Access Token (classic)** with
-the **`read:packages`** scope.
-
-1. Create the token: GitHub → *Settings → Developer settings → Personal access tokens
-   → Tokens (classic)* → *Generate new token (classic)* → tick **`read:packages`**.
-2. Add a matching server to your `~/.m2/settings.xml` (create the file if it doesn't
-   exist). The `<id>` must match the repository id used in the POM (`github-cqels`):
+CQELS artifacts are served anonymously from `https://maven.cqels.org/releases`. There is
+nothing to sign up for, no token to create, and no `~/.m2/settings.xml` to edit — add the
+repository to your POM and build.
 
 ```xml
-<settings>
-  <servers>
-    <server>
-      <id>github-cqels</id>
-      <username>YOUR_GITHUB_USERNAME</username>
-      <password>YOUR_GITHUB_TOKEN</password>
-    </server>
-  </servers>
-</settings>
+<repositories>
+  <repository>
+    <id>cqels</id>
+    <name>CQELS Releases</name>
+    <url>https://maven.cqels.org/releases</url>
+  </repository>
+</repositories>
 ```
 
-> Keep the token out of source control. For CI, inject it via a secret and a generated
-> `settings.xml` rather than committing it.
+> **If you previously used the GitHub Packages URL** you needed a classic PAT with
+> `read:packages`, because that registry rejects unauthenticated reads even for public
+> packages — a GitHub limitation, not a CQELS choice. Existing setups keep working; the URL
+> above is simply the recommended route now, and needs nothing.
+>
+> Every release is mirrored byte-for-byte to it from the same cosign-signed manifest — see
+> [SUPPLY_CHAIN.md](SUPPLY_CHAIN.md) to verify what you downloaded. The one artifact not
+> served there is the runnable shaded `cqels-mcp` jar, which is attached to the
+> [GitHub release](https://github.com/cqels/CQELS4J/releases/latest) instead.
 
 ---
 
