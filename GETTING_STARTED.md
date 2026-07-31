@@ -1,7 +1,7 @@
 # Getting Started with CQELS 2.0
 
 This guide takes you from zero to a running continuous query in a few minutes:
-install the prerequisites, pull the engine from GitHub Packages, run the bundled
+install the prerequisites, pull the engine anonymously, run the bundled
 examples, then wire CQELS into your own project.
 
 > **Current release:** `2.0.0-alpha.16` — coordinates `org.cqels:cqels-*`, entry point `cqels-engine`.
@@ -106,8 +106,8 @@ Add the repository and the engine dependency to your `pom.xml`:
 ```xml
 <repositories>
   <repository>
-    <id>github-cqels</id>
-    <url>https://maven.pkg.github.com/cqels/CQELS4J</url>
+    <id>cqels</id>
+    <url>https://raw.githubusercontent.com/cqels/maven/main/releases</url>
   </repository>
 </repositories>
 
@@ -198,6 +198,6 @@ public class FirstQuery {
   `FILTER NOT EXISTS`; `FROM NAMED WINDOW` parses but is not yet executed in this alpha — see the spec.)
 - **Cypher & CEP:** `engine.registerCypherQuery(...)` for property-graph patterns and
   `engine.registerCepQuery(...)` for event sequences.
-- **Release verification:** [2.0.0-alpha.16](https://maven.cqels.org/releases/supply-chain/2.0.0-alpha.16/VERIFY.md)
+- **Release verification:** [2.0.0-alpha.16](https://raw.githubusercontent.com/cqels/maven/main/releases/supply-chain/2.0.0-alpha.16/VERIFY.md)
 
 Questions or issues? Open one at https://github.com/cqels/CQELS4J/issues.

@@ -191,8 +191,7 @@ ChatGPT connectors reach an MCP server as a **remote HTTPS URL**, not a local st
 Two options:
 
 - **The published server, natively.** `org.cqels:cqels-mcp` ships a ready-to-run `-shaded`
-  jar with a built-in Streamable-HTTP transport: fetch it with
-  download it from the
+  jar with a built-in Streamable-HTTP transport. Download it from the
   [2.0.0-alpha.16 release](https://github.com/cqels/CQELS4J/releases/tag/v2.0.0-alpha.16)
   (no credentials needed) and run it with `CQELS_MCP_TRANSPORT=http`
   (host/port/path, bearer-token auth, and origin allow-lists are configurable via

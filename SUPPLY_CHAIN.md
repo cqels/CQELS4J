@@ -36,7 +36,7 @@ individual command fail is not enough; the sequence has to stop.
 set -euo pipefail
 
 VERSION=2.0.0-alpha.16
-BASE=https://maven.cqels.org/releases/supply-chain/$VERSION
+BASE=https://raw.githubusercontent.com/cqels/maven/main/releases/supply-chain/$VERSION
 
 # 1. Key from THIS repository — a different origin from the artifacts.
 #    --check FAILS on a mismatch; printing the digest to compare by eye does
@@ -64,9 +64,11 @@ Releases published **after this key was made available here** carry their own
 key at publication time**. Where such a file exists, use it rather than this page to verify that
 release.
 
-Be aware of the current state rather than assuming it: the deployed
-`supply-chain/2.0.0-alpha.16/VERIFY.md` predates this mechanism and still fetches the key from
-`master`, and releases before alpha.16 publish no `VERIFY.md` at all. For those, verification
+Be aware of the current state rather than assuming it: `2.0.0-alpha.16` is the first release
+with a deployed `VERIFY.md`, and it does pin the key to a commit. Earlier releases publish none
+at all. (One caveat about that deployed file: it states the shaded jar has no anonymous download
+route. That was true when it was generated and is no longer — see
+[The shaded server jar](#the-shaded-server-jar).) For those, verification
 after a key rotation depends on a fingerprint you recorded at the time or your own vendored copy
 of the key. Retired key fingerprints are published here at rotation time for exactly that
 reason.
