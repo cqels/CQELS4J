@@ -75,8 +75,8 @@ try (CQELSEngine engine = CQELSEngine.builder().withMemoryStore().build()) {
 ```xml
 <repositories>
   <repository>
-    <id>github-cqels</id>
-    <url>https://maven.cqels.org/releases</url>
+    <id>cqels</id>
+    <url>https://raw.githubusercontent.com/cqels/maven/main/releases</url>
   </repository>
 </repositories>
 
@@ -89,10 +89,20 @@ try (CQELSEngine engine = CQELSEngine.builder().withMemoryStore().build()) {
 </dependencies>
 ```
 
-> **No account, no token, no `settings.xml`.** `https://maven.cqels.org/releases` serves
-> `org.cqels` artifacts anonymously. (GitHub Packages' Maven registry, where these are also
-> published, has no anonymous read even for public packages — a GitHub limitation, not a CQELS
-> choice — which is why the coordinates above point here instead.)
+> **No account, no token, no `settings.xml`.** (GitHub Packages' Maven registry, where these
+> are also published, has no anonymous read even for public packages — a GitHub limitation,
+> not a CQELS choice — which is why the coordinates above point elsewhere.)
+
+Two URLs serve the same bytes, and either works:
+
+| URL | |
+|---|---|
+| `https://raw.githubusercontent.com/cqels/maven/main/releases` | reads the repository directly — no custom domain in the path, so it keeps working whatever DNS does |
+| `https://maven.cqels.org/releases` | the friendlier alias for the same repository, via GitHub Pages |
+
+The examples in this project use the first, so a clean clone builds without depending on the
+alias. Prefer the second if you like the shorter URL. Both resolve fixed versions; neither
+supports version ranges or `LATEST`, because repository metadata is deliberately not served.
 
 ---
 
