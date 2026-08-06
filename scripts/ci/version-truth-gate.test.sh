@@ -247,12 +247,53 @@ prov "SUPPLY_CHAIN.md:207   'From \`X\` onward … is pinned'" \
   'From `2.0.0-alpha.16` onward `project.build.outputTimestamp` is pinned, so builds are'
 
 # The one that needs the lookback: the marker ends the PREVIOUS line.
+#
+# This case must be exercised in a .java file, because that is where it really
+# lives (DriverAttentionWatchdog.java:32-33) and because the file TYPE decides
+# the rule. An earlier revision of this fixture appended these javadoc lines to
+# CQELS-QL_SPEC.md, where a leading `* ` is a markdown bullet, not a comment
+# continuation — so it exercised a shape that does not exist in the repo, and
+# broke the moment block-continuity was enforced. A fixture that tests the wrong
+# file type is not testing the case it names.
 d=$(newfix)
-cat >> "$d/CQELS-QL_SPEC.md" <<'EOF'
+mkdir -p "$d/examples/src/main/java/org/cqels/examples/cdsp"
+cat > "$d/examples/src/main/java/org/cqels/examples/cdsp/DriverAttentionWatchdog.java" <<'EOF'
+/**
  * <em>other</em> vehicle braking elsewhere in the fleet no longer suppresses the alert. Since
  * CQELS {@code 2.0.0-alpha.13}, cross-event FILTER guards on negated steps are honored; before
+ * that they were ignored on the negated step.
+ */
+class DriverAttentionWatchdog {}
 EOF
-check 0 "DriverAttentionWatchdog.java:33 — marker ends the PREVIOUS line (lookback)" "$d"
+check 0 "DriverAttentionWatchdog.java:33 — javadoc wrap, marker ends the PREVIOUS line" "$d"
+
+# The markdown counterpart of the same shape: a soft-wrapped PROSE paragraph
+# (no bullet marker), which is how it would really appear in a .md file.
+d=$(newfix)
+cat >> "$d/CQELS-QL_SPEC.md" <<'EOF'
+
+Guards on negated steps behave as documented. Since
+CQELS `2.0.0-alpha.13`, cross-event FILTER guards on negated steps are honored.
+EOF
+check 0 "markdown soft-wrap — marker ends the PREVIOUS prose line" "$d"
+
+# ...and the evasion that motivated block-continuity: the SAME marker shape, but
+# the token sits in a NEW block (a blockquote badge) that the prose above does
+# not govern. Found by codex review; verified against the real README, where it
+# silently exempted the landing-page stamp.
+d=$(newfix)
+python3 - "$d/README.md" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p).read().split("\n")
+for i, l in enumerate(s):
+    if l.startswith("> **Latest release:**"):
+        s[i] = l.replace("2.0.0-alpha.18", "2.0.0-alpha.13")
+        s.insert(i, "Documentation has remained unchanged since")
+        break
+open(p, "w").write("\n".join(s))
+PY
+check 1 "a marker on the previous line must NOT exempt a stamp in a new block" "$d"
 
 echo
 echo "bare-form provenance must be silent"

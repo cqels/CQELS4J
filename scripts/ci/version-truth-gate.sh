@@ -238,13 +238,63 @@ scan_file() {
       return "current"
     }
 
+    # Is the previous line part of the SAME construct as this one?
+    #
+    # The lookback exists for one real shape — a marker and its token split by a
+    # comment wrap, e.g. DriverAttentionWatchdog.java:32-33:
+    #     * ... no longer suppresses the alert. Since
+    #     * CQELS {@code 2.0.0-alpha.13}, cross-event FILTER guards ...
+    # Without a continuity test it also joins two lines that have nothing to do
+    # with each other, and `norm()` cannot see the difference because it strips
+    # every punctuation and block marker before classify() runs. Codex broke the
+    # gate with exactly that (verified — the gate reported OK on a README whose
+    # landing badge read alpha.13 under an alpha.16 pin):
+    #     Documentation has remained unchanged since
+    #     the release `2.0.0-alpha.13` shipped.
+    # Two ordinary prose lines, no marker abuse, and the central invariant is
+    # gone. So the join is now allowed ONLY when nothing between the two lines
+    # says "new construct":
+    #   - prev must not END a sentence or clause (. ! ? : ;) — that sentence is
+    #     over, so a "since" inside it cannot govern the next sentence token
+    #     (NOTE: no apostrophes anywhere in this awk block — a stray one closes
+    #     the single-quoted program and bash then parses the awk source)
+    #   - prev must not be blank (paragraph break)
+    #   - prev must not be a heading, table row, or fence
+    #   - THIS line must not START a new block (heading, blockquote, list item,
+    #     table row, fence) — a token inside a fresh block is never governed by
+    #     the prose above it
+    # A rejected join is not a downgrade to "unknown": it means the token is
+    # judged on its own line, which is the safe direction (CURRENT, hence
+    # equality-checked).
+    # Markdown block syntax is only meaningful in markdown. A javadoc
+    # continuation line is ` * CQELS {@code X}` — character-identical to a
+    # markdown bullet, and applying the bullet rule to .java false-positived on
+    # DriverAttentionWatchdog.java:33, the exact wrap the lookback exists for.
+    # So: block rules for .md, sentence/paragraph rules everywhere.
+    function continuous(p, c,   md) {
+      if (p ~ /^[ \t]*$/) return 0                       # paragraph break
+      if (p ~ /[.!?:;][ \t]*$/) return 0                 # sentence/clause ended
+      md = (FILE ~ /\.md$/)
+      if (md) {
+        if (p ~ /^[ \t]*#/) return 0                     # prev is a heading
+        if (p ~ /^[ \t]*\|/) return 0                    # prev is a table row
+        if (p ~ /^[ \t]*(```|~~~)/) return 0             # prev is a fence
+        if (c ~ /^[ \t]*#/) return 0                     # new heading
+        if (c ~ /^[ \t]*>/) return 0                     # new blockquote
+        if (c ~ /^[ \t]*([-*+]|[0-9]+\.)[ \t]/) return 0 # new list item
+        if (c ~ /^[ \t]*\|/) return 0                    # new table row
+        if (c ~ /^[ \t]*(```|~~~)/) return 0             # new fence
+      }
+      return 1
+    }
+
     { L[FNR] = $0 }
 
     END {
       for (i = 1; i <= FNR; i++) {
         line = L[i]
-        prev = (i > 1) ? L[i-1] : ""
-        nxt  = (i < FNR) ? L[i+1] : ""
+        prev = (i > 1 && continuous(L[i-1], line)) ? L[i-1] : ""
+        nxt  = (i < FNR && continuous(line, L[i+1])) ? L[i+1] : ""
         masked = line
 
         # -- full-form tokens ------------------------------------------------
