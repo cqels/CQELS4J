@@ -261,6 +261,13 @@ d=$(newfix)
 printf '\n**Tested before release** — `2.0.0-alpha.13` on JDK 17 and 21.\n' >> "$d/README.md"
 check 1 "...and the em-dash spelling of it too (no colon involved)" "$d"
 
+# ...and the label boundary cannot be TYPED into a document: the sentinel the
+# classifier leaves where a colon or comma was is defaced wherever it occurs in
+# the prose itself, so writing it out does not turn a label into an opener.
+d=$(newfix)
+printf '\n**Tested vtgsep before release:** `2.0.0-alpha.13` on JDK 17 and 21.\n' >> "$d/README.md"
+check 1 "...and the label boundary sentinel cannot be forged in prose" "$d"
+
 # ...but the noun must not poison the standard historical OPENER, which is the
 # same three words with nothing in front of them. Both fired on true, naturally
 # worded provenance, and the remedy the error printed ("reword it as provenance,
@@ -278,6 +285,23 @@ prov_md "'Before release \`X\`, …' — the noun alone must not poison the open
   'Before release `2.0.0-alpha.13`, cross-event FILTER guards on negated steps were ignored.'
 prov_md "'Prior to release \`X\`, …' — the same for the two-word marker" \
   'Prior to release `2.0.0-alpha.13`, cross-event FILTER guards on negated steps were ignored.'
+
+# ...and the opener stays an opener when a LABEL or a lead-in sits in front of
+# it. "Something precedes the marker" was the whole test, so a bold label, a
+# "Note:", a "In CQELS," or any previous line ending in a colon (which
+# continuous() joins) made the opener look like the label shape and fired on
+# true history — with a remedy the author had already written (round 4). Bold
+# labels are this repo's own house style (CQELS-QL_SPEC.md:3).
+prov_md "'**History:** Before release \`X\`, …' — a label in front is still an opener" \
+  '**History:** Before release `2.0.0-alpha.13`, cross-event guards on negated steps were ignored.'
+prov_md "'Note: Prior to release \`X\`, …' — the two-word marker too" \
+  'Note: Prior to release `2.0.0-alpha.13`, cross-event guards on negated steps were ignored.'
+prov_md "'In CQELS, before release \`X\`, …' — a comma lead-in is not a subject" \
+  'In CQELS, before release `2.0.0-alpha.13`, cross-event guards on negated steps were ignored.'
+d=$(newfix)
+printf '\nChangelog highlights:\nBefore release `2.0.0-alpha.13`, journal entries carried no version header.\n' \
+  >> "$d/README.md"
+check 0 "...and a colon LEAD-IN on the previous line, which continuous() joins" "$d"
 
 # The AFTER side of the clause rule. The round-2 fix truncated `before` only,
 # so a marker in a LATER clause still exempted a stale stamp.
@@ -306,8 +330,16 @@ check 1 "...and P3 is clause-scoped as well, not just P2" "$d"
 # shape of a badge — so continuous() allows the join to the next line. Nothing
 # may sit between the token and 'onward'; a one-word slot let any next-line
 # sentence opening 'Read onwards…' exempt the badge.
+#
+# The 'from' half has to be PRESENT for this case to mean anything. With a
+# '**Current release:**' badge in front of the token there is no `from`, so P2
+# short-circuits on `frm` whatever the anchor does: the case passed for a reason
+# other than the one it names, and the whole suite stayed green with the anchor
+# deleted — including with the exact one-word slot the comment describes
+# reintroduced (round 4). Supplying 'from' is what makes the anchor load-bearing
+# here.
 d=$(newfix)
-printf '\n**Current release:** `2.0.0-alpha.13`\nRead onwards for the full guide.\n' >> "$d/README.md"
+printf '\nGuards on negated steps are honored from `2.0.0-alpha.13`\nRead onwards for the full guide.\n' >> "$d/README.md"
 check 1 "a next-line sentence merely CONTAINING 'onwards' does not exempt a stale badge" "$d"
 
 # ...and the other direction: the real wrap, where 'onward' opens the next line.
@@ -399,6 +431,30 @@ prov "one marker, two tokens  'since \`X\` and \`Y\`'" \
   'Guards are honored since `2.0.0-alpha.11` and `2.0.0-alpha.13` respectively.'
 prov "since + a noun object  'since release \`X\`'" \
   'The engine resolves an explicit function IRI since release `2.0.0-alpha.11`.'
+
+# ...and the ARTICLE in front of that noun. The filler set had no articles, so
+# the walk broke on "the" and the most natural English spelling of every marker
+# fired as a stale current stamp, while the article-free spelling of the same
+# sentence passed. It defended nothing: adding it leaves the suite green
+# (round 4). All four marker families are pinned, because one article broke all
+# four.
+prov "an article between marker and token  'since the \`X\` release'" \
+  'Cross-event guards have been honored since the `2.0.0-alpha.11` release.'
+prov "...and 'since the release \`X\`'" \
+  'Cross-event guards have been honored since the release `2.0.0-alpha.11`.'
+prov "...and 'Before the \`X\` release, …'" \
+  'Before the `2.0.0-alpha.11` release, cross-event guards were ignored.'
+prov "...and 'Prior to the \`X\` release, …'" \
+  'Prior to the `2.0.0-alpha.11` release, cross-event guards were ignored.'
+prov "...and 'From the \`X\` onward, …' (P2 keeps its adjacency)" \
+  'From the `2.0.0-alpha.11` onward, cross-event guards are honored.'
+
+# ...and the article must not become a bridge: a marker governing token A still
+# does not reach an unrelated token B behind a comma, article or no article.
+d=$(newfix)
+printf 'Stable since `2.0.0-alpha.11`, the `2.0.0-alpha.13` jar is the one to install.\n' >> "$d/README.md"
+checkmsg 1 "an article does not carry a marker onto an unrelated token" \
+  "claims version \`2.0.0-alpha.13\`" "$d"
 # The link target of a token whose PROSE copy on the same line is already
 # provenance is that same claim written twice. Judged on its own it fired,
 # because four ordinary words ("see the release notes") sit between the marker
@@ -415,6 +471,26 @@ prov "link target behind intervening prose  'since \`X\` — see [notes](…/tag
 # (round 3).
 prov "relative link target  'since [\`X\`](CHANGELOG-X.md).'" \
   'Negated-step guards are honored since [`2.0.0-alpha.13`](CHANGELOG-2.0.0-alpha.13.md).'
+
+# ...and the P2 half of that lesson, which the round-3 fix left behind: only
+# inurl() learned to recognise a relative target, so the PROSE side still had
+# the path sitting between the token and "onward". P2 requires adjacency, so
+# "From [`X`](CHANGELOG.md) onward" — the natural shape for a per-version
+# changelog, which this gate's own commentary blesses — fired as a stale
+# current stamp, and the remedy it printed was the wording already on the line
+# (round 4). The dot in ".md" is not the mechanism: a fragment target with no
+# dot at all broke it too.
+prov "relative link target, P2  'From [\`X\`](CHANGELOG.md) onward, …'" \
+  'From [`2.0.0-alpha.13`](CHANGELOG.md) onward, cross-event guards are honored.'
+prov "...and a dotless fragment target, which broke it for the same reason" \
+  'From [`2.0.0-alpha.13`](#changelog) onward, cross-event guards are honored.'
+
+# ...and stripping the target from the prose must not exempt a stamp that has no
+# marker at all.
+d=$(newfix)
+printf 'Read the [`2.0.0-alpha.13`](CHANGELOG.md) notes before upgrading.\n' >> "$d/README.md"
+checkmsg 1 "a relative link around an UNMARKED stamp is still a current claim" \
+  "claims version \`2.0.0-alpha.13\`" "$d"
 
 # ...and inheritance stays same-token only for relative targets as well: a
 # bumped display token beside a stale relative target is two claims.
@@ -452,6 +528,36 @@ d=$(newfix)
 printf 'Documented since `2.0.0-alpha.13`, `2.0.0-alpha.13` is the current release.\n' >> "$d/README.md"
 checkmsg 1 "...nor does the SAME token repeated in prose (only a link target inherits)" \
   "claims version \`2.0.0-alpha.13\`" "$d"
+
+# ...and the MIRROR of that rule, which was missing: the clause that names the
+# token as the current one may sit BEFORE it. P3 looks only forward, so
+# appending "is the first release …" to the repo's own stamp label exempted a
+# stale landing stamp and the gate reported OK (round 4). Every spelling of the
+# nominal is pinned, including the two the real guides use verbatim
+# (README.md:8 '**Latest release:**', GETTING_STARTED.md:7 '**Current
+# release:**').
+d=$(newfix)
+printf '\n**Current release:** `2.0.0-alpha.13` is the first release with the MCP server.\n' >> "$d/README.md"
+checkmsg 1 "a P3 tail does not exempt a stamp its own label calls the current release" \
+  "claims version \`2.0.0-alpha.13\`" "$d"
+
+d=$(newfix)
+printf '\nThe latest release `2.0.0-alpha.13` was the first release to bundle the MCP server.\n' >> "$d/README.md"
+checkmsg 1 "...nor in running prose, in the past tense" \
+  "claims version \`2.0.0-alpha.13\`" "$d"
+
+# ...and the other direction: P3 without that nominal is still provenance, in
+# the lower-case register too (the title-case case is above).
+prov "P3 lower case  '\`X\` is the first release with…'" \
+  '`2.0.0-alpha.13` is the first release with the MCP server bundled.'
+
+# The current-predicate rule is PRESENT tense. "was the latest release" is how
+# history describes a superseded release, not a claim about now, so the
+# past-tense arm fired on a plainly true subordinate clause and the only edit
+# that silenced it — the bump the message asks for — made the sentence false
+# (round 4). The must-fire counterparts are the two present-tense cases above.
+prov_md "'Before \`X\` was the latest release, …' is history, not a stale stamp" \
+  'Before `2.0.0-alpha.13` was the latest release, checkpoint files carried no version header.'
 
 # The one that needs the lookback: the marker ends the PREVIOUS line.
 #
@@ -514,6 +620,22 @@ checkmsg 1 "an invisible HTML comment does not govern the stamp below it" \
 d=$(newfix)
 printf '\n<!-- introduced since CQELS -->\n`%s` is the release to install.\n' "$PIN" >> "$d/README.md"
 check 0 "...and the same shape at the pin stays silent" "$d"
+
+# ...and the same case with CRLF terminators. Every structural refusal in
+# continuous() is END-anchored and awk leaves the CR on the record, so on a
+# CRLF-saved file all three stopped matching — and the HTML-comment one is the
+# one with no backstop, so this exact defect reopened verbatim and the gate
+# reported OK on the stale stamp (round 4). CRLF only ever loosens the rules.
+d=$(newfix)
+printf '\n<!-- introduced since CQELS -->\n`2.0.0-alpha.13` is the release to install.\n' >> "$d/README.md"
+python3 - "$d/README.md" <<'PY'
+import sys
+p = sys.argv[1]
+b = open(p, 'rb').read().replace(b'\r\n', b'\n').replace(b'\n', b'\r\n')
+open(p, 'wb').write(b)
+PY
+checkmsg 1 "...and CRLF does not turn that invisible comment back into a governing marker" \
+  "claims version \`2.0.0-alpha.13\`" "$d"
 
 # The SAME-LINE version of that evasion (codex round 2): the marker sits in an
 # EARLIER clause of the same line, separated by a semicolon. norm() strips the
@@ -831,6 +953,17 @@ check 0 "...and the same file with a CORRECT stamp stays silent" "$d"
 d=$(newfix); printf '# ab\n\nLatest release: `2.0.0-alpha.13`\n' > "$d/a|b.md"
 checkmsg 1 "a tracked path containing '|' is refused loudly, not silently mis-parsed" \
   "cannot be scanned" "$d"
+
+# ...and a path that SYNTHESISES that delimiter after the guard has passed it.
+# The scanned name used to reach awk through `-v`, which POSIX processes for
+# escape sequences, so the raw bytes `a\174b.md` — a literal backslash, which
+# the guard above sees and allows — arrived inside awk as `a|b.md`, mis-split
+# the record, matched no arm, and dropped the stale stamp in total silence
+# (round 4). The name now travels through the environment, which is not
+# escape-processed, and the stamp fires under the real filename.
+d=$(newfix); printf '# ab\n\nLatest release: `2.0.0-alpha.13`\n' > "$d/a\\174b.md"
+checkmsg 1 "a backslash escape in a tracked path cannot forge the record delimiter" \
+  'a\174b.md:3 claims version' "$d"
 
 echo
 echo "defect 2 — the online tier (PATH-shimmed curl, no network)"

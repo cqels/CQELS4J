@@ -243,8 +243,17 @@ ok "pin is $PIN, identical in both poms"
 RECORDS="$WORK/records"
 : > "$RECORDS"
 
+# The scanned path reaches awk through the ENVIRONMENT, not through `-v`. POSIX
+# requires a `-v` assignment to be processed for ESCAPE SEQUENCES, so a tracked
+# path holding a literal backslash — `a\174b.md` — arrived inside awk as
+# `a|b.md` and synthesised the record delimiter AFTER the raw-path guard below
+# had passed it: the record mis-split, `cls` matched no arm, and a stale stamp
+# was dropped in total silence (round 4). A `\n` spelling of the same trick made
+# the gate report a defect against a filename that does not exist. ENVIRON is
+# handed the bytes as they are.
 scan_file() {
-  awk -v FILE="$1" '
+  VTG_SCAN_FILE="$1" awk '
+    BEGIN { FILE = ENVIRON["VTG_SCAN_FILE"] }
     function norm(s) { gsub(/[^A-Za-z0-9]+/, " ", s); sub(/^ +/, "", s); sub(/ +$/, "", s); return s }
 
     # One referent = one word. A URL is a link TARGET, not prose: its dots are
@@ -263,14 +272,25 @@ scan_file() {
     # sentence: the gate reported OK on the exact stale-landing-page defect it
     # exists to catch (round 2). The trailing punctuation run is therefore
     # handed back to the prose.
+    #
+    # A RELATIVE markdown target is a link target too, and this recogniser only
+    # knew absolute ones — so "From [`X`](CHANGELOG.md) onward" left the path in
+    # the prose, the "onward" was no longer adjacent to the token, and a TRUE
+    # P2 line fired as a stale current stamp with no rewrite of that wording
+    # clearing it (round 4). inurl() learned the same lesson one round earlier;
+    # this is the same rule for the prose side. A `](…)` match is delimited by
+    # its own closing paren, so nothing is handed back for it — the "." or ","
+    # that follows the link is outside the match and stays in the sentence.
     function stripurls(s,   out, url, tail) {
       out = ""
-      while (match(s, /https?:\/\/[^ ]+/)) {
+      while (match(s, /\]\([^ )]*\)|https?:\/\/[^ ]+/)) {
         url = substr(s, RSTART, RLENGTH)
         tail = ""
-        while (url ~ /[.,;:!?)\]}]$/) {
-          tail = substr(url, length(url), 1) tail
-          url = substr(url, 1, length(url) - 1)
+        if (url !~ /^\]\(/) {
+          while (url ~ /[.,;:!?)\]}]$/) {
+            tail = substr(url, length(url), 1) tail
+            url = substr(url, 1, length(url) - 1)
+          }
         }
         out = out substr(s, 1, RSTART - 1) " " tail
         s = substr(s, RSTART + RLENGTH)
@@ -343,6 +363,22 @@ scan_file() {
       # follows ("Available since: `X`") rather than ending a clause.
       sub(/.*[.!?;]/, "", before)
       sub(/[.!?;].*/, "", after)
+      # A colon or comma does not END the clause, but it does end a LABEL or a
+      # lead-in, and norm() strips both marks before the walk can see them. That
+      # left the walk with position alone to tell the label shape "**Tested
+      # before release:** `X`" (current) from the historical opener "Before
+      # release `X`, …" (provenance) — so putting anything at all in front of
+      # the opener made it look like the label and fired on true history:
+      # "**History:** Before release `X`, …", "Note: Before release `X`, …",
+      # "In CQELS, before release `X`, …", and every opener under a lead-in line
+      # ending in a colon, which continuous() joins (round 4). Bold labels and
+      # colon-introduced paragraphs are ordinary changelog structure. The mark
+      # is kept as the word "vtgsep" so the walk can ask what sits immediately
+      # in front of the marker rather than merely whether ANYTHING does.
+      # (any literal spelling of the sentinel in the prose is defaced first, so
+      # it cannot be typed into a document to forge a label boundary)
+      gsub(/[Vv][Tt][Gg][Ss][Ee][Pp]/, "vtgsepx", before)
+      gsub(/[:,]/, " vtgsep ", before)
       # The forward markers are matched on a LOWERCASED copy, exactly as the
       # backward ones already were (lw = tolower). Case-sensitive P2/P3 fired on
       # the sanctioned wording of this very gate in title case — "## Breaking
@@ -359,7 +395,15 @@ scan_file() {
       # the current release" was reported OK on a stale `Y` (round 3). Neither
       # transparency can see what FOLLOWS the token; this rule can, and it is the
       # one wording no provenance line ever uses about itself.
-      if (a ~ /^(is|was|are|were|remains?|stays?) the (current|latest|newest)( |$)/) return "current"
+      #
+      # PRESENT tense only. "was|were the latest" is not a claim about now, it is
+      # how history describes a SUPERSEDED release, so the past-tense arm fired
+      # on the plainly true "Before `X` was the latest release, checkpoint files
+      # carried no version header" and the only edit that silenced it — bumping
+      # the token, which is what the error message asks for — made the sentence
+      # false (round 4). The arm was never load-bearing: all four cases that
+      # exercise this rule are present tense.
+      if (a ~ /^(is|are|remains?|stays?) the (current|latest|newest)( |$)/) return "current"
 
       # P1: the marker must GOVERN the token — only version-qualifying filler
       # may sit between the two. A plain word-distance window instead of this
@@ -386,15 +430,17 @@ scan_file() {
       #     already written (round 3). The two are told apart by position: the
       #     label shape has a subject in front of the marker ("**Tested** before
       #     release:"), the opener starts the clause. So `release` only poisons a
-      #     marker that something else precedes.
+      #     marker that something else precedes — and "precedes" means a WORD of
+      #     the same clause, not a label or lead-in that ended at a colon or a
+      #     comma, which is the `vtgsep` test (round 4).
       n = split(b, w, " ")
       coord = 0; nounobj = 0; frm = 0
       for (i = n; i >= 1; i--) {
         lw = tolower(w[i])
         if (lw == "since") return "provenance"
-        if (lw == "before") { if (nounobj && i > 1) break; return "provenance" }
+        if (lw == "before") { if (nounobj && i > 1 && w[i-1] != "vtgsep") break; return "provenance" }
         if (lw == "to" && i > 1 && tolower(w[i-1]) == "prior") {
-          if (nounobj && i > 2) break
+          if (nounobj && i > 2 && w[i-2] != "vtgsep") break
           return "provenance"
         }
         if (lw == "from") { frm = 1; break }
@@ -411,8 +457,19 @@ scan_file() {
           if (coord) { coord = 0; continue }
           break
         }
-        if (lw == "cqels" || lw == "code" || lw == "version" || lw == "v") { coord = 0; continue }
+        # The article is filler like any other version-qualifying word. Without
+        # it the walk broke on "the" and the most natural English spelling of
+        # every marker — "since the `X` release", "since the release `X`",
+        # "before the `X` release", "prior to the `X` release" — fired as a
+        # stale current stamp, while the article-free spelling of the same
+        # sentence passed (round 4). It defended nothing: the whole suite stays
+        # green with it added.
+        if (lw == "cqels" || lw == "code" || lw == "version" || lw == "v" || lw == "the") { coord = 0; continue }
         if (lw == "release" && !nounobj) { nounobj = 1; continue }
+        # The label/lead-in mark itself is transparent to the walk — it is only
+        # consulted at the marker, above. Opaque, it broke "Available since: `X`"
+        # (a must-not-fire case) and every other marker introduced by a colon.
+        if (lw == "vtgsep") continue
         break
       }
       # P2 / P3 look forward. NOTHING may sit between the token and "onward":
@@ -427,6 +484,18 @@ scan_file() {
       # release: `2.0.0-alpha.13`:" / "onward compatibility notes follow."
       # (round 2). Every true P2 site in this repo is written "from `X` onward".
       if (frm && a ~ /^onwards?( |$)/) return "provenance"
+      # The MIRROR of the current-predicate rule above, at the one place it is
+      # needed. P3 consults only what FOLLOWS the token, so a clause that names
+      # the token in words as the current one was exempted by appending a P3
+      # tail: "**Current release:** `X` is the first release with the MCP
+      # server" was reported OK on a stale `X` — and that label is the house
+      # stamp convention here (README.md:8, GETTING_STARTED.md:7), so the evasion
+      # is reachable by ordinary release-note prose, not only by gaming (round
+      # 4). It sits here rather than beside its mirror because the backward walk
+      # already breaks on "current"/"latest"/"newest" — they are not filler — so
+      # P3 is the only rule this nominal ever has to beat.
+      # (the trailing `vtgsep` run is the colon of the label itself)
+      if (tolower(b) ~ /(^| )(current|latest|newest)( release| version)?( vtgsep)*$/) return "current"
       if (a ~ /^(is|was) the first release( |$)/) return "provenance"
       return "current"
     }
@@ -520,7 +589,18 @@ scan_file() {
       return ""
     }
 
-    { L[FNR] = $0 }
+    # awk strips the newline, never the CR before it, and every structural rule
+    # in continuous() is END-anchored — so on a CRLF-saved file the blank-line,
+    # the sentence-end and the HTML-comment refusals all silently stopped
+    # matching. The comment one has no backstop (the other two are carried by
+    # the in-line clause truncation), so the round-3 defect reopened verbatim:
+    # an invisible `<!-- … since … -->` governed the stamp below it and the gate
+    # reported OK on a stale landing stamp. CRLF only ever LOOSENS the rules, so
+    # the failure direction is always a false negative. There is no
+    # .gitattributes, so one guide saved on Windows commits as CRLF and turns
+    # the classifier permissive (round 4). The A6 extractors already did this;
+    # the scanner did not.
+    { sub(/\r$/, ""); L[FNR] = $0 }
 
     END {
       for (i = 1; i <= FNR; i++) {
