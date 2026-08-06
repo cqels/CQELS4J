@@ -17,9 +17,20 @@
 # commit. CAVEAT: GitHub disables scheduled workflows in public repos after 60
 # days of repository inactivity, and this repo is quiet between releases, so the
 # daily run WILL eventually stop on its own. That is the "gate that stops
-# detecting" failure the self-test warns about, so it is also handled outside
-# CI: the release checklist dispatches `links` by hand after every release.
-# workflow_dispatch is kept for exactly that.
+# detecting" failure the self-test warns about. Nothing INSIDE a disabled
+# workflow can notice it is disabled, so the residual is handled two ways, both
+# honest about their limits:
+#
+#   1. DETECTION on the next human touch: the schedule-staleness step below runs
+#      on every PR and dispatch, asks the API when the schedule last completed,
+#      and FAILS the job if that is over 8 days ago (or never). A dormant repo
+#      stays dark, but the first PR after dormancy cannot go green while the
+#      world-drift check is silently off — the failure names the fix
+#      (re-enable the workflow, run `links` by hand).
+#   2. RELEASING.md step 6 dispatches `links` after every release — the moment
+#      world-drift matters most. That file is committed alongside this one; if
+#      you rename it, update this comment or the claim rots like the one it
+#      replaced (an earlier revision cited a checklist that did not exist).
 
 name: version-truth
 
@@ -33,6 +44,7 @@ on:
 
 permissions:
   contents: read
+  actions: read     # the schedule-staleness step reads this workflow's own run history
 
 jobs:
   version-truth:
@@ -45,6 +57,37 @@ jobs:
       # correctness is never checked is a green tick with nothing behind it.
       - run: scripts/ci/version-truth-gate.test.sh
       - run: scripts/ci/version-truth-gate.sh
+      # Schedule-staleness detector. A disabled schedule cannot report itself,
+      # so the next human interaction does: if this workflow's schedule has not
+      # completed in 8 days (daily cron + generous slack), fail loudly and name
+      # the remedy. Skipped ON the scheduled run itself — a resurrected schedule
+      # must not fail for having been dead.
+      - name: Fail if the nightly schedule has gone quiet
+        if: github.event_name != 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          last=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/version-truth.yml/runs?event=schedule&status=completed&per_page=1" \
+                   --jq '.workflow_runs[0].run_started_at // empty')
+          if [ -z "$last" ]; then
+            days="never-ran"
+          else
+            days=$(( ( $(date -u +%s) - $(date -u -d "$last" +%s) ) / 86400 ))
+          fi
+          echo "last completed scheduled run: ${last:-none} (${days} days ago)"
+          # First 8 days after this workflow lands, "never-ran" is expected;
+          # after that it means GitHub disabled the schedule (60-day inactivity
+          # rule) or it was never enabled. Either way the world-drift check is
+          # OFF and someone must know.
+          created=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/version-truth.yml" --jq '.created_at')
+          wf_age=$(( ( $(date -u +%s) - $(date -u -d "$created" +%s) ) / 86400 ))
+          if [ "$days" = "never-ran" ] && [ "$wf_age" -le 8 ]; then
+            echo "workflow is ${wf_age} days old — schedule has not had time to fire yet; not stale."
+          elif [ "$days" = "never-ran" ] || [ "$days" -gt 8 ]; then
+            echo "::error::The nightly world-drift schedule is NOT running (last: ${last:-never}). GitHub disables schedules in public repos after 60 days of inactivity. Re-enable it under Actions -> version-truth, then dispatch the links job once by hand."
+            exit 1
+          fi
 
   links:
     needs: version-truth

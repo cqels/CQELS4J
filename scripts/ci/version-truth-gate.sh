@@ -658,13 +658,14 @@ if [ "$DEEP" -eq 1 ]; then
       printf '%s\n' '{"jsonrpc":"2.0","id":3,"method":"tools/list"}'
       printf '%s\n' '{"jsonrpc":"2.0","id":4,"method":"resources/list"}'
       printf '%s\n' '{"jsonrpc":"2.0","id":5,"method":"prompts/list"}'
+      printf '%s\n' '{"jsonrpc":"2.0","id":6,"method":"resources/templates/list"}'
       sleep 60
     } > "$FIFO" &
     WRITER=$!
     : > "$TRANSCRIPT"
     java -jar mcp-server/target/cqels-mcp-server.jar < "$FIFO" > "$TRANSCRIPT" 2>/dev/null &
     SRV=$!
-    for _ in $(seq 1 90); do grep -q '"id":5' "$TRANSCRIPT" 2>/dev/null && break; sleep 1; done
+    for _ in $(seq 1 90); do grep -q '"id":6' "$TRANSCRIPT" 2>/dev/null && break; sleep 1; done
     kill "$SRV" "$WRITER" 2>/dev/null
     wait "$SRV" 2>/dev/null
     wait "$WRITER" 2>/dev/null
@@ -683,7 +684,8 @@ for line in open(transcript, encoding='utf-8', errors='replace'):
     except ValueError:
         continue
     result = frame.get('result') or {}
-    for key, field in (('tools', 'name'), ('prompts', 'name'), ('resources', 'uri')):
+    for key, field in (('tools', 'name'), ('prompts', 'name'), ('resources', 'uri'),
+                       ('resourceTemplates', 'uriTemplate')):
         entries = result.get(key)
         if isinstance(entries, list):
             # Only the TOP-LEVEL name/uri of each entry. Nested argument and
@@ -695,7 +697,15 @@ for key in ('tools', 'prompts', 'resources'):
         for value in found.get(key, []):
             if '{' not in value:          # URI templates are counted separately
                 fh.write(value + '\n')
-absent = [k for k in ('tools', 'prompts', 'resources') if k not in found]
+# Templates are their own surface, discovered by their own method. An earlier
+# revision filtered every '{'-bearing URI out of resources/list and compared
+# templates against NOTHING, so deleting the documented
+# cqels://queries/{queryId}/results template still reported the surface as
+# matching (found by codex review).
+with open(os.path.join(out, 'adv-resource-templates'), 'w') as fh:
+    for value in found.get('resourceTemplates', []):
+        fh.write(value + '\n')
+absent = [k for k in ('tools', 'prompts', 'resources', 'resourceTemplates') if k not in found]
 if absent:
     sys.stderr.write('no %s frame in the transcript\n' % ', '.join(absent))
     sys.exit(9)
@@ -725,6 +735,12 @@ PY
   awk '/^\*\*Resources \(/ { on=1 } on { print; if (/^$/ && seen) exit; seen=1 }' "$MCPDOC" \
     | grep -oE 'cqels://[^`]+' | grep -v '{' | sort -u > "$WORK/doc-resources"
   compare_set resources "$WORK/adv-resources" "$WORK/doc-resources"
+
+  # The '{'-bearing URIs in the SAME documented section are the templates —
+  # compared against resources/templates/list, never silently dropped.
+  awk '/^\*\*Resources \(/ { on=1 } on { print; if (/^$/ && seen) exit; seen=1 }' "$MCPDOC" \
+    | grep -oE 'cqels://[^`]+' | grep '{' | sort -u > "$WORK/doc-resource-templates"
+  compare_set "resource templates" "$WORK/adv-resource-templates" "$WORK/doc-resource-templates"
 
   awk '/^\*\*Prompts \(/ { on=1 } on { print; if (/^$/ && seen) exit; seen=1 }' "$MCPDOC" \
     | grep -oE '`[a-z_]+`' | tr -d '`' | sort -u > "$WORK/doc-prompts"

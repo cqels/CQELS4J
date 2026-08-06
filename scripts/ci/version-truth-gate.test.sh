@@ -311,6 +311,32 @@ d=$(newfix 2.0.0-beta.1)
 printf '| star join (opt-in, alpha.7) — since `2.0.0-alpha.13` the guard is honored |\n' >> "$d/README.md"
 checkmsg 0 "channel rank: alpha provenance under a BETA pin is valid history" "OK:" "$d"
 
+# The other three cells of the channel matrix, previously untested — a regression
+# in the rank compare (e.g. falling back to numeric-suffix-only, where alpha.13
+# "beats" beta.1) would have passed the suite (found by codex review).
+d=$(newfix)   # pin = alpha
+printf 'Star joins landed. Since `2.0.0-beta.1` the guard is honored.\n' >> "$d/README.md"
+checkmsg 1 "channel rank: BETA provenance under an ALPHA pin is impossible history" "NEWER than" "$d"
+
+d=$(newfix 2.0.0-beta.2)
+printf 'Star joins landed. Since `2.0.0-rc.1` the guard is honored.\n' >> "$d/README.md"
+checkmsg 1 "channel rank: RC provenance under a BETA pin is impossible history" "NEWER than" "$d"
+
+d=$(newfix 2.0.0-rc.2)
+printf 'Star joins landed. Since `2.0.0-beta.9` the guard is honored.\n' >> "$d/README.md"
+checkmsg 0 "channel rank: beta provenance under an RC pin is valid history" "OK:" "$d"
+
+# Multi-digit ordering must be numeric, not lexical: alpha.9 < alpha.18 even
+# though "9" > "1" lexically, and alpha.113 > alpha.16 even though "113" < "16"
+# lexically. Both directions pinned.
+d=$(newfix)   # pin = alpha.18-era fixture default
+printf 'Star joins landed. Since `2.0.0-alpha.9` the guard is honored.\n' >> "$d/README.md"
+checkmsg 0 "numeric suffix: alpha.9 under a later alpha pin is valid history (not lexical)" "OK:" "$d"
+
+d=$(newfix 2.0.0-alpha.16)
+printf 'Star joins landed. Since `2.0.0-alpha.113` the guard is honored.\n' >> "$d/README.md"
+checkmsg 1 "numeric suffix: alpha.113 under alpha.16 is impossible history (not lexical)" "NEWER than" "$d"
+
 echo
 echo "the fence that is CURRENT passes when it is current (boundary, both sides)"
 
@@ -445,6 +471,7 @@ cat > "$WORK/t-good" <<'EOF'
 {"jsonrpc":"2.0","id":3,"result":{"tools":[{"name":"store_memory","inputSchema":{"type":"object","properties":{"name":{"type":"string"}}}},{"name":"recall_memory"},{"name":"query"}]}}
 {"jsonrpc":"2.0","id":4,"result":{"resources":[{"uri":"cqels://engine/status"},{"uri":"cqels://kg/stats"},{"uri":"cqels://queries/{queryId}/results"}]}}
 {"jsonrpc":"2.0","id":5,"result":{"prompts":[{"name":"recall_about","arguments":[{"name":"topic","required":true},{"name":"window"}]},{"name":"store_knowledge","arguments":[{"name":"graph"}]}]}}
+{"jsonrpc":"2.0","id":6,"result":{"resourceTemplates":[{"uriTemplate":"cqels://queries/{queryId}/results"}]}}
 EOF
 d=$(newfix); VTG_DEEP_CAPTURE="$WORK/t-good" check 0 \
   "documented surface == advertised surface (nested argument names ignored)" "$d" --deep
@@ -467,6 +494,22 @@ d=$(newfix); VTG_DEEP_CAPTURE="$WORK/t-prompt" checkmsg 1 "prompt drift fires to
 sed 's|,{"uri":"cqels://kg/stats"}||' "$WORK/t-good" > "$WORK/t-res"
 d=$(newfix); VTG_DEEP_CAPTURE="$WORK/t-res" checkmsg 1 "resource drift fires too" \
   "resources list does not match" "$d" --deep
+
+# Template drift — the surface an earlier revision compared against NOTHING.
+# resources/list filtered every '{'-bearing URI and no other check existed, so a
+# server that dropped the documented cqels://queries/{queryId}/results template
+# still reported the surface as matching (found by codex review). The template
+# now comes from resources/templates/list and is diffed like the rest.
+sed 's|{"resourceTemplates":\[{"uriTemplate":"cqels://queries/{queryId}/results"}\]}|{"resourceTemplates":[]}|' \
+  "$WORK/t-good" > "$WORK/t-tmpl"
+d=$(newfix); VTG_DEEP_CAPTURE="$WORK/t-tmpl" checkmsg 1 "a dropped resource TEMPLATE fires (previously compared against nothing)" \
+  "resource templates list does not match" "$d" --deep
+
+# ...and a renamed template placeholder fires too — set equality again.
+sed 's|{queryId}|{qid}|; s|cqels://queries/{qid}/results" template|cqels://queries/{queryId}/results" template|' \
+  "$WORK/t-good" > "$WORK/t-tmpl2"
+d=$(newfix); VTG_DEEP_CAPTURE="$WORK/t-tmpl2" checkmsg 1 "a renamed template placeholder fires" \
+  "resource templates list does not match" "$d" --deep
 
 # A truncated session must be INCONCLUSIVE, not "every prompt is undocumented".
 head -3 "$WORK/t-good" > "$WORK/t-cut"
