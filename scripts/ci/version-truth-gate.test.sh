@@ -159,6 +159,33 @@ checkmsg() {
   fi
 }
 
+# checkrecords <want-exit> <name> <dir> <record>... — asserts the CLASSIFICATION
+# of named tokens, via VTG_DUMP, not merely the exit code.
+#
+# At token == pin an exit code cannot witness the class at all: A2 accepts a
+# `current` token equal to the pin and A3 accepts a `provenance` token <= the
+# pin, so both arms are silent and a case that only reads the exit code cannot
+# tell a correct classification from a lucky one. That is how the pass-side
+# boundary case below came to be a byte-identical duplicate of the first smoke
+# test (round 2).
+checkrecords() {
+  local want=$1 name=$2 d=$3; shift 3
+  local out rc r missing=""
+  reindex "$d"
+  out=$( cd "$d" && VTG_DUMP=1 "$SUT" 2>&1 ); rc=$?
+  for r in "$@"; do
+    printf '%s' "$out" | grep -qF -- "$r" || missing="$missing $r"
+  done
+  if [ "$rc" -eq "$want" ] && [ -z "$missing" ]; then
+    printf '  ok    %s\n' "$name"; pass=$((pass + 1))
+  else
+    printf '  FAIL  %s (wanted exit %s with records%s, got %s)\n' \
+      "$name" "$want" "${missing:- —}" "$rc"
+    printf '%s\n' "$out" | sed 's/^/          /'
+    fail=$((fail + 1))
+  fi
+}
+
 echo "the correct state must be silent"
 
 d=$(newfix); check 0 "a correctly bumped repo passes" "$d"
@@ -185,9 +212,15 @@ d=$(newfix)
 printf '\nThe RDF Messages envelope (CQELS 2.0.0-alpha.16).\n' >> "$d/CQELS-QL_SPEC.md"
 checkmsg 1 "an UNMARKED historical token fires (the RdfMessageIngestion shape)" "reword it as provenance" "$d"
 
-# alpha.9 vs alpha.18: a lexical compare says "9" > "18" and passes it.
+# A single-digit suffix under a two-digit pin. This case used to claim it
+# pinned vkey()'s numeric-vs-lexical ordering; it does not and never did — an
+# unmarked token is compared with a plain string INEQUALITY (A2), no ordering
+# involved, so it passed for the same reason as the alpha.13 case above. The
+# real numeric-vs-lexical coverage is the provenance pair further down, which
+# does route through vkey(); a lexical regression inside vkey() turns those red
+# and leaves this one green (round 2).
 d=$(newfix); sed -i.bak 's|Latest release:.*|Latest release: `2.0.0-alpha.9`|' "$d/README.md"
-check 1 "numeric, not lexical: a stale alpha.9 under an alpha.18 pin fires" "$d"
+check 1 "a stale stamp whose suffix is SHORTER than the pin's still fires" "$d"
 
 echo
 echo "defect 1, the other direction — impossible history"
@@ -254,6 +287,36 @@ d=$(newfix)
 printf '\nGuards on negated steps are honored from `2.0.0-alpha.13`\nonward, on every stream.\n' >> "$d/CQELS-QL_SPEC.md"
 check 0 "'from X' wrapping onto a line that OPENS with 'onward' is provenance" "$d"
 
+# ...but 'onward' is only HALF the marker: "from X onward" is a pair, and
+# without the backward half any stale stamp on a line that does not end in a
+# clause mark was exempted by a next line merely BEGINNING with the word. A
+# badge line ends with the token, and a trailing colon does not refuse the join
+# either, so both spellings of the real README shape leaked (round 2).
+d=$(newfix)
+printf '\nCurrent release: `2.0.0-alpha.13`:\nonward compatibility notes follow.\n' >> "$d/README.md"
+checkmsg 1 "a stale stamp before a line OPENING with 'onward' is not provenance without 'from'" \
+  "claims version" "$d"
+
+d=$(newfix)
+printf '\n**Current release:** `2.0.0-alpha.13`\nonwards the API is stable.\n' >> "$d/README.md"
+check 1 "...and the no-colon badge spelling of the same evasion" "$d"
+
+d=$(newfix)
+printf '\nThe pin is `2.0.0-alpha.13` onwards, they said.\n' >> "$d/README.md"
+check 1 "...and the same-line spelling: 'X onwards' with no 'from' is a current claim" "$d"
+
+# Marker matching is case-insensitive on BOTH sides. The backward walk always
+# lowercased; P2/P3 did not, so title case — the normal register for a markdown
+# heading — fired on the gate's own sanctioned provenance wording and the
+# remedy it printed was the wording the author already had (round 2).
+d=$(newfix)
+printf '\n## Breaking Changes From `2.0.0-alpha.13` Onward\n' >> "$d/CQELS-QL_SPEC.md"
+check 0 "P2 in title case ('From X Onward') is provenance, not a stale stamp" "$d"
+
+d=$(newfix)
+printf '\n`2.0.0-alpha.13` Is the first release with the MCP server.\n' >> "$d/CQELS-QL_SPEC.md"
+check 0 "P3 in title case ('X Is the first release') is provenance too" "$d"
+
 # The mcp-server/README.md:194-195 shape. 'from' alone is not a marker.
 d=$(newfix)
 sed -i.bak "s|\[$PIN release\]|[2.0.0-alpha.16 release]|" "$d/mcp-server/README.md"
@@ -306,6 +369,16 @@ prov "link house style   'From [\`X\`](…) onward, …'" \
   'From [`2.0.0-alpha.13`](https://github.com/cqels/CQELS4J/releases/tag/v2.0.0-alpha.13) onward, guards are honored.'
 prov "one marker, two tokens  'since \`X\` and \`Y\`'" \
   'Guards are honored since `2.0.0-alpha.11` and `2.0.0-alpha.13` respectively.'
+prov "since + a noun object  'since release \`X\`'" \
+  'The engine resolves an explicit function IRI since release `2.0.0-alpha.11`.'
+# The link target of a token whose PROSE copy on the same line is already
+# provenance is that same claim written twice. Judged on its own it fired,
+# because four ordinary words ("see the release notes") sit between the marker
+# and the URL copy — and no rewrite short of deleting the link cleared it
+# (round 2). The must-fire counterpart is the "display token bumped, URL left
+# behind" case above: two DIFFERENT tokens are two different claims.
+prov "link target behind intervening prose  'since \`X\` — see [notes](…/tag/vX).'" \
+  'Correlated guards were fixed since `2.0.0-alpha.13` — see [the release notes](https://github.com/cqels/CQELS4J/releases/tag/v2.0.0-alpha.13).'
 
 # The one that needs the lookback: the marker ends the PREVIOUS line.
 #
@@ -364,6 +437,37 @@ d=$(newfix)
 printf 'Nothing changed since launch; release `2.0.0-alpha.13` remains the pin here.\n' >> "$d/README.md"
 checkmsg 1 "a marker in an EARLIER clause of the same line must not exempt a stale stamp" \
   "claims version" "$d"
+
+# The sentence a link ENDS is still a sentence. `[^ ]+` ran to the next space,
+# so the ")." closing a house-style link was deleted with the URL, the clause
+# truncation found no boundary left, and the since-sentence governed the stamp
+# in the NEXT sentence — the gate reported OK on exactly the stale-landing-page
+# defect it exists to catch (round 2). The repo links every version mention, so
+# this is the natural shape, not a contrived one.
+d=$(newfix)
+printf 'Correlated FILTER guards have been fixed since [`2.0.0-alpha.11`](https://github.com/cqels/CQELS4J/releases/tag/v2.0.0-alpha.11). CQELS `2.0.0-alpha.13` is required to run the examples below.\n' >> "$d/README.md"
+checkmsg 1 "a since-sentence ENDING IN A LINK does not exempt the next sentence's stamp" \
+  "claims version \`2.0.0-alpha.13\`" "$d"
+
+# The mask that makes a version token one word must not ALSO be a filler word.
+# It was the literal " VERSION ", which lowercases to a member of the filler
+# set, so every token was transparent to the marker walk and one marker exempted
+# an unrelated stamp later in the same clause — comma, pipe and em-dash are not
+# clause marks (round 2). The must-not-fire counterparts are the house-style
+# link and "since `X` and `Y`" above: the same token repeated, and a
+# coordination, are the only two ways a token may sit between marker and object.
+d=$(newfix)
+printf 'Stable since `2.0.0-alpha.11`, `2.0.0-alpha.13` remains the current release.\n' >> "$d/README.md"
+checkmsg 1 "a marker governing token A does not exempt an unrelated token B after a comma" \
+  "claims version \`2.0.0-alpha.13\`" "$d"
+
+d=$(newfix)
+printf '\n| Introduced | Current |\n|---|---|\n| since `2.0.0-alpha.11` | `2.0.0-alpha.13` |\n' >> "$d/README.md"
+check 1 "...nor across a table cell boundary ('| Introduced | Current |' matrix row)" "$d"
+
+d=$(newfix)
+printf 'Supported since `2.0.0-alpha.11` — `2.0.0-alpha.13` is the current release.\n' >> "$d/README.md"
+check 1 "...nor across an em-dash" "$d"
 
 # ...but a trailing colon INTRODUCES the next line rather than ending a clause.
 # Refusing that join classified this legitimate wrapped historical claim as a
@@ -455,11 +559,35 @@ d=$(newfix)
 printf '\n    REL=org/cqels/cqels-engine/%s/cqels-engine-%s.jar\n' "$PIN" "$PIN" >> "$d/SUPPLY_CHAIN.md"
 check 0 "a real artifact path ('…/X/cqels-engine-X.jar') is not malformed" "$d"
 
+# An OLD version inside a jar NAME, several ordinary words downstream of the
+# marker, is judged on its own and fires. That is the deliberate safe direction:
+# reaching it would need a plain word-distance window, which is what let
+# "**Tested before release:** `X`" pass as provenance (round 3). Both halves are
+# pinned so the trade-off cannot be changed silently — the remedy for a real
+# sentence of this shape is the BARE form, which the gate accepts as history.
+d=$(newfix)
+printf '\nBefore `%s`, the signed manifest listed cqels-engine-2.0.0-alpha.13.jar.\n' "$PIN" >> "$d/SUPPLY_CHAIN.md"
+checkmsg 1 "a stale version inside a jar NAME is a current claim, marker or no marker" \
+  "2.0.0-alpha.13" "$d"
+
+d=$(newfix)
+printf '\nBefore `%s`, the signed manifest listed the alpha.13 jar.\n' "$PIN" >> "$d/SUPPLY_CHAIN.md"
+check 0 "...and the documented remedy — the bare form — is accepted as history" "$d"
+
 echo
 echo "the fence that is CURRENT passes when it is current (boundary, both sides)"
 
+# At token == pin the exit code is silent whichever way the fence is classified
+# — A2 accepts `current` == pin, A3 accepts `provenance` <= pin — so this case
+# was a byte-identical duplicate of "a correctly bumped repo passes" and could
+# not tell the two apart. It now asserts the RECORDS: the prose above the fence
+# is provenance, the pasted `VERSION=` inside it is current, which is the exact
+# boundary the must-fire case above defends from the other side. A widened
+# lookback flips SUPPLY_CHAIN.md:13 to provenance with the exit code unchanged.
 d=$(newfix)
-check 0 "the same '**Since X…**' + fence shape, fence at the pin" "$d"
+checkrecords 0 "the same '**Since X…**' + fence shape, fence at the pin" "$d" \
+  "SUPPLY_CHAIN.md|10|provenance|$PIN" \
+  "SUPPLY_CHAIN.md|13|current|$PIN"
 
 echo
 echo "defect 3, offline half — self-consistency of the documented surface"
@@ -542,6 +670,27 @@ check 0 "the gate and its own test do not fire on their worked examples" "$d"
 d=$(newfix); mkdir -p "$d/scripts/ci"
 printf '#!/bin/sh\nVERSION=2.0.0-alpha.13\n' > "$d/scripts/ci/release.sh"
 checkmsg 1 "a SIBLING script in scripts/ci is still scanned" "scripts/ci/release.sh" "$d"
+
+# ...and a path git would QUOTE is still scanned. `git ls-files` renders a
+# non-ASCII byte as the literal text "GU\303\215A.md" (core.quotePath is on by
+# default), for which `[ -f ]` is false — so a translated guide was dropped in
+# silence, the stale stamp inside it passed with exit 0, and the summary still
+# printed the same stamp count as a clean run (round 2). A quoted DIRECTORY
+# component would drop every file beneath it.
+NONASCII=$(printf 'GU\303\215A.md')
+d=$(newfix); printf '# Guia\n\nLatest release: `2.0.0-alpha.13`\n' > "$d/$NONASCII"
+checkmsg 1 "a stale stamp in a NON-ASCII filename is scanned, not silently skipped" \
+  "2.0.0-alpha.13" "$d"
+
+d=$(newfix); printf '# Guia\n\nBuilt against `%s`.\n' "$PIN" > "$d/$NONASCII"
+check 0 "...and the same file with a CORRECT stamp stays silent" "$d"
+
+# A path containing the record delimiter mis-splits the scanner's own output —
+# 'a|b.md|3|current|X' read as f=a ln=b.md cls=3, which matches no arm and is
+# dropped. Refused loudly instead of parsed.
+d=$(newfix); printf '# ab\n\nLatest release: `2.0.0-alpha.13`\n' > "$d/a|b.md"
+checkmsg 1 "a tracked path containing '|' is refused loudly, not silently mis-parsed" \
+  "cannot be scanned" "$d"
 
 echo
 echo "defect 2 — the online tier (PATH-shimmed curl, no network)"

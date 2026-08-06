@@ -25,7 +25,9 @@
 #
 #   1. DETECTION on the next human touch: the schedule-health job below runs on
 #      every PR and dispatch, asks the API when the schedule last completed, and
-#      FAILS if that is over 8 days ago (or never). A dormant repo stays dark,
+#      FAILS if that is over 8 days ago — or if it has never run although this
+#      file has been on the default branch (the only place `on: schedule` fires
+#      from) for longer than that. A dormant repo stays dark,
 #      but the first PR after dormancy cannot go green while the world-drift
 #      check is silently off — the failure names the fix.
 #      It is a JOB OF ITS OWN, needed by nothing, and that is the whole point:
@@ -85,7 +87,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          last=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/version-truth.yml/runs?event=schedule&status=completed&per_page=1" \
+          WF=version-truth.yml
+          last=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/${WF}/runs?event=schedule&status=completed&per_page=1" \
                    --jq '.workflow_runs[0].run_started_at // empty')
           if [ -z "$last" ]; then
             days="never-ran"
@@ -93,16 +96,43 @@ jobs:
             days=$(( ( $(date -u +%s) - $(date -u -d "$last" +%s) ) / 86400 ))
           fi
           echo "last completed scheduled run: ${last:-none} (${days} days ago)"
-          # First 8 days after this workflow lands, "never-ran" is expected;
-          # after that it means GitHub disabled the schedule (60-day inactivity
-          # rule) or it was never enabled. Either way the world-drift check is
-          # OFF and someone must know.
-          created=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/version-truth.yml" --jq '.created_at')
-          wf_age=$(( ( $(date -u +%s) - $(date -u -d "$created" +%s) ) / 86400 ))
-          if [ "$days" = "never-ran" ] && [ "$wf_age" -le 8 ]; then
-            echo "workflow is ${wf_age} days old — schedule has not had time to fire yet; not stale."
-          elif [ "$days" = "never-ran" ] || [ "$days" -gt 8 ]; then
-            echo "::error::The nightly world-drift schedule is NOT running (last: ${last:-never}). GitHub disables schedules in public repos after 60 days of inactivity. Re-enable it under Actions -> version-truth, then run the workflow by hand (Actions -> version-truth -> Run workflow); this job does not block that run, so the links job will still execute."
+
+          # It HAS run, and then stopped: the 60-day inactivity rule, or someone
+          # disabled it.
+          if [ "$days" != "never-ran" ] && [ "$days" -gt 8 ]; then
+            echo "::error::The nightly world-drift schedule is NOT running (last: ${last}). GitHub disables schedules in public repos after 60 days of inactivity. Re-enable it under Actions -> version-truth, then run the workflow by hand (Actions -> version-truth -> Run workflow); this job does not block that run, so the links job will still execute."
+            exit 1
+          fi
+
+          # It has NEVER run. That is expected for the first 8 days — but the
+          # clock starts when the schedule became ELIGIBLE, not when Actions
+          # first registered the workflow. `.created_at` is stamped seconds
+          # after the FEATURE-BRANCH push (measured: four workflows in a sibling
+          # repo all carry a created_at earlier than their landing commit on the
+          # default branch, and a branch-only workflow that has never been on
+          # the default branch has one too), while `on: schedule` fires only
+          # from the default branch. Anchored on created_at, a PR open longer
+          # than 8 days burned its whole grace before the schedule could legally
+          # run once, and the first PR after the merge failed with a diagnosis
+          # that was false — nothing had been disabled (round 2).
+          if [ "$days" = "never-ran" ]; then
+            default=$(gh api "repos/${GITHUB_REPOSITORY}" --jq '.default_branch')
+            landed=$(gh api "repos/${GITHUB_REPOSITORY}/commits?sha=${default}&path=.github/workflows/${WF}&per_page=100" \
+                       --paginate --jq '.[].commit.committer.date' | sort | head -1)
+            if [ -z "$landed" ]; then
+              echo "${WF} is not on ${default} yet — a schedule only fires from the default branch, so it cannot have run. Not stale."
+              exit 0
+            fi
+            age=$(( ( $(date -u +%s) - $(date -u -d "$landed" +%s) ) / 86400 ))
+            if [ "$age" -le 8 ]; then
+              echo "landed on ${default} ${age} days ago (${landed}) — the schedule has not had time to fire yet; not stale."
+              exit 0
+            fi
+            # Caveat, stated rather than hidden: the anchor is the OLDEST commit
+            # touching this file on the default branch, so a revert-and-re-land
+            # measures from the first landing. That errs toward reporting, which
+            # is the right direction for a detector.
+            echo "::error::The nightly world-drift schedule has NEVER completed a run, though it landed on ${default} ${age} days ago (${landed}). Either it is disabled (Actions -> version-truth -> Enable) or the cron never took; run the workflow by hand (Actions -> version-truth -> Run workflow) and check the schedule afterwards. This job does not block that run, so the links job will still execute."
             exit 1
           fi
 

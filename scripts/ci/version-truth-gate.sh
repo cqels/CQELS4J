@@ -66,6 +66,15 @@
 #     such line exists today. That is the inherent residual of any text rule.
 #     It is the residual of a marker that GOVERNS the token; a marker governing
 #     a different noun ("tested before release: `X`") is not exempt — see P1.
+#   * The same rule cuts the other way, and that direction is deliberate: a
+#     marker reaches its token through filler only, so an old version several
+#     ordinary words downstream — "Before `2.0.0-alpha.16`, the manifest listed
+#     cqels-engine-2.0.0-alpha.13.jar" — is judged on its own and fires as a
+#     current claim. Reaching it needs a plain word-distance window, which is
+#     exactly what let "**Tested before release:** `X`" pass as provenance. The
+#     remedy for a real sentence of that shape is the BARE form ("the alpha.13
+#     jar"), which is checked against the upper bound only. Pinned both ways in
+#     the self-test.
 #   * A reference to a WITHDRAWN version ("since 2.0.0-alpha.17", a version that
 #     was never publicly consumable) passes the offline tier, which cannot know
 #     the withdrawn set. The online tier only probes channels derived from the
@@ -238,17 +247,69 @@ scan_file() {
     # because the repo house style for a version mention is a link to its tag —
     # "since [`X`](.../tag/vX)" — and without this the URL copy of the token
     # was classified CURRENT and a TRUE provenance line fired (codex round 3).
-    function prep(s) {
-      gsub(/https?:\/\/[^ ]+/, " ", s)
-      gsub(/[0-9]+\.[0-9]+\.[0-9]+-[A-Za-z]+\.[0-9]+/, " VERSION ", s)
-      return s
+    #
+    # The punctuation that ENDS the sentence a URL sits in is NOT part of the
+    # URL. `[^ ]+` runs to the next space, so the ").", "," or ";" that closes a
+    # house-style link — "…since [`X`](…/tag/vX). CQELS `Y` is required" — was
+    # deleted along with the target. The clause truncation below then found no
+    # boundary and the previous sentence marker governed the stamp in the NEXT
+    # sentence: the gate reported OK on the exact stale-landing-page defect it
+    # exists to catch (round 2). The trailing punctuation run is therefore
+    # handed back to the prose.
+    function stripurls(s,   out, url, tail) {
+      out = ""
+      while (match(s, /https?:\/\/[^ ]+/)) {
+        url = substr(s, RSTART, RLENGTH)
+        tail = ""
+        while (url ~ /[.,;:!?)\]}]$/) {
+          tail = substr(url, length(url), 1) tail
+          url = substr(url, 1, length(url) - 1)
+        }
+        out = out substr(s, 1, RSTART - 1) " " tail
+        s = substr(s, RSTART + RLENGTH)
+      }
+      return out s
+    }
+
+    # A masked token keeps its IDENTITY: "2.0.0-alpha.13" becomes the single
+    # word "v200alpha13". The old mask was the literal " VERSION ", which
+    # tolower()s to "version" — a member of the P1 filler set — so EVERY version
+    # token was transparent to the marker walk and one marker exempted an
+    # unrelated stamp later in the same clause ("Stable since `X`, `Y` remains
+    # the current release", or a "| Introduced | Current |" matrix row). The
+    # two shapes that legitimately put a token between a marker and its object
+    # are handled explicitly in classify(): the same token repeated as a link
+    # target, and "since `X` and `Y`" (round 2).
+    function flat(s) { gsub(/[^A-Za-z0-9]/, "", s); return tolower(s) }
+
+    function prep(s,   out, tok) {
+      s = stripurls(s)
+      out = ""
+      while (match(s, /[0-9]+\.[0-9]+\.[0-9]+-[A-Za-z]+\.[0-9]+/)) {
+        tok = substr(s, RSTART, RLENGTH)
+        out = out substr(s, 1, RSTART - 1) " v" flat(tok) " "
+        s = substr(s, RSTART + RLENGTH)
+      }
+      return out s
+    }
+
+    # Is the token at absolute offset ABS inside a URL on this line?
+    function inurl(line, abs,   p, st, en) {
+      p = 1
+      while (match(substr(line, p), /https?:\/\/[^ ]+/)) {
+        st = p + RSTART - 1
+        en = st + RLENGTH - 1
+        if (abs >= st && abs <= en) return 1
+        p = en + 1
+      }
+      return 0
     }
 
     # PROVENANCE iff a marker word governs the token.
     #   P1  since | before | prior to   <version-qualifying filler>  TOKEN
-    #   P2  TOKEN  onward(s)
+    #   P2  from  <filler>  TOKEN  onward(s)
     #   P3  TOKEN  is|was the first release
-    function classify(before, after,   b, a, n, w, i, lw) {
+    function classify(before, after, tok,   b, a, n, w, i, lw, self, coord, nounobj, frm) {
       before = prep(before); after = prep(after)
 
       # A marker only governs a token in ITS OWN clause. norm() strips every
@@ -266,7 +327,13 @@ scan_file() {
       # follows ("Available since: `X`") rather than ending a clause.
       sub(/.*[.!?;]/, "", before)
       sub(/[.!?;].*/, "", after)
-      b = norm(before); a = norm(after)
+      # The forward markers are matched on a LOWERCASED copy, exactly as the
+      # backward ones already were (lw = tolower). Case-sensitive P2/P3 fired on
+      # the sanctioned wording of this very gate in title case — "## Breaking
+      # Changes From `X` Onward" — and the remedy it printed was to reword to
+      # "from `X` onward", which the heading already said (round 2).
+      b = norm(before); a = tolower(norm(after))
+      self = "v" flat(tok)
 
       # P1: the marker must GOVERN the token — only version-qualifying filler
       # may sit between the two. A plain word-distance window instead of this
@@ -274,22 +341,51 @@ scan_file() {
       # where `before` governs "release" and the stamp is an ordinary current
       # claim (codex round 3). The filler set is measured, not guessed: every
       # provenance line in this repo has 0-2 intervening words, and all of them
-      # are "CQELS" or the javadoc `{@code X}` wrap; "and"/"or" carry the
-      # second token of "since `X` and `Y`", which is one marker governing two.
+      # are "CQELS" or the javadoc `{@code X}` wrap.
+      #
+      # Two kinds of filler are conditional, because unconditional they let a
+      # marker reach a token it does not govern (round 2):
+      #   * ANOTHER version token is transparent only when it is the SAME token
+      #     repeated as a link target ("since [`X`](…/tag/vX)", the house style)
+      #     or when a coordination carries it ("since `X` and `Y`", one marker
+      #     governing two). A bare comma, pipe or em-dash between two DIFFERENT
+      #     tokens does not: "Stable since `X`, `Y` remains the current release"
+      #     and "| since `X` | `Y` |" are a marked token plus an unmarked one.
+      #   * "release" is the object of `before` in the label shape "**Tested
+      #     before release:** `X`" — a current stamp — but is transparent for
+      #     `since`, where "since release `X`" names the release itself.
       n = split(b, w, " ")
+      coord = 0; nounobj = 0; frm = 0
       for (i = n; i >= 1; i--) {
         lw = tolower(w[i])
-        if (lw == "since" || lw == "before") return "provenance"
-        if (lw == "to" && i > 1 && tolower(w[i-1]) == "prior") return "provenance"
-        if (lw == "cqels" || lw == "code" || lw == "version" || lw == "v" ||
-            lw == "and"   || lw == "or") continue
+        if (lw == "since") return "provenance"
+        if (lw == "before") { if (nounobj) break; return "provenance" }
+        if (lw == "to" && i > 1 && tolower(w[i-1]) == "prior") {
+          if (nounobj) break
+          return "provenance"
+        }
+        if (lw == "from") { frm = 1; break }
+        if (lw == "and" || lw == "or") { coord = 1; continue }
+        if (lw ~ /^v[0-9]/) {                       # a masked version token
+          if (lw == self || coord) { coord = 0; continue }
+          break
+        }
+        if (lw == "cqels" || lw == "code" || lw == "version" || lw == "v") { coord = 0; continue }
+        if (lw == "release" && !nounobj) { nounobj = 1; continue }
         break
       }
       # P2 / P3 look forward. NOTHING may sit between the token and "onward":
       # a one-word slot let any next-line sentence that opened "Moving onwards,"
       # exempt a stale line-final stamp — and a stamp/badge line ends with the
       # token, so continuous() allowed that join (codex round 3).
-      if (a ~ /^onwards?( |$)/) return "provenance"
+      #
+      # P2 also requires the "from" HALF of "from X onward" to be present. The
+      # marker word is the pair, not "onward" alone: without the backward half,
+      # any stale stamp on a line that does not end in a clause mark was
+      # exempted by a next line merely BEGINNING with the word — "Current
+      # release: `2.0.0-alpha.13`:" / "onward compatibility notes follow."
+      # (round 2). Every true P2 site in this repo is written "from `X` onward".
+      if (frm && a ~ /^onwards?( |$)/) return "provenance"
       if (a ~ /^(is|was) the first release( |$)/) return "provenance"
       return "current"
     }
@@ -392,19 +488,21 @@ scan_file() {
         lmasked = lline
 
         # -- full-form tokens ------------------------------------------------
+        nt = 0
         pos = 1
         while (match(substr(lline, pos), /[0-9]+\.[0-9]+\.[0-9]+-(alpha|beta|rc)\.[0-9]+/)) {
           abs = pos + RSTART - 1
           len = RLENGTH
           tok = substr(line, abs, len)
+          nt++
 
           bad = badsuffix(substr(line, abs + len))
           if (bad != "") {
-            print FILE "|" i "|malformed|" tok bad
+            T[nt] = tok bad; C[nt] = "malformed"; U[nt] = 0
           } else {
             before = prev " " substr(line, 1, abs - 1)
             after  = substr(line, abs + len) " " nxt
-            print FILE "|" i "|" classify(before, after) "|" tok
+            T[nt] = tok; C[nt] = classify(before, after, tok); U[nt] = inurl(line, abs)
           }
 
           # Blank the token (same length, so positions stay valid) before the
@@ -414,6 +512,27 @@ scan_file() {
           lmasked = substr(lmasked, 1, abs - 1) sprintf("%" len "s", "") substr(lmasked, abs + len)
           pos = abs + len
         }
+
+        # A URL is a link TARGET. When the SAME token also appears on the line
+        # as prose and that copy is provenance, the target is that same claim
+        # written twice, so it inherits — prose in between must not change the
+        # verdict. "…fixed since `X` — see [the release notes](…/tag/vX)." fired
+        # on true history because "see the release notes" broke the marker walk
+        # for the URL copy only, and no rewrite short of deleting the link
+        # cleared it (round 2). Inheritance is same-token only: a bumped display
+        # token beside a stale URL ("[`alpha.18`](…/tag/valpha.16)") is two
+        # different claims and the stale one still fires.
+        for (j = 1; j <= nt; j++) {
+          if (U[j] && C[j] == "current") {
+            for (k = 1; k <= nt; k++) {
+              if (!U[k] && C[k] == "provenance" && tolower(T[k]) == tolower(T[j])) {
+                C[j] = "provenance"
+                break
+              }
+            }
+          }
+        }
+        for (j = 1; j <= nt; j++) print FILE "|" i "|" C[j] "|" T[j]
 
         # -- bare tokens (alpha.7) -------------------------------------------
         pos = 1
@@ -443,13 +562,34 @@ scan_file() {
 # It is a list of exact paths rather than the directory, so a future
 # scripts/ci/ script that DOES state a version is still checked. The self-test
 # pins that.
+#
+# NUL-delimited, and never the quoted form. `git ls-files` quotes any path
+# holding a non-ASCII byte, a control character, a quote or a backslash
+# (core.quotePath defaults to ON), emitting the literal text
+# "GU\303\215A.md" — for which `[ -f ]` is false, so a translated guide with an
+# accent in its name was dropped IN SILENCE and a stale stamp inside it passed
+# with exit 0 and an unchanged stamp count (round 2). Quoting a DIRECTORY
+# component drops every file beneath it. -z suppresses quoting outright and
+# also survives a newline in a path.
+#
+# `|` is the record delimiter, so a path containing one mis-splits the record
+# and the verdict is dropped by the `case` below with no arm matching. It is
+# refused loudly rather than parsed.
 SELF="scripts/ci/version-truth-gate.sh|scripts/ci/version-truth-gate.test.sh"
-while IFS= read -r f; do
+while IFS= read -r -d '' f; do
+  case "$f" in
+    *"|"*)
+      err "tracked path '$f' contains '|', the delimiter this gate's own records use — it cannot be scanned. Rename it."
+      continue ;;
+  esac
+  # A tracked path with no file behind it is a submodule gitlink or a
+  # working-tree deletion, not a document; the required-file guard in A5 is what
+  # notices a rename of something that matters.
   [ -f "$f" ] || continue
   case "|$SELF|" in *"|$f|"*) continue ;; esac
   grep -Iq . "$f" 2>/dev/null || continue     # skip binary
   scan_file "$f" >> "$RECORDS"
-done < <(git ls-files)
+done < <(git -c core.quotePath=off ls-files -z)
 
 if [ ! -s "$RECORDS" ]; then
   err "no version token was found in ANY tracked file — the scanner matched nothing, so this gate would pass vacuously."
