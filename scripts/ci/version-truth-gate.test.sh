@@ -295,6 +295,29 @@ open(p, "w").write("\n".join(s))
 PY
 check 1 "a marker on the previous line must NOT exempt a stamp in a new block" "$d"
 
+# The SAME-LINE version of that evasion (codex round 2): the marker sits in an
+# EARLIER clause of the same line, separated by a semicolon. norm() strips the
+# ';' before the marker scan, so without in-line clause truncation this
+# classified provenance and the gate reported OK on a stale landing stamp.
+d=$(newfix)
+printf 'Nothing changed since launch; release `2.0.0-alpha.13` remains the pin here.\n' >> "$d/README.md"
+checkmsg 1 "a marker in an EARLIER clause of the same line must not exempt a stale stamp" \
+  "claims version" "$d"
+
+# ...but a trailing colon INTRODUCES the next line rather than ending a clause.
+# Refusing that join classified this legitimate wrapped historical claim as a
+# current stamp — a false positive that would fire on every future bump (codex
+# round 2, the other direction).
+d=$(newfix)
+printf 'Available since:\n`2.0.0-alpha.13` for the negated-step guards.\n' >> "$d/README.md"
+checkmsg 0 "'Available since:' wrapping onto a historical version is provenance, not a stale stamp" \
+  "OK:" "$d"
+
+# ...and the colon inside a single line never truncates the marker away.
+d=$(newfix)
+printf 'Available since: `2.0.0-alpha.13` for the negated-step guards.\n' >> "$d/README.md"
+checkmsg 0 "'Available since: X' on one line is provenance" "OK:" "$d"
+
 echo
 echo "bare-form provenance must be silent"
 

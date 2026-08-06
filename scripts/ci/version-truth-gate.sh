@@ -221,6 +221,16 @@ scan_file() {
     #   P2  TOKEN  ..<=1 word..  onward(s)
     #   P3  TOKEN  is|was the first release
     function classify(before, after,   b, a, n, w, i, tail) {
+      # A marker only governs a token in ITS OWN clause. norm() strips every
+      # punctuation mark, so without this truncation a marker in an EARLIER
+      # clause of the same line exempts a stale stamp two clauses later:
+      #     Nothing changed since launch; release `2.0.0-alpha.13`
+      # classified provenance and the gate reported OK on a false claim (codex
+      # round 2 — the cross-line continuity fix did not cover the in-line
+      # case). Everything before the LAST . ! ? or ; is discarded before the
+      # marker scan. A colon is deliberately NOT a truncator: it introduces
+      # what follows ("Available since: `X`") rather than ending a clause.
+      sub(/.*[.!?;]/, "", before)
       b = norm(before); a = norm(after)
 
       # P1: the marker must sit within 3 words of the token. The bound stops a
@@ -273,7 +283,11 @@ scan_file() {
     # So: block rules for .md, sentence/paragraph rules everywhere.
     function continuous(p, c,   md) {
       if (p ~ /^[ \t]*$/) return 0                       # paragraph break
-      if (p ~ /[.!?:;][ \t]*$/) return 0                 # sentence/clause ended
+      # A trailing colon INTRODUCES the next line ("Available since:") — it is
+      # the one clause mark that connects rather than separates, so it does not
+      # refuse the join (codex round 2: treating it as a boundary classified a
+      # legitimate wrapped historical claim as a current stamp).
+      if (p ~ /[.!?;][ \t]*$/) return 0                  # sentence/clause ended
       md = (FILE ~ /\.md$/)
       if (md) {
         if (p ~ /^[ \t]*#/) return 0                     # prev is a heading
