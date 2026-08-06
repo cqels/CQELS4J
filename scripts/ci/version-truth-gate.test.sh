@@ -60,7 +60,7 @@ EOF
     <version>$v</version>
 
 An MCP client gets the full production tool surface — **3 tools** covering the
-agent-memory types — plus 2 resources and 2 prompt templates.
+agent-memory types — plus **2 resources** and **2 prompt templates**.
 EOF
 
   cat > "$d/GETTING_STARTED.md" <<EOF
@@ -235,14 +235,15 @@ echo
 echo "the classification rule — where it must NOT let a stale stamp through"
 
 # 'Since' at the head of a sentence must not exempt a stamp further along it.
-# This one is carried by the in-line clause rule (the ';'), which is why the
-# case below exists: it removes every clause mark, so the ONLY thing that can
-# make it fire is the rule that a marker must GOVERN the token. Widening the
-# old 3-word window to 100 left the whole suite green — the bound this case
-# used to name was never exercised by anything (codex round 3).
+# This one is carried by the GOVERNING rule, not by the clause rule the ';'
+# suggests: the walk stops at "now", four words before it could ever reach
+# "since", so deleting the in-line truncation leaves it green (round 3). The
+# case that really pins the before-side truncation is below, marked as such.
+# Widening the old 3-word window to 100 left the whole suite green — the bound
+# this case used to name was never exercised by anything (codex round 3).
 d=$(newfix)
 printf '\nSince then much has changed; the engine is now 2.0.0-alpha.13.\n' >> "$d/README.md"
-check 1 "a marker in an earlier clause does not exempt (clause rule)" "$d"
+check 1 "a marker in an earlier clause does not exempt (governing rule)" "$d"
 
 d=$(newfix)
 printf '\nSince version numbering the current build is 2.0.0-alpha.13.\n' >> "$d/README.md"
@@ -260,6 +261,24 @@ d=$(newfix)
 printf '\n**Tested before release** — `2.0.0-alpha.13` on JDK 17 and 21.\n' >> "$d/README.md"
 check 1 "...and the em-dash spelling of it too (no colon involved)" "$d"
 
+# ...but the noun must not poison the standard historical OPENER, which is the
+# same three words with nothing in front of them. Both fired on true, naturally
+# worded provenance, and the remedy the error printed ("reword it as provenance,
+# \"before \`X\`\"") was to delete the word "release" — with no hint that the noun
+# was what broke it (round 3). The repo's own sentence is
+# DriverAttentionWatchdog.java:132, "Before CQELS 2.0.0-alpha.13, …".
+prov_md() { # prov_md <name> <line>
+  local d; d=$(newfix)
+  printf '%s\n' "$2" >> "$d/README.md"
+  check 0 "$1" "$d"
+}
+prov_md "'Before CQELS release \`X\`, <old behaviour>' is provenance" \
+  'Before CQELS release `2.0.0-alpha.13`, cross-event FILTER guards on negated steps were ignored.'
+prov_md "'Before release \`X\`, …' — the noun alone must not poison the opener" \
+  'Before release `2.0.0-alpha.13`, cross-event FILTER guards on negated steps were ignored.'
+prov_md "'Prior to release \`X\`, …' — the same for the two-word marker" \
+  'Prior to release `2.0.0-alpha.13`, cross-event FILTER guards on negated steps were ignored.'
+
 # The AFTER side of the clause rule. The round-2 fix truncated `before` only,
 # so a marker in a LATER clause still exempted a stale stamp.
 d=$(newfix)
@@ -269,6 +288,15 @@ check 1 "an 'onward' in a LATER clause does not exempt (after-side clause rule)"
 d=$(newfix)
 printf '\nThe current release is `2.0.0-alpha.13`. Moving onwards, each demo is listed below.\n' >> "$d/README.md"
 check 1 "...nor one in the next SENTENCE of the same line" "$d"
+
+# ...and the P2-specific pin. Both cases above have no `from` in their before
+# context, so P2's `frm` half is 0 whatever the truncation does and they pass
+# with the after-side rule deleted — only the P3 case below noticed it missing
+# (round 3). This one supplies the `from` half, so it is the P2 marker pair that
+# is being clause-scoped and nothing else.
+d=$(newfix)
+printf '\nDownloadable from `2.0.0-alpha.13`; onward compatibility notes follow.\n' >> "$d/README.md"
+check 1 "...and with the 'from' half present, so it is P2 that is clause-scoped" "$d"
 
 d=$(newfix)
 printf '\nThe pin is `2.0.0-alpha.13`; is the first release of a new era, they said.\n' >> "$d/README.md"
@@ -380,6 +408,51 @@ prov "since + a noun object  'since release \`X\`'" \
 prov "link target behind intervening prose  'since \`X\` — see [notes](…/tag/vX).'" \
   'Correlated guards were fixed since `2.0.0-alpha.13` — see [the release notes](https://github.com/cqels/CQELS4J/releases/tag/v2.0.0-alpha.13).'
 
+# ...and a RELATIVE target is a link target too. Both halves of the recogniser
+# were anchored on https?://, so the target copy in "since [`X`](CHANGELOG-X.md)"
+# was judged as prose, the path word broke the marker walk, and a true
+# provenance line fired with no rewrite short of renaming the linked file
+# (round 3).
+prov "relative link target  'since [\`X\`](CHANGELOG-X.md).'" \
+  'Negated-step guards are honored since [`2.0.0-alpha.13`](CHANGELOG-2.0.0-alpha.13.md).'
+
+# ...and inheritance stays same-token only for relative targets as well: a
+# bumped display token beside a stale relative target is two claims.
+d=$(newfix)
+printf 'See the [`%s`](CHANGELOG-2.0.0-alpha.13.md) notes.\n' "$PIN" >> "$d/README.md"
+checkmsg 1 "a stale RELATIVE link target beside a bumped display token still fires" \
+  "claims version \`2.0.0-alpha.13\`" "$d"
+
+# Inheritance is CLAUSE-scoped, exactly like the marker walk it overrides.
+# Line-scoped, an unrelated earlier sentence silenced an independent claim: a
+# stale release-tag link on the landing page — defect 2 — passed with exit 0,
+# even though the clause truncation had already classified it correctly (round
+# 3). The must-not-fire counterpart is the em-dash case just above: one
+# sentence, so the inheritance still applies.
+d=$(newfix)
+printf 'Correlated guards were fixed since `2.0.0-alpha.13`. Download the latest jar from the [release page](https://github.com/cqels/CQELS4J/releases/tag/v2.0.0-alpha.13).\n' >> "$d/README.md"
+checkmsg 1 "a stale link does NOT inherit provenance across a sentence boundary" \
+  "claims version \`2.0.0-alpha.13\`" "$d"
+
+d=$(newfix)
+printf 'The shaded jar ships since `2.0.0-alpha.13`; grab the current build from the [release page](https://github.com/cqels/CQELS4J/releases/tag/v2.0.0-alpha.13).\n' >> "$d/README.md"
+check 1 "...nor across a semicolon, which the clause rule already treats as a boundary" "$d"
+
+# A marker cannot reach past a clause that predicates the token as current. The
+# two transparencies the walk needs for legitimate shapes — a coordination and a
+# repeated token — carried it there, and the gate reported OK on a stamp that
+# says in words that it is the current release (round 3). The must-not-fire
+# counterpart is "since `X` and `Y` respectively" above.
+d=$(newfix)
+printf 'Stable since `2.0.0-alpha.11` and `2.0.0-alpha.13` is the current release.\n' >> "$d/README.md"
+checkmsg 1 "a coordination does not carry a marker into a clause declaring the token current" \
+  "claims version \`2.0.0-alpha.13\`" "$d"
+
+d=$(newfix)
+printf 'Documented since `2.0.0-alpha.13`, `2.0.0-alpha.13` is the current release.\n' >> "$d/README.md"
+checkmsg 1 "...nor does the SAME token repeated in prose (only a link target inherits)" \
+  "claims version \`2.0.0-alpha.13\`" "$d"
+
 # The one that needs the lookback: the marker ends the PREVIOUS line.
 #
 # This case must be exercised in a .java file, because that is where it really
@@ -429,6 +502,19 @@ open(p, "w").write("\n".join(s))
 PY
 check 1 "a marker on the previous line must NOT exempt a stamp in a new block" "$d"
 
+# ...and the previous line must not be an HTML COMMENT, which is invisible in
+# the rendered page. norm() flattens `<!-- -->` to nothing, so the comment
+# governed the stamp below it as ordinary prose and the published landing page
+# carried a naked stale stamp exempted by text no reader can see (round 3).
+d=$(newfix)
+printf '\n<!-- introduced since CQELS -->\n`2.0.0-alpha.13` is the release to install.\n' >> "$d/README.md"
+checkmsg 1 "an invisible HTML comment does not govern the stamp below it" \
+  "claims version \`2.0.0-alpha.13\`" "$d"
+
+d=$(newfix)
+printf '\n<!-- introduced since CQELS -->\n`%s` is the release to install.\n' "$PIN" >> "$d/README.md"
+check 0 "...and the same shape at the pin stays silent" "$d"
+
 # The SAME-LINE version of that evasion (codex round 2): the marker sits in an
 # EARLIER clause of the same line, separated by a semicolon. norm() strips the
 # ';' before the marker scan, so without in-line clause truncation this
@@ -437,6 +523,16 @@ d=$(newfix)
 printf 'Nothing changed since launch; release `2.0.0-alpha.13` remains the pin here.\n' >> "$d/README.md"
 checkmsg 1 "a marker in an EARLIER clause of the same line must not exempt a stale stamp" \
   "claims version" "$d"
+
+# ...and the case that actually PINS that truncation. The one above is carried
+# by the governing rule instead — the walk breaks on "launch" — so deleting the
+# before-side truncation left the whole suite green and reopened a false OK on a
+# stale landing stamp with nothing to notice (round 3). Here only filler ("CQELS")
+# sits between the clause mark and the token, so the marker WOULD reach it.
+d=$(newfix)
+printf 'Nothing has moved since. CQELS `2.0.0-alpha.13` powers the demos.\n' >> "$d/README.md"
+checkmsg 1 "a marker in an earlier SENTENCE reaches the token through filler alone — the before-side clause rule is what stops it" \
+  "claims version \`2.0.0-alpha.13\`" "$d"
 
 # The sentence a link ENDS is still a sentence. `[^ ]+` ran to the next space,
 # so the ")." closing a house-style link was deleted with the URL, the clause
@@ -603,6 +699,50 @@ check 1 "resource count vs the listed cqels:// URIs" "$d"
 
 d=$(newfix); sed -i.bak 's|\*\*Prompts (2)|**Prompts (3)|' "$d/mcp-server/README.md"
 check 1 "prompt count vs the listed names" "$d"
+
+# ...and the other direction, which is the expensive one here. The claim greps
+# were unanchored whole-file scans, so every number-plus-noun in ordinary prose
+# became a competing landing-page claim and raised "the two landing pages
+# disagree" — a false statement, about correct docs, in a job that blocks merge
+# (round 3). Only the EMPHASISED claim is the advertised surface.
+d=$(newfix)
+printf '\nMost integrations only ever call 2 tools: store and recall.\n' >> "$d/README.md"
+check 0 "an ordinary sentence counting tools is not a landing-page claim" "$d"
+
+d=$(newfix)
+printf '\nThe quickstart uses 1 resources and 1 prompt template.\n' >> "$d/README.md"
+check 0 "...nor one counting resources and prompts" "$d"
+
+d=$(newfix)
+printf '\n> **Since 2.0.0-alpha.9** the server gained 1 tools.\n' >> "$d/README.md"
+check 0 "...nor a release note in this repo's own provenance idiom" "$d"
+
+# A declaration that appears TWICE must be refused, not compared. `sed` prints
+# one line per match, so head_n became "3\n9", `[ -ne ]` exited 2 with
+# "integer expression expected", `if` read that as false — and the
+# heading-vs-rows assertion silently no-opped even though the first section's
+# count was genuinely wrong. The surviving error came from the `||`-guarded arm
+# and blamed the wrong file, with an embedded newline that GitHub renders
+# truncated (round 3).
+d=$(newfix)
+printf '\n## Tools exposed (9)\n\n| Tool | What it does |\n|------|--------------|\n| `other` | Something else. |\n' \
+  >> "$d/mcp-server/README.md"
+checkmsg 1 "a DUPLICATED count declaration is refused, not silently skipped" \
+  "more than once" "$d"
+
+# CRLF. The section extractors stop at the first blank line, and `/^$/` cannot
+# match "\r" — awk strips only the newline — so the extraction ran to EOF,
+# swallowed every later section, and the gate reported two defects
+# ("declares 2 resources but lists 3") about a document in which no claim had
+# changed at all. There is no .gitattributes, so a CRLF file commits as CRLF.
+d=$(newfix)
+python3 - "$d/mcp-server/README.md" <<'PY'
+import sys
+p = sys.argv[1]
+b = open(p, 'rb').read().replace(b'\r\n', b'\n').replace(b'\n', b'\r\n')
+open(p, 'wb').write(b)
+PY
+check 0 "a CRLF-saved mcp-server/README.md reports no defect (its claims are unchanged)" "$d"
 
 echo
 echo "vacuity — the gate must never pass having checked nothing"

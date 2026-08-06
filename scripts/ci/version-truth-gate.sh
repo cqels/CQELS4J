@@ -83,6 +83,13 @@
 #     spelled `2.0.0-Alpha.13` used to match nothing at all — not current, not
 #     bare, not malformed — so a stale stamp in that spelling passed silently
 #     while the vacuity guard stayed satisfied by the other stamps in the file.
+#   * A6 reads README.md's surface counts in their EMPHASISED form only —
+#     **25 tools**, **9 resources**, **10 prompt templates**. That is a doc
+#     convention the gate depends on, and it is deliberate: an unanchored scan
+#     turned every number-plus-noun in running prose into a competing
+#     landing-page claim and blocked merge with "the two landing pages disagree"
+#     about docs that were correct. Unbolding a claim does not disable the
+#     check — the vacuity guard fires instead.
 #   * The version grammar is pinned to `-(alpha|beta|rc).N`. The day this
 #     project ships a final `2.0.0`, A1 will fail loudly rather than silently
 #     un-scoping every token in the repo. That is intentional; the fix is a
@@ -293,10 +300,19 @@ scan_file() {
       return out s
     }
 
-    # Is the token at absolute offset ABS inside a URL on this line?
+    # Is the token at absolute offset ABS inside a LINK TARGET on this line?
+    #
+    # A markdown target `](…)` counts whether or not it is an absolute URL. Both
+    # halves of the recogniser used to be anchored on https?://, so the target
+    # copy of a token in a RELATIVE link — "since [`X`](CHANGELOG-X.md)", the
+    # natural shape for a per-version changelog — was neither masked out of the
+    # prose nor eligible for the same-token inheritance below. Judged as prose,
+    # the path word ("CHANGELOG") breaks the marker walk, so a TRUE provenance
+    # line fired and no rewrite short of renaming the linked file cleared it
+    # (round 3).
     function inurl(line, abs,   p, st, en) {
       p = 1
-      while (match(substr(line, p), /https?:\/\/[^ ]+/)) {
+      while (match(substr(line, p), /https?:\/\/[^ ]+|\]\([^ )]*\)/)) {
         st = p + RSTART - 1
         en = st + RLENGTH - 1
         if (abs >= st && abs <= en) return 1
@@ -335,6 +351,16 @@ scan_file() {
       b = norm(before); a = tolower(norm(after))
       self = "v" flat(tok)
 
+      # A token whose OWN clause predicates it as the current one IS a current
+      # claim, whatever marker precedes it. Without this, the two transparencies
+      # the backward walk needs for legitimate shapes — a coordination ("since
+      # `X` and `Y` respectively") and a repeated token — carried a marker across
+      # a clause that says the opposite in words: "Stable since `X` and `Y` is
+      # the current release" was reported OK on a stale `Y` (round 3). Neither
+      # transparency can see what FOLLOWS the token; this rule can, and it is the
+      # one wording no provenance line ever uses about itself.
+      if (a ~ /^(is|was|are|were|remains?|stays?) the (current|latest|newest)( |$)/) return "current"
+
       # P1: the marker must GOVERN the token — only version-qualifying filler
       # may sit between the two. A plain word-distance window instead of this
       # classified "**Tested before release:** `2.0.0-alpha.13`" as provenance,
@@ -353,21 +379,36 @@ scan_file() {
       #     and "| since `X` | `Y` |" are a marked token plus an unmarked one.
       #   * "release" is the object of `before` in the label shape "**Tested
       #     before release:** `X`" — a current stamp — but is transparent for
-      #     `since`, where "since release `X`" names the release itself.
+      #     `since`, where "since release `X`" names the release itself. That
+      #     poison must not swallow the standard historical opener "Before
+      #     release `X`, <old behaviour>" / "Prior to CQELS release `X`, …",
+      #     which fired on a true sentence and printed a remedy the author had
+      #     already written (round 3). The two are told apart by position: the
+      #     label shape has a subject in front of the marker ("**Tested** before
+      #     release:"), the opener starts the clause. So `release` only poisons a
+      #     marker that something else precedes.
       n = split(b, w, " ")
       coord = 0; nounobj = 0; frm = 0
       for (i = n; i >= 1; i--) {
         lw = tolower(w[i])
         if (lw == "since") return "provenance"
-        if (lw == "before") { if (nounobj) break; return "provenance" }
+        if (lw == "before") { if (nounobj && i > 1) break; return "provenance" }
         if (lw == "to" && i > 1 && tolower(w[i-1]) == "prior") {
-          if (nounobj) break
+          if (nounobj && i > 2) break
           return "provenance"
         }
         if (lw == "from") { frm = 1; break }
         if (lw == "and" || lw == "or") { coord = 1; continue }
+        # A masked version token is transparent ONLY when a coordination carries
+        # it ("since `X` and `Y`"). The same token repeated used to be
+        # transparent too, for the house-style link "since [`X`](…/tag/vX) — but
+        # that copy is a link TARGET and is handled by the same-token inheritance
+        # below, which is clause-scoped where this walk-through was not: the
+        # repetition path let a marker reach a stamp in a LATER clause of the
+        # same sentence ("Documented since `X`, `X` is the current release" was
+        # reported OK, round 3).
         if (lw ~ /^v[0-9]/) {                       # a masked version token
-          if (lw == self || coord) { coord = 0; continue }
+          if (coord) { coord = 0; continue }
           break
         }
         if (lw == "cqels" || lw == "code" || lw == "version" || lw == "v") { coord = 0; continue }
@@ -430,6 +471,14 @@ scan_file() {
       # refuse the join (codex round 2: treating it as a boundary classified a
       # legitimate wrapped historical claim as a current stamp).
       if (p ~ /[.!?;][ \t]*$/) return 0                  # sentence/clause ended
+      # An HTML comment is INVISIBLE in the rendered page, and norm() flattens
+      # its delimiters to nothing, so "<!-- introduced since CQELS -->" above a
+      # stamp governed it as ordinary prose: the published landing page carried a
+      # naked stale stamp exempted by text no reader can see (round 3). That also
+      # defeats the remedy this gate exists to force, which is to resolve WHERE
+      # THE NEXT READER SEES IT. Not markdown-gated — pom.xml puts a comment
+      # directly above <cqels.version> today.
+      if (p ~ /-->[ \t]*$/) return 0                     # prev is an HTML comment
       md = (FILE ~ /\.md$/)
       if (md) {
         if (p ~ /^[ \t]*#/) return 0                     # prev is a heading
@@ -496,6 +545,7 @@ scan_file() {
           tok = substr(line, abs, len)
           nt++
 
+          S[nt] = abs; E[nt] = abs + len - 1
           bad = badsuffix(substr(line, abs + len))
           if (bad != "") {
             T[nt] = tok bad; C[nt] = "malformed"; U[nt] = 0
@@ -522,13 +572,26 @@ scan_file() {
         # cleared it (round 2). Inheritance is same-token only: a bumped display
         # token beside a stale URL ("[`alpha.18`](…/tag/valpha.16)") is two
         # different claims and the stale one still fires.
+        #
+        # Inheritance is also CLAUSE-scoped, exactly like the marker walk it
+        # overrides. Line-scoped, it reached across a sentence boundary and
+        # silenced an independent claim: "…fixed since `X`. Download the latest
+        # jar from the [release page](…/tag/vX)." was reported OK — a stale
+        # release-tag link on the landing page, which is defect 2 above. The
+        # clause truncation had already classified that link correctly; only the
+        # inheritance undid it. The gap is measured on the PREPPED text, because
+        # the dots inside the link target and inside a version token are not
+        # clause ends.
         for (j = 1; j <= nt; j++) {
           if (U[j] && C[j] == "current") {
             for (k = 1; k <= nt; k++) {
-              if (!U[k] && C[k] == "provenance" && tolower(T[k]) == tolower(T[j])) {
-                C[j] = "provenance"
-                break
-              }
+              if (U[k] || C[k] != "provenance" || tolower(T[k]) != tolower(T[j])) continue
+              if (S[j] > S[k]) { gs = E[k] + 1; gl = S[j] - gs }
+              else             { gs = E[j] + 1; gl = S[k] - gs }
+              gap = (gl > 0) ? substr(line, gs, gl) : ""
+              if (prep(gap) ~ /[.!?;]/) continue
+              C[j] = "provenance"
+              break
             }
           }
         }
@@ -685,12 +748,36 @@ done
 # the heading, or mcp-server/README.md updated while README.md is not. The
 # reality half is C1, under --deep.
 # ---------------------------------------------------------------------------
+#
+# The README claim is read in its BOLD form only. `[0-9]+ tools` scanned the
+# whole file, so every number-plus-noun in ordinary prose became a competing
+# landing-page claim and any of them that differed raised "the two landing pages
+# disagree" — a false statement, about correct docs, in a job that blocks merge
+# ("Since `X` the server gained 2 tools" was enough, round 3). The advertised
+# surface is the emphasised claim; a count in running prose is not a claim. If it
+# is reworded away the vacuity guard below fires, so tightening cannot hide it.
+#
+# A declaration that appears TWICE is refused rather than compared: `sed` prints
+# one line per match, "3\n9" is not an integer, `[ -ne ]` then exits 2 and `if`
+# reads that as false — so the heading-vs-rows assertion silently no-opped while
+# a differently-shaped error blamed the wrong file (round 3).
 MCPDOC=mcp-server/README.md
+count_once() { # count_once <label> <value>
+  case "$2" in
+    "")  return 1 ;;
+    *[!0-9]*)
+      err "$MCPDOC declares '$1' more than once — the declared count is ambiguous, and comparing against a list of counts silently skips the comparison."
+      return 1 ;;
+  esac
+  return 0
+}
 if [ -f "$MCPDOC" ] && [ -f README.md ]; then
   # Declared count in the section heading.
   head_n=$(sed -n 's/^## Tools exposed (\([0-9][0-9]*\)).*/\1/p' "$MCPDOC")
   if [ -z "$head_n" ]; then
     err "$MCPDOC has no '## Tools exposed (N)' heading — the declared tool count has been reworded away, so the count check would pass vacuously."
+  elif ! count_once '## Tools exposed (N)' "$head_n"; then
+    :
   else
     # Rows in the tables under that heading, up to the next '## '. Anchored at
     # the line start so a backticked name inside a description cell is not a row.
@@ -698,10 +785,10 @@ if [ -f "$MCPDOC" ] && [ -f README.md ]; then
     if [ "$rows" -ne "$head_n" ]; then
       err "$MCPDOC says 'Tools exposed ($head_n)' but the tables under it list $rows tools. A tool was added or removed and the heading was not updated."
     fi
-    # Cross-file: README.md's prose claim.
-    claims=$(grep -oE '[0-9]+ tools' README.md | awk '{print $1}' | sort -u)
+    # Cross-file: README.md's emphasised claim.
+    claims=$(grep -oE '\*\*[0-9]+ tools\*\*' README.md | tr -d '*' | awk '{print $1}' | sort -u)
     if [ -z "$claims" ]; then
-      err "README.md makes no 'N tools' claim any more — the cross-file half of this check would pass vacuously. Restore the claim or delete this assertion deliberately."
+      err "README.md makes no '**N tools**' claim any more — the cross-file half of this check would pass vacuously. Restore the claim or delete this assertion deliberately."
     else
       for c in $claims; do
         [ "$c" -eq "$head_n" ] || err "README.md advertises '$c tools' but $MCPDOC enumerates $head_n. The two landing pages disagree."
@@ -711,16 +798,24 @@ if [ -f "$MCPDOC" ] && [ -f README.md ]; then
 
   # Same shape for resources and prompts — the same defect class, one section
   # further down, and previously covered by nothing at all.
+  # The section extractors stop at the first blank line. `/^$/` cannot match a
+  # CRLF blank line — awk strips only the \n — so on a CRLF-saved README the
+  # extraction ran to EOF, swallowed every later section, and the gate reported
+  # counts that cannot be reconciled ("declares 9 resources but lists 12") about
+  # a document in which no claim had changed at all. Nothing normalises line
+  # endings on the way in, so the CR is handled here (round 3).
   res_n=$(sed -n 's/^\*\*Resources (\([0-9][0-9]*\) + 1 template).*/\1/p' "$MCPDOC")
   if [ -z "$res_n" ]; then
     err "$MCPDOC has no '**Resources (N + 1 template)**' declaration — the resource count check would pass vacuously."
+  elif ! count_once '**Resources (N + 1 template)**' "$res_n"; then
+    :
   else
-    listed=$(awk '/^\*\*Resources \(/ { on=1 } on { print; if (/^$/ && seen) exit; seen=1 } ' "$MCPDOC" \
+    listed=$(awk '{ sub(/\r$/, "") } /^\*\*Resources \(/ { on=1 } on { print; if (/^$/ && seen) exit; seen=1 } ' "$MCPDOC" \
       | grep -oE '`cqels://[^`]+`' | grep -v '{' | sort -u | wc -l | tr -d ' ')
     [ "$listed" -eq "$res_n" ] || err "$MCPDOC declares $res_n resources but lists $listed concrete \`cqels://\` URIs."
-    rclaim=$(grep -oE '[0-9]+ resources' README.md | awk '{print $1}' | sort -u)
+    rclaim=$(grep -oE '\*\*[0-9]+ resources\*\*' README.md | tr -d '*' | awk '{print $1}' | sort -u)
     if [ -z "$rclaim" ]; then
-      err "README.md makes no 'N resources' claim any more — cross-file resource check would pass vacuously."
+      err "README.md makes no '**N resources**' claim any more — cross-file resource check would pass vacuously."
     else
       for c in $rclaim; do
         [ "$c" -eq "$res_n" ] || err "README.md advertises '$c resources' but $MCPDOC declares $res_n."
@@ -731,13 +826,15 @@ if [ -f "$MCPDOC" ] && [ -f README.md ]; then
   pr_n=$(sed -n 's/^\*\*Prompts (\([0-9][0-9]*\)).*/\1/p' "$MCPDOC")
   if [ -z "$pr_n" ]; then
     err "$MCPDOC has no '**Prompts (N)**' declaration — the prompt count check would pass vacuously."
+  elif ! count_once '**Prompts (N)**' "$pr_n"; then
+    :
   else
-    plisted=$(awk '/^\*\*Prompts \(/ { on=1 } on { print; if (/^$/ && seen) exit; seen=1 }' "$MCPDOC" \
+    plisted=$(awk '{ sub(/\r$/, "") } /^\*\*Prompts \(/ { on=1 } on { print; if (/^$/ && seen) exit; seen=1 }' "$MCPDOC" \
       | grep -oE '`[a-z_]+`' | sort -u | wc -l | tr -d ' ')
     [ "$plisted" -eq "$pr_n" ] || err "$MCPDOC declares $pr_n prompts but lists $plisted names."
-    pclaim=$(grep -oE '[0-9]+ prompt' README.md | awk '{print $1}' | sort -u)
+    pclaim=$(grep -oE '\*\*[0-9]+ prompt templates\*\*' README.md | tr -d '*' | awk '{print $1}' | sort -u)
     if [ -z "$pclaim" ]; then
-      err "README.md makes no 'N prompt' claim any more — cross-file prompt check would pass vacuously."
+      err "README.md makes no '**N prompt templates**' claim any more — cross-file prompt check would pass vacuously."
     else
       for c in $pclaim; do
         [ "$c" -eq "$pr_n" ] || err "README.md advertises '$c prompt templates' but $MCPDOC declares $pr_n."
@@ -968,17 +1065,17 @@ PY
   awk '/^## Tools exposed \(/ { on=1; next } on && /^## / { on=0 } on && /^\| `/ { gsub(/`/,"",$2); print $2 }' "$MCPDOC" | sort -u > "$WORK/doc-tools"
   compare_set tools "$WORK/adv-tools" "$WORK/doc-tools"
 
-  awk '/^\*\*Resources \(/ { on=1 } on { print; if (/^$/ && seen) exit; seen=1 }' "$MCPDOC" \
+  awk '{ sub(/\r$/, "") } /^\*\*Resources \(/ { on=1 } on { print; if (/^$/ && seen) exit; seen=1 }' "$MCPDOC" \
     | grep -oE 'cqels://[^`]+' | grep -v '{' | sort -u > "$WORK/doc-resources"
   compare_set resources "$WORK/adv-resources" "$WORK/doc-resources"
 
   # The '{'-bearing URIs in the SAME documented section are the templates —
   # compared against resources/templates/list, never silently dropped.
-  awk '/^\*\*Resources \(/ { on=1 } on { print; if (/^$/ && seen) exit; seen=1 }' "$MCPDOC" \
+  awk '{ sub(/\r$/, "") } /^\*\*Resources \(/ { on=1 } on { print; if (/^$/ && seen) exit; seen=1 }' "$MCPDOC" \
     | grep -oE 'cqels://[^`]+' | grep '{' | sort -u > "$WORK/doc-resource-templates"
   compare_set "resource templates" "$WORK/adv-resource-templates" "$WORK/doc-resource-templates"
 
-  awk '/^\*\*Prompts \(/ { on=1 } on { print; if (/^$/ && seen) exit; seen=1 }' "$MCPDOC" \
+  awk '{ sub(/\r$/, "") } /^\*\*Prompts \(/ { on=1 } on { print; if (/^$/ && seen) exit; seen=1 }' "$MCPDOC" \
     | grep -oE '`[a-z_]+`' | tr -d '`' | sort -u > "$WORK/doc-prompts"
   compare_set prompts "$WORK/adv-prompts" "$WORK/doc-prompts"
 

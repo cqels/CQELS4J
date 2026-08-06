@@ -208,7 +208,7 @@ tool surface — **25 tools** covering the four agent-memory types
 `save_procedure`/`run_procedure`, working-memory `assemble_context`), continuous stream
 queries (`create_stream`, `push_stream_events`, `register_stream_query`, `remove_stream`), standing SHACL
 invariants (`watch_invariant`) and ASP rules (`register_rules`), one-shot RDFS/OWL/SHACL/ASP
-reasoning, decision lineage, and governance — plus 9 resources and 10 prompt templates, with
+reasoning, decision lineage, and governance — plus **9 resources** and **10 prompt templates**, with
 a fleet knowledge graph already loaded to query, watch, and reason over. Its single
 dependency is the published `org.cqels:cqels-mcp`.
 
