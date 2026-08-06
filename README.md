@@ -203,10 +203,10 @@ electric-vehicle fleet / vehicle-to-grid (V2G) scenario.)
 (`org.cqels:cqels-mcp`, a [Model Context Protocol](https://modelcontextprotocol.io/) server)
 as a runnable jar behind a thin launcher that seeds the [`examples/`](examples/)'
 **EV-fleet / V2G** world, so an MCP client such as Claude Desktop gets the full production
-tool surface — **24 tools** covering the four agent-memory types
+tool surface — **25 tools** covering the four agent-memory types
 (`store_memory`/`recall_memory`, episodic `record_event`/`recall_episodes`, procedural
 `save_procedure`/`run_procedure`, working-memory `assemble_context`), continuous stream
-queries (`create_stream`, `push_stream_events`, `register_stream_query`), standing SHACL
+queries (`create_stream`, `push_stream_events`, `register_stream_query`, `remove_stream`), standing SHACL
 invariants (`watch_invariant`) and ASP rules (`register_rules`), one-shot RDFS/OWL/SHACL/ASP
 reasoning, decision lineage, and governance — plus 9 resources and 10 prompt templates, with
 a fleet knowledge graph already loaded to query, watch, and reason over. Its single

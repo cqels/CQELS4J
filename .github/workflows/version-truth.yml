@@ -1,0 +1,72 @@
+# The only CI this repository has, and deliberately so.
+#
+# This repo ships documentation about a release published elsewhere. Nothing
+# here compiles, so nothing here fails when a claim goes stale — see the header
+# of scripts/ci/version-truth-gate.sh for the three defects that were sitting in
+# the public landing page before this existed.
+#
+# Three jobs, split by cost and by what a red means:
+#   version-truth  offline, seconds. Red = a claim in this repo is false.
+#   links          ~6 HEAD requests. Red = a channel this repo names is gone.
+#                  Kept separate so a network red is never confused for the
+#                  offline one; exit 3 (inconclusive) is a re-run, not a defect.
+#   tools-reality  builds the server. Red = the docs describe a surface the
+#                  server does not have. Too slow for every PR.
+#
+# The schedule catches world-drift — a deleted release, a dead mirror — with no
+# commit. CAVEAT: GitHub disables scheduled workflows in public repos after 60
+# days of repository inactivity, and this repo is quiet between releases, so the
+# daily run WILL eventually stop on its own. That is the "gate that stops
+# detecting" failure the self-test warns about, so it is also handled outside
+# CI: the release checklist dispatches `links` by hand after every release.
+# workflow_dispatch is kept for exactly that.
+
+name: version-truth
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  version-truth:
+    runs-on: ubuntu-latest          # hosted, always: this is a public repo and
+    timeout-minutes: 5              # fork PRs must not touch private runners
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      # The self-test runs FIRST, on every PR. The lesson this repeats: logic
+      # that only executes at release time rots unseen, and a gate whose own
+      # correctness is never checked is a green tick with nothing behind it.
+      - run: scripts/ci/version-truth-gate.test.sh
+      - run: scripts/ci/version-truth-gate.sh
+
+  links:
+    needs: version-truth
+    if: github.event_name != 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      # Exit 3 means "could not reach the network", not "the docs are wrong".
+      # It still fails the job — fail-closed — but the log says to re-run.
+      - run: scripts/ci/version-truth-gate.sh --online
+
+  tools-reality:
+    needs: version-truth
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-java@3a4f6e1af504cf6a31855fa899c6aa5355ba6c12 # v4.7.0
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+      - run: scripts/ci/version-truth-gate.sh --deep
