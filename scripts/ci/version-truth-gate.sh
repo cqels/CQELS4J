@@ -64,10 +64,16 @@
 #   * Marker proximity is a text rule and can be gamed: "unchanged since
 #     `2.0.0-alpha.16`" reads as provenance and is exempted from equality. No
 #     such line exists today. That is the inherent residual of any text rule.
+#     It is the residual of a marker that GOVERNS the token; a marker governing
+#     a different noun ("tested before release: `X`") is not exempt — see P1.
 #   * A reference to a WITHDRAWN version ("since 2.0.0-alpha.17", a version that
 #     was never publicly consumable) passes the offline tier, which cannot know
 #     the withdrawn set. The online tier only probes channels derived from the
 #     pin.
+#   * Tokens are matched CASE-INSENSITIVELY and reported as written. A stamp
+#     spelled `2.0.0-Alpha.13` used to match nothing at all — not current, not
+#     bare, not malformed — so a stale stamp in that spelling passed silently
+#     while the vacuity guard stayed satisfied by the other stamps in the file.
 #   * The version grammar is pinned to `-(alpha|beta|rc).N`. The day this
 #     project ships a final `2.0.0`, A1 will fail loudly rather than silently
 #     un-scoping every token in the repo. That is intentional; the fix is a
@@ -151,6 +157,15 @@ for pom in $POMS; do
     exit 2
   fi
   v=$(sed -n 's|.*<cqels\.version>\(.*\)</cqels\.version>.*|\1|p' "$pom")
+  # An unreadable value must NOT fall through to the "$PIN is still empty"
+  # first-iteration sentinel: an element split across lines passes the count
+  # guard above, yields nothing here, and the SECOND pom then silently became
+  # the pin — after which the gate printed "pin is X, identical in both poms"
+  # about two poms that were not (codex round 3).
+  if [ -z "$v" ]; then
+    echo "::error::$pom declares <cqels.version> but no value could be read from it — the element must open, hold the version and close on ONE line. Refusing to guess the pin." >&2
+    exit 2
+  fi
   if [ -z "$PIN" ]; then
     PIN="$v"
   elif [ "$PIN" != "$v" ]; then
@@ -216,34 +231,65 @@ scan_file() {
   awk -v FILE="$1" '
     function norm(s) { gsub(/[^A-Za-z0-9]+/, " ", s); sub(/^ +/, "", s); sub(/ +$/, "", s); return s }
 
+    # One referent = one word. A URL is a link TARGET, not prose: its dots are
+    # not clause ends and its path segments are not words of the sentence. A
+    # version token is one word, not the six fragments norm() makes of
+    # "2 0 0 alpha 13". Both are collapsed before any clause or window rule,
+    # because the repo house style for a version mention is a link to its tag —
+    # "since [`X`](.../tag/vX)" — and without this the URL copy of the token
+    # was classified CURRENT and a TRUE provenance line fired (codex round 3).
+    function prep(s) {
+      gsub(/https?:\/\/[^ ]+/, " ", s)
+      gsub(/[0-9]+\.[0-9]+\.[0-9]+-[A-Za-z]+\.[0-9]+/, " VERSION ", s)
+      return s
+    }
+
     # PROVENANCE iff a marker word governs the token.
-    #   P1  since | before | prior to   ..<=3 words..  TOKEN
-    #   P2  TOKEN  ..<=1 word..  onward(s)
+    #   P1  since | before | prior to   <version-qualifying filler>  TOKEN
+    #   P2  TOKEN  onward(s)
     #   P3  TOKEN  is|was the first release
-    function classify(before, after,   b, a, n, w, i, tail) {
+    function classify(before, after,   b, a, n, w, i, lw) {
+      before = prep(before); after = prep(after)
+
       # A marker only governs a token in ITS OWN clause. norm() strips every
-      # punctuation mark, so without this truncation a marker in an EARLIER
-      # clause of the same line exempts a stale stamp two clauses later:
-      #     Nothing changed since launch; release `2.0.0-alpha.13`
-      # classified provenance and the gate reported OK on a false claim (codex
-      # round 2 — the cross-line continuity fix did not cover the in-line
-      # case). Everything before the LAST . ! ? or ; is discarded before the
-      # marker scan. A colon is deliberately NOT a truncator: it introduces
-      # what follows ("Available since: `X`") rather than ending a clause.
+      # punctuation mark, so without this truncation a marker in a NEIGHBOURING
+      # clause of the same line exempts a stale stamp. Both directions were
+      # reported OK by the gate on a false claim:
+      #     Nothing changed since launch; release `2.0.0-alpha.13`      (before)
+      #     The current release is `2.0.0-alpha.13`. Moving onwards, …  (after)
+      # (codex round 2 for the before side, round 3 for the after side, which
+      # the round-2 fix left untouched.) Everything before the LAST mark, and
+      # everything after the FIRST one, is discarded. This is safe only because
+      # prep() ran first: the dots inside a version token and a URL are not
+      # clause ends, and truncating on them cut the marker away from its OWN
+      # token. A colon is deliberately NOT a truncator: it introduces what
+      # follows ("Available since: `X`") rather than ending a clause.
       sub(/.*[.!?;]/, "", before)
+      sub(/[.!?;].*/, "", after)
       b = norm(before); a = norm(after)
 
-      # P1: the marker must sit within 3 words of the token. The bound stops a
-      # sentence-initial "Since" from exempting a current stamp further along
-      # the same line; the measured maximum in this repo is 2 ("Since CQELS
-      # {@code X" across a javadoc wrap), so 3 is one word of slack.
+      # P1: the marker must GOVERN the token — only version-qualifying filler
+      # may sit between the two. A plain word-distance window instead of this
+      # classified "**Tested before release:** `2.0.0-alpha.13`" as provenance,
+      # where `before` governs "release" and the stamp is an ordinary current
+      # claim (codex round 3). The filler set is measured, not guessed: every
+      # provenance line in this repo has 0-2 intervening words, and all of them
+      # are "CQELS" or the javadoc `{@code X}` wrap; "and"/"or" carry the
+      # second token of "since `X` and `Y`", which is one marker governing two.
       n = split(b, w, " ")
-      for (i = n; i >= 1 && i > n - 4; i--) {
-        if (tolower(w[i]) == "since" || tolower(w[i]) == "before") return "provenance"
-        if (tolower(w[i]) == "to" && i > 1 && tolower(w[i-1]) == "prior") return "provenance"
+      for (i = n; i >= 1; i--) {
+        lw = tolower(w[i])
+        if (lw == "since" || lw == "before") return "provenance"
+        if (lw == "to" && i > 1 && tolower(w[i-1]) == "prior") return "provenance"
+        if (lw == "cqels" || lw == "code" || lw == "version" || lw == "v" ||
+            lw == "and"   || lw == "or") continue
+        break
       }
-      # P2 / P3 look forward.
-      if (a ~ /^([A-Za-z0-9]+ )?onwards?( |$)/) return "provenance"
+      # P2 / P3 look forward. NOTHING may sit between the token and "onward":
+      # a one-word slot let any next-line sentence that opened "Moving onwards,"
+      # exempt a stale line-final stamp — and a stamp/badge line ends with the
+      # token, so continuous() allowed that join (codex round 3).
+      if (a ~ /^onwards?( |$)/) return "provenance"
       if (a ~ /^(is|was) the first release( |$)/) return "provenance"
       return "current"
     }
@@ -302,6 +348,33 @@ scan_file() {
       return 1
     }
 
+    # What makes a matched token NOT the token it looks like. Returns the
+    # offending suffix, or "" when the match stands on its own.
+    #
+    # A trailing alphanumeric was the only case checked, so "2.0.0-alpha.16.1"
+    # and "2.0.0-alpha.16-SNAPSHOT" — neither of which resolves anywhere — were
+    # silently truncated to the pin and reported as a correct current stamp,
+    # the exact failure the check was written to prevent (codex round 3).
+    # `.` and `-` cannot be rejected wholesale: SUPPLY_CHAIN.md carries
+    # `cqels-engine-2.0.0-alpha.16.jar` and `…-shaded.jar`, both true. A dot is
+    # only suspect when a DIGIT follows it (a sentence period or a file
+    # extension never does), and a dash only in front of a literal SNAPSHOT.
+    function badsuffix(rest,   n, c, out) {
+      if (rest ~ /^[0-9A-Za-z]/) return substr(rest, 1, 1)
+      if (toupper(substr(rest, 1, 9)) == "-SNAPSHOT") return "-SNAPSHOT"
+      if (rest ~ /^\.[0-9]/) {
+        out = ""
+        for (n = 1; n <= length(rest); n++) {
+          c = substr(rest, n, 1)
+          if (c !~ /[0-9.]/) break
+          out = out c
+        }
+        sub(/\.$/, "", out)
+        return out
+      }
+      return ""
+    }
+
     { L[FNR] = $0 }
 
     END {
@@ -310,20 +383,24 @@ scan_file() {
         prev = (i > 1 && continuous(L[i-1], line)) ? L[i-1] : ""
         nxt  = (i < FNR && continuous(line, L[i+1])) ? L[i+1] : ""
         masked = line
+        # Matching is done on a LOWERCASED copy — same length, so every offset
+        # still indexes the original — and the token is reported as written.
+        # A case-sensitive grammar made `2.0.0-Alpha.13` match nothing at all:
+        # not current, not bare, not malformed, so a stale stamp in that
+        # spelling passed in total silence (codex round 3).
+        lline = tolower(line)
+        lmasked = lline
 
         # -- full-form tokens ------------------------------------------------
         pos = 1
-        while (match(substr(line, pos), /[0-9]+\.[0-9]+\.[0-9]+-(alpha|beta|rc)\.[0-9]+/)) {
+        while (match(substr(lline, pos), /[0-9]+\.[0-9]+\.[0-9]+-(alpha|beta|rc)\.[0-9]+/)) {
           abs = pos + RSTART - 1
           len = RLENGTH
           tok = substr(line, abs, len)
 
-          # A trailing alphanumeric means the token is not what it looks like
-          # ("2.0.0-alpha.16x"): report it rather than silently truncating to
-          # something that happens to match the pin.
-          after_ch = substr(line, abs + len, 1)
-          if (after_ch ~ /[0-9A-Za-z]/) {
-            print FILE "|" i "|malformed|" tok after_ch
+          bad = badsuffix(substr(line, abs + len))
+          if (bad != "") {
+            print FILE "|" i "|malformed|" tok bad
           } else {
             before = prev " " substr(line, 1, abs - 1)
             after  = substr(line, abs + len) " " nxt
@@ -333,17 +410,18 @@ scan_file() {
           # Blank the token (same length, so positions stay valid) before the
           # bare-form sweep, so "2.0.0-alpha.16" never also registers as a bare
           # "alpha.16".
-          masked = substr(masked, 1, abs - 1) sprintf("%" len "s", "") substr(masked, abs + len)
+          masked  = substr(masked,  1, abs - 1) sprintf("%" len "s", "") substr(masked,  abs + len)
+          lmasked = substr(lmasked, 1, abs - 1) sprintf("%" len "s", "") substr(lmasked, abs + len)
           pos = abs + len
         }
 
         # -- bare tokens (alpha.7) -------------------------------------------
         pos = 1
-        while (match(substr(masked, pos), /(alpha|beta|rc)\.[0-9]+/)) {
+        while (match(substr(lmasked, pos), /(alpha|beta|rc)\.[0-9]+/)) {
           abs = pos + RSTART - 1
           len = RLENGTH
-          bch = (abs > 1) ? substr(masked, abs - 1, 1) : " "
-          ach = substr(masked, abs + len, 1)
+          bch = (abs > 1) ? substr(lmasked, abs - 1, 1) : " "
+          ach = substr(lmasked, abs + len, 1)
           if (bch !~ /[0-9A-Za-z]/ && ach !~ /[0-9A-Za-z]/)
             print FILE "|" i "|bare|" substr(masked, abs, len)
           pos = abs + len
@@ -399,6 +477,10 @@ vkey() {
   awk -v t="$1" -v pin="$2" '
     function rank(c) { return (c == "alpha") ? 1 : (c == "beta") ? 2 : (c == "rc") ? 3 : 9 }
     BEGIN {
+      # Tokens are scanned case-insensitively, so the channel must be ranked
+      # that way too — otherwise "since 2.0.0-Alpha.11" ranks unknown (9) and
+      # true history is reported as impossible.
+      t = tolower(t); pin = tolower(pin)
       if (t ~ /^[0-9]/) { split(t, p, "-"); split(p[1], b, ".") }
       else              { split(pin, q, "-"); split(q[1], b, ".") }   # bare: borrow the pin base
       sub(/^[^-]*-/, "", t)
@@ -414,7 +496,7 @@ PIN_KEY=$(vkey "$PIN" "$PIN")
 while IFS='|' read -r f ln cls tok; do
   case "$cls" in
     malformed)
-      err "$f:$ln documents '$tok', which is not a usable version token — a stray character next to a version. Nothing resolves for that string."
+      err "$f:$ln documents '$tok', which is not a usable version token — a stray character or suffix next to a version. Nothing resolves for that string."
       ;;
     current)
       # A2 — an unmarked token is a claim about NOW.

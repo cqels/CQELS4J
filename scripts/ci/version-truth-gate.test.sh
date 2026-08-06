@@ -202,9 +202,57 @@ echo
 echo "the classification rule — where it must NOT let a stale stamp through"
 
 # 'Since' at the head of a sentence must not exempt a stamp further along it.
+# This one is carried by the in-line clause rule (the ';'), which is why the
+# case below exists: it removes every clause mark, so the ONLY thing that can
+# make it fire is the rule that a marker must GOVERN the token. Widening the
+# old 3-word window to 100 left the whole suite green — the bound this case
+# used to name was never exercised by anything (codex round 3).
 d=$(newfix)
 printf '\nSince then much has changed; the engine is now 2.0.0-alpha.13.\n' >> "$d/README.md"
-check 1 "a marker more than 3 words away does not exempt" "$d"
+check 1 "a marker in an earlier clause does not exempt (clause rule)" "$d"
+
+d=$(newfix)
+printf '\nSince version numbering the current build is 2.0.0-alpha.13.\n' >> "$d/README.md"
+checkmsg 1 "a marker whose object is NOT the token does not exempt (no clause mark to help)" \
+  "claims version" "$d"
+
+# The label shape: `before` governs "release", not the version. The colon is
+# deliberately not a clause mark (see 'Available since:' below), so nothing but
+# the governing rule can catch this.
+d=$(newfix)
+printf '\n**Tested before release:** `2.0.0-alpha.13` on JDK 17 and 21.\n' >> "$d/README.md"
+check 1 "'Tested before release: X' is a current stamp, not provenance" "$d"
+
+d=$(newfix)
+printf '\n**Tested before release** — `2.0.0-alpha.13` on JDK 17 and 21.\n' >> "$d/README.md"
+check 1 "...and the em-dash spelling of it too (no colon involved)" "$d"
+
+# The AFTER side of the clause rule. The round-2 fix truncated `before` only,
+# so a marker in a LATER clause still exempted a stale stamp.
+d=$(newfix)
+printf '\nThe current release is `2.0.0-alpha.13`; moving onward requires migration.\n' >> "$d/README.md"
+check 1 "an 'onward' in a LATER clause does not exempt (after-side clause rule)" "$d"
+
+d=$(newfix)
+printf '\nThe current release is `2.0.0-alpha.13`. Moving onwards, each demo is listed below.\n' >> "$d/README.md"
+check 1 "...nor one in the next SENTENCE of the same line" "$d"
+
+d=$(newfix)
+printf '\nThe pin is `2.0.0-alpha.13`; is the first release of a new era, they said.\n' >> "$d/README.md"
+check 1 "...and P3 is clause-scoped as well, not just P2" "$d"
+
+# A stamp line ends with the token and no punctuation — the characteristic
+# shape of a badge — so continuous() allows the join to the next line. Nothing
+# may sit between the token and 'onward'; a one-word slot let any next-line
+# sentence opening 'Read onwards…' exempt the badge.
+d=$(newfix)
+printf '\n**Current release:** `2.0.0-alpha.13`\nRead onwards for the full guide.\n' >> "$d/README.md"
+check 1 "a next-line sentence merely CONTAINING 'onwards' does not exempt a stale badge" "$d"
+
+# ...and the other direction: the real wrap, where 'onward' opens the next line.
+d=$(newfix)
+printf '\nGuards on negated steps are honored from `2.0.0-alpha.13`\nonward, on every stream.\n' >> "$d/CQELS-QL_SPEC.md"
+check 0 "'from X' wrapping onto a line that OPENS with 'onward' is provenance" "$d"
 
 # The mcp-server/README.md:194-195 shape. 'from' alone is not a marker.
 d=$(newfix)
@@ -245,6 +293,19 @@ prov "SUPPLY_CHAIN.md:163   '**Since \`X\` it is attached to the GitHub release*
   '**Since `2.0.0-alpha.16` it is attached to the GitHub release**, which needs no credentials:'
 prov "SUPPLY_CHAIN.md:207   'From \`X\` onward … is pinned'" \
   'From `2.0.0-alpha.16` onward `project.build.outputTimestamp` is pinned, so builds are'
+
+# Provenance written in this repo's own house style — the version LINKS to its
+# tag (README.md:8), so the token appears twice on the line. Every one of these
+# fired as a stale current stamp: the first token exploded into six words under
+# norm() and its dots truncated the clause, pushing the marker out of reach of
+# the second (codex round 3). The remedy the error message offered was
+# "reword it as provenance", which the line already said.
+prov "link house style   'since [\`X\`](…/tag/vX).'" \
+  'Negated-step guards are honored since [`2.0.0-alpha.13`](https://github.com/cqels/CQELS4J/releases/tag/v2.0.0-alpha.13).'
+prov "link house style   'From [\`X\`](…) onward, …'" \
+  'From [`2.0.0-alpha.13`](https://github.com/cqels/CQELS4J/releases/tag/v2.0.0-alpha.13) onward, guards are honored.'
+prov "one marker, two tokens  'since \`X\` and \`Y\`'" \
+  'Guards are honored since `2.0.0-alpha.11` and `2.0.0-alpha.13` respectively.'
 
 # The one that needs the lookback: the marker ends the PREVIOUS line.
 #
@@ -361,6 +422,40 @@ printf 'Star joins landed. Since `2.0.0-alpha.113` the guard is honored.\n' >> "
 checkmsg 1 "numeric suffix: alpha.113 under alpha.16 is impossible history (not lexical)" "NEWER than" "$d"
 
 echo
+echo "token spelling — a string that is not a version must not be read as one"
+
+# A stale stamp spelled `2.0.0-Alpha.13` used to match NOTHING — not current,
+# not bare, not malformed — so it passed in silence while the vacuity guard
+# stayed satisfied by the other stamps in the same file (codex round 3).
+d=$(newfix); sed -i.bak 's|Latest release:.*|Latest release: `2.0.0-Alpha.13`|' "$d/README.md"
+checkmsg 1 "a stale stamp in mixed case is not invisible" "2.0.0-Alpha.13" "$d"
+
+d=$(newfix); printf '\nAn opt-in path (Alpha.99).\n' >> "$d/README.md"
+check 1 "a BARE mixed-case reference to a future version fires" "$d"
+
+# ...and the other direction: reading tokens case-insensitively must not turn
+# true history into "impossible history" via an unranked channel.
+d=$(newfix); printf '\nGuards are honored since `2.0.0-Alpha.11`.\n' >> "$d/CQELS-QL_SPEC.md"
+checkmsg 0 "mixed-case provenance older than the pin stays valid history" "OK:" "$d"
+
+# Suffixes. Only a trailing ALPHANUMERIC was rejected, so `X.1` and
+# `X-SNAPSHOT` — neither of which resolves anywhere — were truncated to the pin
+# and reported as a correct current stamp, which is the silent truncation this
+# check was written to prevent.
+for suffix in x .1 .9.9 -SNAPSHOT; do
+  d=$(newfix)
+  sed -i.bak "s|Latest release:.*|Latest release: \`$PIN$suffix\`|" "$d/README.md"
+  checkmsg 1 "'$PIN$suffix' is reported, not truncated to the pin" "not a usable version token" "$d"
+done
+
+# ...and the shapes that legitimately carry a '.' or '-' next to a token stay
+# silent. SUPPLY_CHAIN.md:87 documents exactly this path, so a blanket rule on
+# either character would fire on a true claim.
+d=$(newfix)
+printf '\n    REL=org/cqels/cqels-engine/%s/cqels-engine-%s.jar\n' "$PIN" "$PIN" >> "$d/SUPPLY_CHAIN.md"
+check 0 "a real artifact path ('…/X/cqels-engine-X.jar') is not malformed" "$d"
+
+echo
 echo "the fence that is CURRENT passes when it is current (boundary, both sides)"
 
 d=$(newfix)
@@ -404,6 +499,27 @@ done
 d=$(newfix)
 sed -i.bak "s|<cqels.version>$PIN</cqels.version>|<cqels.version>$PIN</cqels.version><cqels.version>$PIN</cqels.version>|" "$d/examples/pom.xml"
 check 2 "two <cqels.version> elements is an ambiguous pin" "$d"
+
+# A value the extractor cannot read must be a usage error, not a silent
+# "unset". An element split across lines passes the count guard (which sees
+# only the OPEN tag), and the empty value then fell through to the
+# "$PIN is still empty" first-iteration sentinel — so the SECOND pom quietly
+# became the pin and the gate printed "identical in both poms" about two poms
+# that were not (codex round 3). It matters which pom: only the first one hits
+# the sentinel, so both are pinned.
+for pom in examples mcp-server; do
+  d=$(newfix)
+  python3 - "$d/$pom/pom.xml" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+s = s.replace("<cqels.version>", "<cqels.version>\n            ")
+s = s.replace("</cqels.version>", "\n        </cqels.version>")
+open(p, "w").write(s)
+PY
+  checkmsg 2 "a <cqels.version> split across lines in $pom/pom.xml is a usage error" \
+    "no value could be read" "$d"
+done
 
 echo
 echo "scan universe — the index, not the working tree"

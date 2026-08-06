@@ -5,13 +5,15 @@
 # of scripts/ci/version-truth-gate.sh for the three defects that were sitting in
 # the public landing page before this existed.
 #
-# Three jobs, split by cost and by what a red means:
-#   version-truth  offline, seconds. Red = a claim in this repo is false.
-#   links          ~6 HEAD requests. Red = a channel this repo names is gone.
-#                  Kept separate so a network red is never confused for the
-#                  offline one; exit 3 (inconclusive) is a re-run, not a defect.
-#   tools-reality  builds the server. Red = the docs describe a surface the
-#                  server does not have. Too slow for every PR.
+# Four jobs, split by cost and by what a red means:
+#   version-truth   offline, seconds. Red = a claim in this repo is false.
+#   links           ~6 HEAD requests. Red = a channel this repo names is gone.
+#                   Kept separate so a network red is never confused for the
+#                   offline one; exit 3 (inconclusive) is a re-run, not a defect.
+#   tools-reality   builds the server. Red = the docs describe a surface the
+#                   server does not have. Too slow for every PR.
+#   schedule-health independent of all three. Red = the nightly below is not
+#                   running, so nothing is watching the world any more.
 #
 # The schedule catches world-drift — a deleted release, a dead mirror — with no
 # commit. CAVEAT: GitHub disables scheduled workflows in public repos after 60
@@ -21,16 +23,20 @@
 # workflow can notice it is disabled, so the residual is handled two ways, both
 # honest about their limits:
 #
-#   1. DETECTION on the next human touch: the schedule-staleness step below runs
-#      on every PR and dispatch, asks the API when the schedule last completed,
-#      and FAILS the job if that is over 8 days ago (or never). A dormant repo
-#      stays dark, but the first PR after dormancy cannot go green while the
-#      world-drift check is silently off — the failure names the fix
-#      (re-enable the workflow, run `links` by hand).
-#   2. RELEASING.md step 6 dispatches `links` after every release — the moment
-#      world-drift matters most. That file is committed alongside this one; if
-#      you rename it, update this comment or the claim rots like the one it
-#      replaced (an earlier revision cited a checklist that did not exist).
+#   1. DETECTION on the next human touch: the schedule-health job below runs on
+#      every PR and dispatch, asks the API when the schedule last completed, and
+#      FAILS if that is over 8 days ago (or never). A dormant repo stays dark,
+#      but the first PR after dormancy cannot go green while the world-drift
+#      check is silently off — the failure names the fix.
+#      It is a JOB OF ITS OWN, needed by nothing, and that is the whole point:
+#      as a step inside version-truth it blocked its own remedy. In the one
+#      scenario it exists for it failed version-truth, which skipped `links` —
+#      so the by-hand world-drift run the error message told you to do could
+#      not run, and the repo stayed red until a real cron fired (codex round 3).
+#   2. RELEASING.md step 6 runs this workflow by hand after every release — the
+#      moment world-drift matters most. That file is committed alongside this
+#      one; if you rename it, update this comment or the claim rots like the one
+#      it replaced (an earlier revision cited a checklist that did not exist).
 
 name: version-truth
 
@@ -44,7 +50,7 @@ on:
 
 permissions:
   contents: read
-  actions: read     # the schedule-staleness step reads this workflow's own run history
+  actions: read     # schedule-health reads this workflow's own run history
 
 jobs:
   version-truth:
@@ -57,13 +63,24 @@ jobs:
       # correctness is never checked is a green tick with nothing behind it.
       - run: scripts/ci/version-truth-gate.test.sh
       - run: scripts/ci/version-truth-gate.sh
-      # Schedule-staleness detector. A disabled schedule cannot report itself,
-      # so the next human interaction does: if this workflow's schedule has not
-      # completed in 8 days (daily cron + generous slack), fail loudly and name
-      # the remedy. Skipped ON the scheduled run itself — a resurrected schedule
-      # must not fail for having been dead.
+
+  # Schedule-staleness detector. A disabled schedule cannot report itself, so
+  # the next human interaction does: if this workflow's schedule has not
+  # completed in 8 days (daily cron + generous slack), fail loudly and name the
+  # remedy. Skipped ON the scheduled run itself — a resurrected schedule must
+  # not fail for having been dead.
+  #
+  # DELIBERATELY A SEPARATE JOB with no `needs:` in either direction. As a step
+  # inside version-truth it took the whole workflow down with it, `links`
+  # included — so the by-hand world-drift run its own error message prescribes
+  # could not run, and the repo stayed red until a real cron fired up to 24h
+  # later. A detector must not block the thing it tells you to do.
+  schedule-health:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
       - name: Fail if the nightly schedule has gone quiet
-        if: github.event_name != 'schedule'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -85,7 +102,7 @@ jobs:
           if [ "$days" = "never-ran" ] && [ "$wf_age" -le 8 ]; then
             echo "workflow is ${wf_age} days old — schedule has not had time to fire yet; not stale."
           elif [ "$days" = "never-ran" ] || [ "$days" -gt 8 ]; then
-            echo "::error::The nightly world-drift schedule is NOT running (last: ${last:-never}). GitHub disables schedules in public repos after 60 days of inactivity. Re-enable it under Actions -> version-truth, then dispatch the links job once by hand."
+            echo "::error::The nightly world-drift schedule is NOT running (last: ${last:-never}). GitHub disables schedules in public repos after 60 days of inactivity. Re-enable it under Actions -> version-truth, then run the workflow by hand (Actions -> version-truth -> Run workflow); this job does not block that run, so the links job will still execute."
             exit 1
           fi
 

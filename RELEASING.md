@@ -10,15 +10,19 @@ this automatically. This checklist covers the parts it cannot.
 
 ## Checklist
 
-1. **Confirm the engine release is real before touching this repo.**
+1. **Confirm the engine release is real before touching this repo — by hand.**
    The GitHub release page for the target version must exist, and the shaded
    MCP server jar must be downloadable from it. A bump merged before those
-   exist puts dead links on the public landing page — the gate's `--online`
-   tier checks exactly this, so run it first:
+   exist puts dead links on the public landing page. Open them yourself:
 
-   ```bash
-   scripts/ci/version-truth-gate.sh --online
    ```
+   https://github.com/cqels/CQELS4J/releases/tag/v<TARGET>
+   ```
+
+   The gate cannot do this step. Every URL its `--online` tier probes is
+   derived from the pin it reads out of the poms, so run before the bump it
+   checks the release you are moving *away* from and says nothing about the
+   target. It becomes the real check at step 4, after the pin has moved.
 
 2. **Bump the pin** in `examples/pom.xml` and `mcp-server/pom.xml` (the gate
    fails if they disagree), then update the current-version stamps the offline
@@ -41,11 +45,11 @@ this automatically. This checklist covers the parts it cannot.
 
 5. **Open the PR** and let CI repeat the offline + online tiers.
 
-6. **After the merge, dispatch the `links` job once by hand**
-   (Actions → version-truth → Run workflow). This is the durability step the
-   workflow's own comments reference: GitHub disables scheduled workflows in
-   public repositories after 60 days of repository inactivity, so the nightly
+6. **After the merge, run the workflow once by hand**
+   (Actions → version-truth → Run workflow; a dispatch runs the whole
+   workflow, `links` included). This is the durability step the workflow's own
+   comments reference: GitHub disables scheduled workflows in public
+   repositories after 60 days of repository inactivity, so the nightly
    world-drift check cannot be assumed alive between releases. The
-   schedule-staleness step in CI will fail the next PR if the schedule has gone
-   quiet — this dispatch is how you both verify the release channels and
-   confirm the workflow is enabled.
+   `schedule-health` job will fail the next PR if the schedule has gone quiet;
+   it is a job of its own precisely so that it never blocks this dispatch.
