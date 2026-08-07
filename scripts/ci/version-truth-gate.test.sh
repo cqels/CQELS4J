@@ -892,6 +892,33 @@ d=$(newfix)
 printf '\n<!-- Parked.\nBefore `2.0.0-alpha.13` guards were ignored.\n-->\n\n```text\n<!-- shown, not parsed\n```\n' >> "$d/README.md"
 check 0 "...while a real multi-line comment outside code is still invisible" "$d"
 
+# ...and a close is a close only on CommonMark's terms (codex, round 7): same
+# character, a run AT LEAST AS LONG as the opener, nothing after it but
+# whitespace. Without the length check, the ``` shown inside this four-backtick
+# fence "closed" it, the rendered comment below sat in prose, and the stripper
+# hid a stale version the reader plainly sees.
+d=$(newfix)
+printf '\n````markdown\n```\n<!-- pin the current release: 2.0.0-alpha.13 -->\n````\n' >> "$d/README.md"
+checkmsg 1 "a \`\`\` inside a four-backtick fence is content, not a closer" \
+  "claims version \`2.0.0-alpha.13\`" "$d"
+
+# ...same purity rule for info strings: an opener may carry one ("```xml"), a
+# closer may not, so an info-string line inside an open fence is content too.
+d=$(newfix)
+printf '\n```text\nfirst example\n```xml\n<!-- pin the current release: 2.0.0-alpha.13 -->\n```\n' >> "$d/README.md"
+checkmsg 1 "...and an info-string line inside an open fence is not a closer" \
+  "claims version \`2.0.0-alpha.13\`" "$d"
+
+# ...and the strictness must not orphan the legitimate shape it exists for: a
+# four-backtick fence quoting a three-backtick example still closes on its own
+# marker, and what follows is prose again. The parked comment after the fence is
+# the part that makes this case able to fail: if the closer logic ever turns
+# over-strict and the fence never closes, the comment markers become literal
+# fence content, the stale token inside them turns visible, and this fires.
+d=$(newfix)
+printf '\n````markdown\nA fence example:\n```bash\necho hi\n```\n````\n\n<!-- doc-rev 2.0.0-alpha.13, parked -->\n' >> "$d/README.md"
+check 0 "a four-backtick fence quoting a three-backtick example still closes" "$d"
+
 # ...and the mirror of that, which is the direction that lets a gate certify
 # nothing: an in-comment token used to count as a CURRENT stamp, so one
 # invisible line satisfied A5 for a guide whose rendered text states no version

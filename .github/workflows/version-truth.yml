@@ -57,7 +57,11 @@ permissions:
 jobs:
   version-truth:
     runs-on: ubuntu-latest          # hosted, always: this is a public repo and
-    timeout-minutes: 5              # fork PRs must not touch private runners
+    timeout-minutes: 10             # fork PRs must not touch private runners.
+                                    # The self-test is ~200 cases and ~90 s wall
+                                    # on the slowest awk it supports; 10 leaves
+                                    # room for it to keep growing before a slow
+                                    # runner turns the budget into a false red.
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       # The self-test runs FIRST, on every PR. The lesson this repeats: logic

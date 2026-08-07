@@ -852,16 +852,27 @@ scan_file() {
       MD = (FILE ~ /\.md$/)
 
       # Fence state first, because the comment lexer is suspended inside code
-      # (see decomment). A fence opens on ``` or ~~~ and closes on the SAME
-      # character, so a ``` inside a ~~~ block does not close it. The marker
-      # lines themselves count as code context: they are not prose either.
-      infence = 0; fchar = ""
+      # (see decomment). A fence opens on ``` or ~~~ and closes per CommonMark:
+      # the SAME character (a ``` inside a ~~~ block does not close it), a run
+      # AT LEAST AS LONG as the opener (a ``` inside a ```` block is content —
+      # that is how CommonMark nests a literal fence example), and nothing after
+      # the run but whitespace (an opener may carry an info string, "```xml";
+      # a closer may not, so an "```xml" line inside an open fence is content
+      # too). Without the length/purity checks, a literal comment example shown
+      # inside a four-backtick fence sat "outside" the fence and was stripped
+      # as invisible markup while the reader plainly saw it (codex, round 7).
+      # The marker lines themselves count as code context either way: they are
+      # not prose. "```+" is 3-or-more without interval expressions, which
+      # mawk 1.3.3 on the ubuntu runner does not ship.
+      infence = 0; fchar = ""; fopen = 0
       for (i = 1; i <= FNR; i++) {
-        if (MD && match(L[i], /^[ \t]*(```|~~~)/)) {
-          fc = substr(L[i], RSTART + RLENGTH - 1, 1)
-          if (!infence)          { infence = 1; fchar = fc }
-          else if (fc == fchar)  { infence = 0 }
-          FENCE[i] = 1
+        if (MD && match(L[i], /^[ \t]*(```+|~~~+)/)) {
+          run = substr(L[i], RSTART, RLENGTH); sub(/^[ \t]*/, "", run)
+          fc = substr(run, 1, 1)
+          rest = substr(L[i], RSTART + RLENGTH)
+          if (!infence) { infence = 1; fchar = fc; fopen = length(run); FENCE[i] = 1 }
+          else if (fc == fchar && length(run) >= fopen && rest ~ /^[ \t]*$/) { infence = 0; FENCE[i] = 1 }
+          else FENCE[i] = infence
         } else FENCE[i] = infence
       }
 
