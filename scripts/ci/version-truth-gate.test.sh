@@ -159,6 +159,30 @@ checkmsg() {
   fi
 }
 
+# checkutf8 <want-exit> <name> <needle|-> <dir> — checkmsg, run with a UTF-8
+# locale FORCED into the environment.
+#
+# The gate exports LC_ALL=C precisely so its awk stays byte-oriented, and these
+# cases are the reason: in a UTF-8 locale macOS awk aborts a whole file on one
+# non-UTF-8 byte (the file then contributes ZERO records and a stale stamp in it
+# passes) and its tolower() is not length-preserving (the scanner offsets shift
+# and a CORRECT stamp is reported malformed). Both are round-5, both are
+# invisible on CI — ubuntu's mawk is byte-oriented either way — so the assertion
+# has to name the locale rather than inherit it.
+checkutf8() {
+  local want=$1 name=$2 needle=$3 d=$4
+  local out rc
+  reindex "$d"
+  out=$( cd "$d" && LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8 "$SUT" 2>&1 ); rc=$?
+  if [ "$rc" -eq "$want" ] && { [ "$needle" = "-" ] || printf '%s' "$out" | grep -qF -- "$needle"; }; then
+    printf '  ok    %s\n' "$name"; pass=$((pass + 1))
+  else
+    printf '  FAIL  %s (wanted exit %s naming "%s", got %s)\n' "$name" "$want" "$needle" "$rc"
+    printf '%s\n' "$out" | sed 's/^/          /'
+    fail=$((fail + 1))
+  fi
+}
+
 # checkrecords <want-exit> <name> <dir> <record>... — asserts the CLASSIFICATION
 # of named tokens, via VTG_DUMP, not merely the exit code.
 #
@@ -514,6 +538,20 @@ d=$(newfix)
 printf 'The shaded jar ships since `2.0.0-alpha.13`; grab the current build from the [release page](https://github.com/cqels/CQELS4J/releases/tag/v2.0.0-alpha.13).\n' >> "$d/README.md"
 check 1 "...nor across a semicolon, which the clause rule already treats as a boundary" "$d"
 
+# ...nor across a comma plus a CONJUNCTION, which is a second independent clause
+# wearing the one punctuation mark this rule used to step over. The real
+# SUPPLY_CHAIN.md sentence shape with ", so fetch …" attached passed with exit 0
+# — a stale landing-page download link, defect 2, reported OK (round 5).
+d=$(newfix)
+printf '**Since `2.0.0-alpha.13` it is attached to the GitHub release**, so fetch [the latest shaded jar](https://github.com/cqels/CQELS4J/releases/download/v2.0.0-alpha.13/cqels-mcp-2.0.0-alpha.13-shaded.jar) directly.\n' >> "$d/SUPPLY_CHAIN.md"
+checkmsg 1 "...nor across a comma plus a conjunction, which opens a new clause" \
+  "claims version \`2.0.0-alpha.13\`" "$d"
+
+# ...but a BARE comma still inherits: that is one claim written twice, which is
+# the shape the inheritance exists for, and the em-dash case above is its twin.
+prov "a plain comma still inherits  'since \`X\`, see [notes](…/tag/vX).'" \
+  'Correlated guards were fixed since `2.0.0-alpha.13`, see [the release notes](https://github.com/cqels/CQELS4J/releases/tag/v2.0.0-alpha.13).'
+
 # A marker cannot reach past a clause that predicates the token as current. The
 # two transparencies the walk needs for legitimate shapes — a coordination and a
 # repeated token — carried it there, and the gate reported OK on a stamp that
@@ -546,10 +584,31 @@ printf '\nThe latest release `2.0.0-alpha.13` was the first release to bundle th
 checkmsg 1 "...nor in running prose, in the past tense" \
   "claims version \`2.0.0-alpha.13\`" "$d"
 
+# ...and the nominal does not have to ABUT the token. The guard was end-anchored
+# on the noun while the backward walk steps over a fixed set of filler words, so
+# the two disagreed about the same vocabulary and ONE of them — the product name,
+# which this repo writes in front of a token routinely ("**Applies to:** CQELS
+# `X`") — reopened the evasion verbatim (round 5).
+d=$(newfix)
+printf '\n**Current release:** CQELS `2.0.0-alpha.13` is the first release with the MCP server.\n' >> "$d/README.md"
+checkmsg 1 "...and one word of filler between the label and the stamp does not reopen it" \
+  "claims version \`2.0.0-alpha.13\`" "$d"
+
+d=$(newfix)
+printf '\n**Latest version:** the `2.0.0-alpha.13` is the first release with the MCP server.\n' >> "$d/README.md"
+checkmsg 1 "...nor does an article, on the other spelling of the nominal" \
+  "claims version \`2.0.0-alpha.13\`" "$d"
+
 # ...and the other direction: P3 without that nominal is still provenance, in
 # the lower-case register too (the title-case case is above).
 prov "P3 lower case  '\`X\` is the first release with…'" \
   '`2.0.0-alpha.13` is the first release with the MCP server bundled.'
+
+# ...and the filler the mirror guard now tolerates must not swallow P3 itself:
+# the same sentence with the product name and no nominal in front of it is
+# ordinary release-note prose, and provenance.
+prov "P3 behind filler, with no nominal  'CQELS \`X\` is the first release…'" \
+  'CQELS `2.0.0-alpha.13` is the first release with the MCP server bundled.'
 
 # The current-predicate rule is PRESENT tense. "was the latest release" is how
 # history describes a superseded release, not a claim about now, so the
@@ -617,9 +676,17 @@ printf '\n<!-- introduced since CQELS -->\n`2.0.0-alpha.13` is the release to in
 checkmsg 1 "an invisible HTML comment does not govern the stamp below it" \
   "claims version \`2.0.0-alpha.13\`" "$d"
 
+# The pass-side boundary of the same shape. It must assert the RECORD, not the
+# exit code: at token == pin A2 accepts `current` and A3 accepts `provenance`,
+# so the exit code is silent whichever way the comment is resolved, and with the
+# refusal in continuous() deleted this case stayed green while both must-fire
+# siblings around it turned red — it was passing on the A2/A3 boundary identity,
+# not on the rule its name claims (round 5). Same lesson as the fence case
+# further down, which is what checkrecords() was written for.
 d=$(newfix)
 printf '\n<!-- introduced since CQELS -->\n`%s` is the release to install.\n' "$PIN" >> "$d/README.md"
-check 0 "...and the same shape at the pin stays silent" "$d"
+checkrecords 0 "...and the same shape at the pin stays silent" "$d" \
+  "README.md|11|current|$PIN"
 
 # ...and the same case with CRLF terminators. Every structural refusal in
 # continuous() is END-anchored and awk leaves the CR on the record, so on a
@@ -636,6 +703,34 @@ open(p, 'wb').write(b)
 PY
 checkmsg 1 "...and CRLF does not turn that invisible comment back into a governing marker" \
   "claims version \`2.0.0-alpha.13\`" "$d"
+
+# ...and the shape only continuous() can refuse: a comment that OPENS on an
+# earlier line, so the line above the stamp holds the tail of it and no "<!--"
+# for the in-line stripper to find. Both must stay — the same-line stripper
+# added in round 5 covers the two cases above whether or not this refusal is
+# there, so without this case deleting the refusal leaves the whole suite green.
+d=$(newfix)
+printf '\n<!-- introduced\nsince CQELS -->\n`2.0.0-alpha.13` is the release to install.\n' >> "$d/README.md"
+checkmsg 1 "...and a comment whose OPENING is on an earlier line does not govern it either" \
+  "claims version \`2.0.0-alpha.13\`" "$d"
+
+# ...and the SAME-LINE spelling, which was defended nowhere. continuous() refuses
+# the join from a comment on the line ABOVE; nothing stripped a comment from the
+# line ITSELF, and the in-line clause truncation cannot help — it cuts at the
+# LAST [.!?;], which here is the "!" of "<!--", in FRONT of the marker, so it
+# discarded the real label and KEPT the invisible word. The rendered badge read
+# alpha.13 under an alpha.18 pin and the gate reported OK (round 5).
+d=$(newfix)
+sed -i.bak 's|Latest release:.*|Latest release: <!-- since --> `2.0.0-alpha.13`|' "$d/README.md"
+checkmsg 1 "an invisible HTML comment on the SAME LINE does not exempt the stamp beside it" \
+  "claims version \`2.0.0-alpha.13\`" "$d"
+
+# ...and the other direction, which the same truncation broke on ordinary
+# documentation: a comment sitting between a REAL marker and its token threw the
+# marker away and fired on true history, with the printed remedy already written.
+d=$(newfix)
+printf 'Cross-event guards have been supported since <!-- see CHANGELOG --> `2.0.0-alpha.11` in the engine core.\n' >> "$d/CQELS-QL_SPEC.md"
+check 0 "...and a comment BETWEEN a marker and its token does not break the marker" "$d"
 
 # The SAME-LINE version of that evasion (codex round 2): the marker sits in an
 # EARLIER clause of the same line, separated by a semicolon. norm() strips the
@@ -686,6 +781,21 @@ check 1 "...nor across a table cell boundary ('| Introduced | Current |' matrix 
 d=$(newfix)
 printf 'Supported since `2.0.0-alpha.11` — `2.0.0-alpha.13` is the current release.\n' >> "$d/README.md"
 check 1 "...nor across an em-dash" "$d"
+
+# ...and not across a comma plus a CONJUNCTION either, which is the ordinary
+# English spelling of a second independent clause. The clause mark was
+# transparent to the walk (it has to be — "Available since: `X`" is a
+# must-not-fire case) but it did not clear the coordination flag, so "and"
+# reached back over it, spent itself on the masked first token and arrived at
+# the marker: the bare comma fired and the comma-plus-conjunction spelling of
+# the SAME sentence passed (round 5).
+d=$(newfix)
+printf 'The journal format is stable since `2.0.0-alpha.11`, and `2.0.0-alpha.13` is the version consumers should install.\n' >> "$d/README.md"
+checkmsg 1 "...nor across a comma plus 'and'" "claims version \`2.0.0-alpha.13\`" "$d"
+
+d=$(newfix)
+printf 'The journal format is stable since `2.0.0-alpha.11`, or `2.0.0-alpha.13` for older engines.\n' >> "$d/README.md"
+checkmsg 1 "...nor across a comma plus 'or'" "claims version \`2.0.0-alpha.13\`" "$d"
 
 # ...but a trailing colon INTRODUCES the next line rather than ending a clause.
 # Refusing that join classified this legitimate wrapped historical claim as a
@@ -965,6 +1075,58 @@ d=$(newfix); printf '# ab\n\nLatest release: `2.0.0-alpha.13`\n' > "$d/a\\174b.m
 checkmsg 1 "a backslash escape in a tracked path cannot forge the record delimiter" \
   'a\174b.md:3 claims version' "$d"
 
+# ...and a path holding a real NEWLINE, which is the OTHER delimiter: the records
+# are newline-delimited, so one record split into two physical lines. The orphan
+# head matched no arm and vanished; the tail was read as a record belonging to
+# whatever followed the newline — `decoy<LF>README.md` satisfied A5's
+# per-required-file vacuity guard for a README that had been reworded out of
+# scope, and the same trick with a stale stamp blamed a line of README.md that
+# holds no version at all (round 5). The `-z` read that makes such a path
+# survive git is exactly what delivers it here, so it is refused, like `|`.
+d=$(newfix); printf '# decoy\n\nLatest release: `2.0.0-alpha.13`\n' > "$d/decoy"$'\n'"README.md"
+checkmsg 1 "a tracked path containing a NEWLINE is refused loudly, not split into two records" \
+  "cannot be scanned" "$d"
+
+# ...and a path that begins with '-'. A path is an OPERAND, but grep parses a
+# leading dash as options wherever it sits, so the binary-skip test failed with
+# exit 2 and `|| continue` dropped the file with no record, no counter change and
+# no err — "every version claim in this repository is true" over a guide saying
+# the current release is alpha.13 (round 5).
+d=$(newfix); printf '# Release notes\n\nLatest release: `2.0.0-alpha.13`\n' > "$d/-RELEASE-NOTES.md"
+checkmsg 1 "a tracked path beginning with '-' is scanned, not eaten as an option bundle" \
+  '-RELEASE-NOTES.md:3 claims version' "$d"
+
+d=$(newfix); printf '# Release notes\n\nBuilt against `%s`.\n' "$PIN" > "$d/-RELEASE-NOTES.md"
+check 0 "...and the same file with a CORRECT stamp stays silent" "$d"
+
+echo
+echo "the locale — every rule here is ASCII, and awk is not (macOS)"
+
+# One non-UTF-8 byte (a CP1252 accent in a translated guide) made macOS awk
+# abort the WHOLE file with "towc: multibyte conversion failure": zero records,
+# an unchanged stamp count, and a stale stamp inside it passing with exit 0.
+# Only the local run is exposed — ubuntu's mawk is byte-oriented — and the local
+# run is the pre-tag decision point, so the gate forces LC_ALL=C rather than
+# inheriting whatever the maintainer has set.
+d=$(newfix); printf 'Publi\351e: the current release is 2.0.0-alpha.13.\n' > "$d/fr.md"
+checkutf8 1 "a non-UTF-8 byte does not silently drop the file it sits in" \
+  "fr.md:1 claims version" "$d"
+
+# ...and the mirror. The scanner matches on a lowercased copy and indexes the
+# ORIGINAL with the offsets — sound only while tolower() is length-preserving,
+# which in a UTF-8 locale it is not ("İ" U+0130 lowercases to one byte). The
+# offsets shifted, substr() returned a shifted token, and a stamp that EQUALS
+# the pin was reported as "not a usable version token" — an error no edit to the
+# version could clear (round 5).
+d=$(newfix); printf 'Kurulum \304\260\303\247in: the current release is %s.\n' "$PIN" > "$d/tr.md"
+checkutf8 0 "a multibyte character does not turn a CORRECT stamp into a malformed token" "-" "$d"
+
+# ...and the same file with a STALE stamp still fires, under the same locale, so
+# the case above is silent for the right reason.
+d=$(newfix); printf 'Kurulum \304\260\303\247in: the current release is 2.0.0-alpha.13.\n' > "$d/tr.md"
+checkutf8 1 "...and a STALE stamp behind one still fires, naming the token as written" \
+  "claims version \`2.0.0-alpha.13\`" "$d"
+
 echo
 echo "defect 2 — the online tier (PATH-shimmed curl, no network)"
 
@@ -972,6 +1134,11 @@ mkdir -p "$WORK/shim"
 cat > "$WORK/shim/curl" <<'SHIM'
 #!/usr/bin/env bash
 url=${@: -1}
+# Real curl refuses a URL carrying a control character outright — exit 3, "URL
+# using bad/illegal format" — which probe() maps to INCONCLUSIVE. The shim has
+# to model that, because the one reader that did not strip the CR is B1 and a
+# shim that answers 200 to anything cannot see the difference.
+case "$url" in *$'\r'*) echo 000; exit 3 ;; esac
 case "${VTG_TEST_CURL:-all200}" in
   all200) echo 200 ;;
   timeout) echo 000; exit 28 ;;
@@ -1005,6 +1172,23 @@ d=$(newfix)
 sed -i.bak 's|https://github.com/cqels/CQELS4J/releases/download/|https://elsewhere.example/dl/|' "$d/SUPPLY_CHAIN.md"
 checkmsg 1 "a doc migrating to a new host fails loud rather than probing a dead template" \
   "has stopped naming" "$d" --online
+
+# CRLF, in the one reader that did not strip it. The scanner and all four A6
+# extractors strip the CR; B1 harvested the URL straight off the raw line, and a
+# BARE autolink at the end of a current-stamp line has no ')' or '>' to stop the
+# match before it — so curl got a URL ending in \r, refused it with exit 3, and
+# the links job reported INCONCLUSIVE "re-run" forever on a link that resolves
+# (round 5). Exit 3 is supposed to mean the network could not be reached.
+d=$(newfix)
+printf '\n- **Release notes:** https://github.com/cqels/CQELS4J/releases/tag/v%s\n' "$PIN" >> "$d/GETTING_STARTED.md"
+python3 - "$d/GETTING_STARTED.md" <<'PY'
+import sys
+p = sys.argv[1]
+b = open(p, 'rb').read().replace(b'\r\n', b'\n').replace(b'\n', b'\r\n')
+open(p, 'wb').write(b)
+PY
+VTG_TEST_CURL=all200 check 0 "a CRLF guide does not hand curl a URL with a CR (a permanent, unclearable exit 3)" \
+  "$d" --online
 
 echo
 echo "…and a network hiccup is INCONCLUSIVE (exit 3), never a defect"

@@ -128,6 +128,29 @@
 
 set -uo pipefail
 
+# Every rule in this gate is ASCII — the version grammar, the marker words, the
+# markdown block syntax — but the LOCALE is not, and on the platform RELEASING.md
+# tells maintainers to run all three tiers on (macOS) it changes awk's behaviour
+# in two silent ways (round 5):
+#
+#   * ONE non-UTF-8 byte in a tracked guide ABORTS the whole file. macOS awk
+#     dies with "towc: multibyte conversion failure" on the first gsub/match of
+#     a CP1252 line, so the file contributed ZERO records — not one line, all of
+#     them — and a stale current stamp inside it passed with exit 0 and a stamp
+#     count byte-identical to a clean run. CI never saw it: ubuntu's mawk is
+#     byte-oriented, so the local pre-tag run was the one checking nothing.
+#   * tolower() there is multibyte-aware and NOT length-preserving: "İ" (U+0130)
+#     lowercases to one byte. The scanner matches on a lowercased copy and takes
+#     its offsets from it — a documented invariant ("same length, so every offset
+#     still indexes the original") that simply is not true in a UTF-8 locale — so
+#     a line holding one such character reported its CORRECT stamp as a malformed
+#     token, and no edit to the version could clear it.
+#
+# C makes every tool here byte-oriented, which is what the rules already assume.
+# The exit-status check on scan_file below is the backstop for anything else
+# that can kill an awk pass.
+export LC_ALL=C
+
 ONLINE=0
 DEEP=0
 for arg in "$@"; do
@@ -309,7 +332,34 @@ scan_file() {
     # target, and "since `X` and `Y`" (round 2).
     function flat(s) { gsub(/[^A-Za-z0-9]/, "", s); return tolower(s) }
 
+    # An HTML COMMENT is invisible in the rendered page, so nothing inside one
+    # may govern a token — the same rule continuous() applies to the line ABOVE
+    # (round 3), which is where it was applied and ONLY where. On its own line a
+    # comment was ordinary prose: norm() flattens "<!-- since -->" to the word
+    # "since", and the in-line clause truncation cannot sever it because the only
+    # [.!?;] in the span is the "!" of "<!--", which sits in FRONT of the marker
+    # — so truncating there DISCARDS the real label and KEEPS the invisible word.
+    # "**Latest release:** <!-- since --> `2.0.0-alpha.13`" was reported OK with
+    # the rendered badge reading alpha.13 under an alpha.16 pin (round 5). The
+    # same truncation cut the other way too, on ordinary documentation: a comment
+    # between a genuine marker and its token ("supported since <!-- see CHANGELOG
+    # --> `X`") threw the "since" away and fired on a true provenance line.
+    # An unterminated "<!--" runs to the end of the string, which is how markdown
+    # reads it.
+    function stripcomments(s,   out, p) {
+      out = ""
+      while ((p = index(s, "<!--")) > 0) {
+        out = out substr(s, 1, p - 1) " "
+        s = substr(s, p + 4)
+        p = index(s, "-->")
+        if (p == 0) return out
+        s = substr(s, p + 3)
+      }
+      return out s
+    }
+
     function prep(s,   out, tok) {
+      s = stripcomments(s)
       s = stripurls(s)
       out = ""
       while (match(s, /[0-9]+\.[0-9]+\.[0-9]+-[A-Za-z]+\.[0-9]+/)) {
@@ -469,7 +519,17 @@ scan_file() {
         # The label/lead-in mark itself is transparent to the walk — it is only
         # consulted at the marker, above. Opaque, it broke "Available since: `X`"
         # (a must-not-fire case) and every other marker introduced by a colon.
-        if (lw == "vtgsep") continue
+        #
+        # It clears `coord` on the way through, exactly as the filler arm does.
+        # Preserving it let a coordination reach BACK ACROSS the comma the
+        # round-2 fix made opaque: in "stable since `X`, and `Y` is the version
+        # to install", the walk read "and" (coord=1), stepped over the comma with
+        # coord intact, spent it on the masked `X`, and reached "since" — so
+        # comma-plus-conjunction, the ordinary English spelling of a NEW
+        # independent clause, exempted an unmarked current claim that the bare
+        # comma correctly fires on (round 5). A coordination that really does
+        # share one marker ("since `X` and `Y`") has no clause mark in it.
+        if (lw == "vtgsep") { coord = 0; continue }
         break
       }
       # P2 / P3 look forward. NOTHING may sit between the token and "onward":
@@ -495,7 +555,15 @@ scan_file() {
       # already breaks on "current"/"latest"/"newest" — they are not filler — so
       # P3 is the only rule this nominal ever has to beat.
       # (the trailing `vtgsep` run is the colon of the label itself)
-      if (tolower(b) ~ /(^| )(current|latest|newest)( release| version)?( vtgsep)*$/) return "current"
+      #
+      # The nominal does not have to ABUT the token. End-anchored on the noun,
+      # one word of the SAME filler the backward walk steps over — the product
+      # name — put the guard and the walk in disagreement about the same
+      # vocabulary and reopened the evasion verbatim: "**Current release:** CQELS
+      # `2.0.0-alpha.13` is the first release with the MCP server" was reported OK
+      # (round 5). The repo writes exactly that shape ("**Applies to:** CQELS
+      # `X`", " * CQELS {@code X}"), so the filler run is allowed here too.
+      if (tolower(b) ~ /(^| )(current|latest|newest)( release| version)?( (cqels|code|version|v|the|vtgsep))*$/) return "current"
       if (a ~ /^(is|was) the first release( |$)/) return "provenance"
       return "current"
     }
@@ -608,8 +676,12 @@ scan_file() {
         prev = (i > 1 && continuous(L[i-1], line)) ? L[i-1] : ""
         nxt  = (i < FNR && continuous(line, L[i+1])) ? L[i+1] : ""
         masked = line
-        # Matching is done on a LOWERCASED copy — same length, so every offset
-        # still indexes the original — and the token is reported as written.
+        # Matching is done on a LOWERCASED copy, and every offset taken from it
+        # indexes the original — which holds only because LC_ALL=C is forced at
+        # the top of this script. In a UTF-8 locale macOS awk lowercases "İ" to a
+        # SHORTER byte string, the offsets shift, and a correct stamp downstream
+        # of one was reported as a malformed token (round 5). The token is
+        # reported as written.
         # A case-sensitive grammar made `2.0.0-Alpha.13` match nothing at all:
         # not current, not bare, not malformed, so a stale stamp in that
         # spelling passed in total silence (codex round 3).
@@ -668,8 +740,19 @@ scan_file() {
               if (U[k] || C[k] != "provenance" || tolower(T[k]) != tolower(T[j])) continue
               if (S[j] > S[k]) { gs = E[k] + 1; gl = S[j] - gs }
               else             { gs = E[j] + 1; gl = S[k] - gs }
-              gap = (gl > 0) ? substr(line, gs, gl) : ""
-              if (prep(gap) ~ /[.!?;]/) continue
+              gap = (gl > 0) ? prep(substr(line, gs, gl)) : ""
+              if (gap ~ /[.!?;]/) continue
+              # A comma is not a clause end, but a comma plus a COORDINATING
+              # CONJUNCTION is: it is the ordinary spelling of a second
+              # independent clause, and the marker no longer governs anything
+              # past it, exactly as at a period. Scoped to [.!?;] alone, "**Since `X` it
+              # is attached to the release**, so fetch [the latest shaded jar]
+              # (…/download/vX/…)" inherited provenance — a stale landing-page
+              # download link, defect 2 above, reported OK (round 5). The comma
+              # by itself must NOT break the inheritance: "since `X`, see [the
+              # release notes](…/tag/vX)" is one claim written twice, which is
+              # the shape this whole rule exists for.
+              if (tolower(gap) ~ /,[ \t]*(and|or|but|so|yet|nor)[ \t]/) continue
               C[j] = "provenance"
               break
             }
@@ -712,17 +795,24 @@ scan_file() {
 # "GU\303\215A.md" — for which `[ -f ]` is false, so a translated guide with an
 # accent in its name was dropped IN SILENCE and a stale stamp inside it passed
 # with exit 0 and an unchanged stamp count (round 2). Quoting a DIRECTORY
-# component drops every file beneath it. -z suppresses quoting outright and
-# also survives a newline in a path.
+# component drops every file beneath it. -z suppresses quoting outright, so the
+# bytes of the path arrive here exactly as git holds them.
 #
-# `|` is the record delimiter, so a path containing one mis-splits the record
-# and the verdict is dropped by the `case` below with no arm matching. It is
-# refused loudly rather than parsed.
+# A record is `<file>|<line>|<class>|<token>` and the records are NEWLINE-
+# delimited, so BOTH of those characters are structural: a path holding a `|`
+# mis-splits the record, and a path holding a `\n` (or a `\r`, which the reader
+# strips the same way) splits ONE record into two physical lines — the orphan
+# head matches no `case` arm and is dropped in silence, while the tail line
+# starts with whatever followed the newline and is attributed to THAT file. Both
+# directions were reproduced (round 5): a `decoy\nREADME.md` satisfied A5's
+# per-required-file vacuity guard for a README that had been reworded out of
+# scope, and the same trick with a stale stamp reported a defect against a line
+# of README.md that holds no version at all. Refused loudly rather than parsed.
 SELF="scripts/ci/version-truth-gate.sh|scripts/ci/version-truth-gate.test.sh"
 while IFS= read -r -d '' f; do
   case "$f" in
-    *"|"*)
-      err "tracked path '$f' contains '|', the delimiter this gate's own records use — it cannot be scanned. Rename it."
+    *"|"*|*$'\n'*|*$'\r'*)
+      err "tracked path '$f' contains '|', a newline or a carriage return — the characters this gate's own records are delimited by — so it cannot be scanned. Rename it."
       continue ;;
   esac
   # A tracked path with no file behind it is a submodule gitlink or a
@@ -730,8 +820,23 @@ while IFS= read -r -d '' f; do
   # notices a rename of something that matters.
   [ -f "$f" ] || continue
   case "|$SELF|" in *"|$f|"*) continue ;; esac
-  grep -Iq . "$f" 2>/dev/null || continue     # skip binary
-  scan_file "$f" >> "$RECORDS"
+  # `--` because a path is an OPERAND, not an option. Without it grep parsed a
+  # top-level `-RELEASE-NOTES.md` as an option bundle, failed with exit 2, and
+  # `|| continue` dropped the file with no record, no counter change and no err
+  # — a stale stamp inside it passed with "every version claim in this
+  # repository is true" (round 5). This is the only place a git-derived path
+  # reaches a command in option position: awk and sed take theirs after the
+  # program text, where a leading dash is already a filename, and adding `--`
+  # to those would break them on BSD.
+  grep -Iq . -- "$f" 2>/dev/null || continue     # skip binary
+  # awk's exit status was discarded, and awk's own diagnostic goes to stderr
+  # without touching `fail` — so any pass that DIES (a non-UTF-8 byte under a
+  # UTF-8 locale, a read error) contributed zero records and the gate reported
+  # OK over an unscanned file (round 5). LC_ALL=C above removes the known
+  # trigger; this is what notices the next one.
+  if ! scan_file "$f" >> "$RECORDS"; then
+    err "scanning '$f' failed — that file contributed no version records, so every claim in it would have been checked vacuously."
+  fi
 done < <(git -c core.quotePath=off ls-files -z)
 
 if [ ! -s "$RECORDS" ]; then
@@ -974,7 +1079,16 @@ if [ "$ONLINE" -eq 1 ]; then
   awk -F'|' -v pin="$PIN" '$3 == "current" && $1 ~ /\.md$/ { print $1 "|" $2 }' "$RECORDS" \
     | sort -u \
     | while IFS='|' read -r f ln; do
+        # The CR is stripped here for the same reason the scanner and the A6
+        # extractors strip it: one guide saved on Windows commits as CRLF (there
+        # is no .gitattributes). This was the only reader that did not, and a
+        # bare autolink at the END of a current-stamp line has nothing — no `)`,
+        # no `>` — to stop the match before the CR, so the probe URL carried it,
+        # curl refused it with exit 3 and the links job reported INCONCLUSIVE
+        # "re-run" forever on a link that returns 200 (round 5). That inverts
+        # what exit 3 promises, and it hides a genuinely dead link as flake.
         sed -n "${ln}p" "$f" \
+          | tr -d '\r' \
           | grep -oE 'https?://[^ )>"'"'"'`]+' \
           | sed 's/[.,;:]*$//' \
           | grep -F "$PIN" || true
