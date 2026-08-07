@@ -863,10 +863,15 @@ scan_file() {
       # as invisible markup while the reader plainly saw it (codex, round 7).
       # The marker lines themselves count as code context either way: they are
       # not prose. "```+" is 3-or-more without interval expressions, which
-      # mawk 1.3.3 on the ubuntu runner does not ship.
+      # mawk 1.3.3 on the ubuntu runner does not ship — and " ? ? ?" is
+      # up-to-three-spaces for the same reason: CommonMark allows a fence
+      # marker at most THREE spaces of indentation. Four (or a tab) make the
+      # line indented CODE and the marks literal text, so treating an indented
+      # example as a real opener suspended the comment lexer and let an
+      # invisible since-comment exempt a visible stale stamp (codex, round 8).
       infence = 0; fchar = ""; fopen = 0
       for (i = 1; i <= FNR; i++) {
-        if (MD && match(L[i], /^[ \t]*(```+|~~~+)/)) {
+        if (MD && match(L[i], /^ ? ? ?(```+|~~~+)/)) {
           run = substr(L[i], RSTART, RLENGTH); sub(/^[ \t]*/, "", run)
           fc = substr(run, 1, 1)
           rest = substr(L[i], RSTART + RLENGTH)

@@ -919,6 +919,26 @@ d=$(newfix)
 printf '\n````markdown\nA fence example:\n```bash\necho hi\n```\n````\n\n<!-- doc-rev 2.0.0-alpha.13, parked -->\n' >> "$d/README.md"
 check 0 "a four-backtick fence quoting a three-backtick example still closes" "$d"
 
+# ...and indentation decides whether the marks are a fence at all (codex,
+# round 8): CommonMark allows an opener at most THREE leading spaces — four
+# turn the line into indented code and the marks into literal text. Treating
+# an indented example as a real opener suspended the comment lexer, so an
+# invisible since-comment below it survived into the lookback and exempted a
+# stale stamp the reader plainly sees.
+d=$(newfix)
+printf '\n    ```text\n<!--\nsince --> CQELS\n`2.0.0-alpha.13` is the release to install.\n```\n' >> "$d/README.md"
+checkmsg 1 "a four-space-indented fence example is code, not an opener" \
+  "claims version \`2.0.0-alpha.13\`" "$d"
+
+# ...and three spaces is still a fence, so the comment inside it is rendered
+# text and its stale token is a visible claim. This is the boundary's other
+# half: if the indent rule ever turns over-strict, this comment gets stripped
+# as invisible markup and the case goes silent.
+d=$(newfix)
+printf '\n   ```text\n<!-- pin the current release: 2.0.0-alpha.13 -->\n   ```\n' >> "$d/README.md"
+checkmsg 1 "a three-space-indented fence is still a fence" \
+  "claims version \`2.0.0-alpha.13\`" "$d"
+
 # ...and the mirror of that, which is the direction that lets a gate certify
 # nothing: an in-comment token used to count as a CURRENT stamp, so one
 # invisible line satisfied A5 for a guide whose rendered text states no version
