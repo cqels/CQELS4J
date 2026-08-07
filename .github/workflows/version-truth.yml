@@ -1,0 +1,166 @@
+# The only CI this repository has, and deliberately so.
+#
+# This repo ships documentation about a release published elsewhere. Nothing
+# here compiles, so nothing here fails when a claim goes stale — see the header
+# of scripts/ci/version-truth-gate.sh for the three defects that were sitting in
+# the public landing page before this existed.
+#
+# Four jobs, split by cost and by what a red means:
+#   version-truth   offline, seconds. Red = a claim in this repo is false.
+#   links           ~6 HEAD requests. Red = a channel this repo names is gone.
+#                   Kept separate so a network red is never confused for the
+#                   offline one; exit 3 (inconclusive) is a re-run, not a defect.
+#   tools-reality   builds the server. Red = the docs describe a surface the
+#                   server does not have. Too slow for every PR.
+#   schedule-health independent of all three. Red = the nightly below is not
+#                   running, so nothing is watching the world any more.
+#
+# The schedule catches world-drift — a deleted release, a dead mirror — with no
+# commit. CAVEAT: GitHub disables scheduled workflows in public repos after 60
+# days of repository inactivity, and this repo is quiet between releases, so the
+# daily run WILL eventually stop on its own. That is the "gate that stops
+# detecting" failure the self-test warns about. Nothing INSIDE a disabled
+# workflow can notice it is disabled, so the residual is handled two ways, both
+# honest about their limits:
+#
+#   1. DETECTION on the next human touch: the schedule-health job below runs on
+#      every PR and dispatch, asks the API when the schedule last completed, and
+#      FAILS if that is over 8 days ago — or if it has never run although this
+#      file has been on the default branch (the only place `on: schedule` fires
+#      from) for longer than that. A dormant repo stays dark,
+#      but the first PR after dormancy cannot go green while the world-drift
+#      check is silently off — the failure names the fix.
+#      It is a JOB OF ITS OWN, needed by nothing, and that is the whole point:
+#      as a step inside version-truth it blocked its own remedy. In the one
+#      scenario it exists for it failed version-truth, which skipped `links` —
+#      so the by-hand world-drift run the error message told you to do could
+#      not run, and the repo stayed red until a real cron fired (codex round 3).
+#   2. RELEASING.md step 6 runs this workflow by hand after every release — the
+#      moment world-drift matters most. That file is committed alongside this
+#      one; if you rename it, update this comment or the claim rots like the one
+#      it replaced (an earlier revision cited a checklist that did not exist).
+
+name: version-truth
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read     # schedule-health reads this workflow's own run history
+
+jobs:
+  version-truth:
+    runs-on: ubuntu-latest          # hosted, always: this is a public repo and
+    timeout-minutes: 10             # fork PRs must not touch private runners.
+                                    # The self-test is ~200 cases and ~90 s wall
+                                    # on the slowest awk it supports; 10 leaves
+                                    # room for it to keep growing before a slow
+                                    # runner turns the budget into a false red.
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      # The self-test runs FIRST, on every PR. The lesson this repeats: logic
+      # that only executes at release time rots unseen, and a gate whose own
+      # correctness is never checked is a green tick with nothing behind it.
+      - run: scripts/ci/version-truth-gate.test.sh
+      - run: scripts/ci/version-truth-gate.sh
+
+  # Schedule-staleness detector. A disabled schedule cannot report itself, so
+  # the next human interaction does: if this workflow's schedule has not
+  # completed in 8 days (daily cron + generous slack), fail loudly and name the
+  # remedy. Skipped ON the scheduled run itself — a resurrected schedule must
+  # not fail for having been dead.
+  #
+  # DELIBERATELY A SEPARATE JOB with no `needs:` in either direction. As a step
+  # inside version-truth it took the whole workflow down with it, `links`
+  # included — so the by-hand world-drift run its own error message prescribes
+  # could not run, and the repo stayed red until a real cron fired up to 24h
+  # later. A detector must not block the thing it tells you to do.
+  schedule-health:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Fail if the nightly schedule has gone quiet
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          WF=version-truth.yml
+          last=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/${WF}/runs?event=schedule&status=completed&per_page=1" \
+                   --jq '.workflow_runs[0].run_started_at // empty')
+          if [ -z "$last" ]; then
+            days="never-ran"
+          else
+            days=$(( ( $(date -u +%s) - $(date -u -d "$last" +%s) ) / 86400 ))
+          fi
+          echo "last completed scheduled run: ${last:-none} (${days} days ago)"
+
+          # It HAS run, and then stopped: the 60-day inactivity rule, or someone
+          # disabled it.
+          if [ "$days" != "never-ran" ] && [ "$days" -gt 8 ]; then
+            echo "::error::The nightly world-drift schedule is NOT running (last: ${last}). GitHub disables schedules in public repos after 60 days of inactivity. Re-enable it under Actions -> version-truth, then run the workflow by hand (Actions -> version-truth -> Run workflow); this job does not block that run, so the links job will still execute."
+            exit 1
+          fi
+
+          # It has NEVER run. That is expected for the first 8 days — but the
+          # clock starts when the schedule became ELIGIBLE, not when Actions
+          # first registered the workflow. `.created_at` is stamped seconds
+          # after the FEATURE-BRANCH push (measured: four workflows in a sibling
+          # repo all carry a created_at earlier than their landing commit on the
+          # default branch, and a branch-only workflow that has never been on
+          # the default branch has one too), while `on: schedule` fires only
+          # from the default branch. Anchored on created_at, a PR open longer
+          # than 8 days burned its whole grace before the schedule could legally
+          # run once, and the first PR after the merge failed with a diagnosis
+          # that was false — nothing had been disabled (round 2).
+          if [ "$days" = "never-ran" ]; then
+            default=$(gh api "repos/${GITHUB_REPOSITORY}" --jq '.default_branch')
+            landed=$(gh api "repos/${GITHUB_REPOSITORY}/commits?sha=${default}&path=.github/workflows/${WF}&per_page=100" \
+                       --paginate --jq '.[].commit.committer.date' | sort | head -1)
+            if [ -z "$landed" ]; then
+              echo "${WF} is not on ${default} yet — a schedule only fires from the default branch, so it cannot have run. Not stale."
+              exit 0
+            fi
+            age=$(( ( $(date -u +%s) - $(date -u -d "$landed" +%s) ) / 86400 ))
+            if [ "$age" -le 8 ]; then
+              echo "landed on ${default} ${age} days ago (${landed}) — the schedule has not had time to fire yet; not stale."
+              exit 0
+            fi
+            # Caveat, stated rather than hidden: the anchor is the OLDEST commit
+            # touching this file on the default branch, so a revert-and-re-land
+            # measures from the first landing. That errs toward reporting, which
+            # is the right direction for a detector.
+            echo "::error::The nightly world-drift schedule has NEVER completed a run, though it landed on ${default} ${age} days ago (${landed}). Either it is disabled (Actions -> version-truth -> Enable) or the cron never took; run the workflow by hand (Actions -> version-truth -> Run workflow) and check the schedule afterwards. This job does not block that run, so the links job will still execute."
+            exit 1
+          fi
+
+  links:
+    needs: version-truth
+    if: github.event_name != 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      # Exit 3 means "could not reach the network", not "the docs are wrong".
+      # It still fails the job — fail-closed — but the log says to re-run.
+      - run: scripts/ci/version-truth-gate.sh --online
+
+  tools-reality:
+    needs: version-truth
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-java@3a4f6e1af504cf6a31855fa899c6aa5355ba6c12 # v4.7.0
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+      - run: scripts/ci/version-truth-gate.sh --deep

@@ -37,7 +37,7 @@ restarts (re-seeding an existing store is idempotent). The embedded server also 
 durable operator-state backend via `CqelsMcpServerConfig.builder()` if you adapt the launcher
 (see [Extending it](#extending-it)).
 
-## Tools exposed (24)
+## Tools exposed (25)
 
 Enumerated from a live `tools/list` against this jar.
 
@@ -65,6 +65,7 @@ Enumerated from a live `tools/list` against this jar.
 | `register_stream_query` | Register a standing CQELS-QL or Cypher continuous query; results are buffered and drained via `recall_memory(queryId)` (CEP `FILTER(SEQ(...))` via `cep: true`). |
 | `validate_stream_query` | Dry-run: statically validate CQELS-QL without registering it. |
 | `forget_stream_query` | Stop a continuous query and discard its buffer. |
+| `remove_stream` | Remove a named stream, freeing its capacity slot. Fails while any registered query, invariant, rule program or CEP pattern still references it — deregister those first. |
 
 **Standing reasoning over streams:**
 
