@@ -235,7 +235,7 @@ ok "pin is $PIN, identical in both poms"
 #
 #   <file>|<line>|<class>|<token>
 #
-# class ∈ current | provenance | bare | malformed
+# class ∈ current | provenance | bare | malformed | spoofed
 #
 # ALL tokens on a line are emitted, not just the first: match() returns only the
 # leading occurrence, so a line reading
@@ -390,7 +390,33 @@ scan_file() {
     # carried ACROSS lines — the way a renderer reads them. Blanking (rather
     # than deleting) keeps the line length, which every offset in the scanner
     # depends on. INCMT is the carried state and is reset per file by the caller.
-    function decomment(s,   out, p) {
+    #
+    # TWO THINGS BOUND THAT STATE, and neither was here when it was written
+    # (round 7). Both make the state machine hide text the reader DOES see,
+    # which is the fail-open direction:
+    #
+    #   * CODE IS NOT MARKUP. Inside a fenced block or an inline code span
+    #     `<!--` is literal rendered TEXT — it opens nothing. One documentation
+    #     sentence ("prefix it with `<!--`") or one ```text fence demonstrating
+    #     comment syntax opened a span that never closed, and every version
+    #     claim to the END OF THE FILE was blanked: no record, no error, exit 0
+    #     over stamps every reader can see. The mirror also held — a CLOSED
+    #     comment shown inside an ```xml fence is reader-visible and was scanned
+    #     as invisible. So the lexer is suspended in code context, and the
+    #     structural fence scan the caller already needs is reused for it.
+    #   * AN OPENER WITH NO CLOSER IS MALFORMED INPUT, not a span. Whatever the
+    #     renderer does with it, blanking to EOF is the one answer that makes
+    #     the gate quieter, so it is the one answer this gate must not give.
+    #     The caller locates an unmatched opener in a first pass and re-runs
+    #     with PERLINE set from that line on: the opener blanks its own line
+    #     (the pre-round-6 behaviour, which is fail-CLOSED — at worst a hidden
+    #     stale stamp fires and the author discovers the missing `-->`) and the
+    #     rest of the file stays visible.
+    #
+    # `fenced` = this line is inside/at a code fence; `perline` = the file has
+    # an unmatched opener at or before this line.
+    function decomment(s, fenced, perline,   out, p, ms) {
+      if (fenced) return s
       out = ""
       while (length(s) > 0) {
         if (INCMT) {
@@ -400,12 +426,43 @@ scan_file() {
           s = substr(s, p + 3)
           INCMT = 0
         } else {
-          p = index(s, "<!--")
+          ms = MD ? codemask(s) : s
+          p = index(ms, "<!--")
           if (p == 0) return out s
           out = out substr(s, 1, p - 1)
           s = substr(s, p)
+          if (perline) return out blanks(length(s))
+          OPENLINE = CURLINE
           INCMT = 1
         }
+      }
+      return out
+    }
+
+    # A same-length copy of a markdown line with every INLINE CODE SPAN blanked,
+    # so a `<!--` the reader sees as literal text cannot be read as a delimiter.
+    # Length is preserved because decomment() indexes the ORIGINAL with the
+    # offset it finds here. A backtick run with no matching run of the same
+    # length is not a span (CommonMark), so it is left alone.
+    function codemask(s,   out, i, n, run, j, m, cl) {
+      if (index(s, "`") == 0) return s
+      out = ""; i = 1; n = length(s)
+      while (i <= n) {
+        if (substr(s, i, 1) != "`") { out = out substr(s, i, 1); i++; continue }
+        run = 0
+        while (i + run <= n && substr(s, i + run, 1) == "`") run++
+        j = i + run; cl = 0
+        while (j <= n) {
+          if (substr(s, j, 1) == "`") {
+            m = 0
+            while (j + m <= n && substr(s, j + m, 1) == "`") m++
+            if (m == run) { cl = j; break }
+            j += m
+          } else j++
+        }
+        if (cl == 0) { out = out substr(s, i, run); i += run; continue }
+        out = out blanks(cl + run - i)
+        i = cl + run
       }
       return out
     }
@@ -792,8 +849,32 @@ scan_file() {
       # is carried across lines. D[] is what the reader sees; L[] is what the
       # file says, and the structural rules in continuous() (a heading, a fence,
       # a trailing "-->") are asked of L[] because they are about the SOURCE.
+      MD = (FILE ~ /\.md$/)
+
+      # Fence state first, because the comment lexer is suspended inside code
+      # (see decomment). A fence opens on ``` or ~~~ and closes on the SAME
+      # character, so a ``` inside a ~~~ block does not close it. The marker
+      # lines themselves count as code context: they are not prose either.
+      infence = 0; fchar = ""
+      for (i = 1; i <= FNR; i++) {
+        if (MD && match(L[i], /^[ \t]*(```|~~~)/)) {
+          fc = substr(L[i], RSTART + RLENGTH - 1, 1)
+          if (!infence)          { infence = 1; fchar = fc }
+          else if (fc == fchar)  { infence = 0 }
+          FENCE[i] = 1
+        } else FENCE[i] = infence
+      }
+
+      # First pass locates an opener with no closer; the second is the real one.
+      INCMT = 0; OPENLINE = 0
+      for (i = 1; i <= FNR; i++) { CURLINE = i; decomment(L[i], FENCE[i], 0) }
+      unm = INCMT ? OPENLINE : 0
+
       INCMT = 0
-      for (i = 1; i <= FNR; i++) D[i] = decomment(L[i])
+      for (i = 1; i <= FNR; i++) {
+        CURLINE = i
+        D[i] = decomment(L[i], FENCE[i], (unm && i >= unm))
+      }
       for (i = 1; i <= FNR; i++) {
         line = D[i]
         prev = (i > 1 && continuous(L[i-1], L[i])) ? D[i-1] : ""
@@ -894,6 +975,58 @@ scan_file() {
             print FILE "|" i "|bare|" substr(masked, abs, len)
           pos = abs + len
         }
+
+        # -- tokens the RENDERER spells differently from the bytes -----------
+        #
+        # The grammar above judges bytes; GitHub judges the rendered page. Where
+        # the two disagree the reader sees a full version stamp and the scanner
+        # does not (round 7), and the failure is always silent:
+        #
+        #   * `2.0.0-<U+0430>lpha.13` — one Cyrillic "а" — renders identically
+        #     to the Latin spelling and matches NOTHING: not current, not bare,
+        #     not malformed. That is exactly the silence the case-insensitivity
+        #     fix was written to remove (round 3), reopened through a byte
+        #     transport case folding cannot see.
+        #   * `2.0.0&#45;alpha.13` and `2.0.0%2Dalpha.13` render with a real
+        #     hyphen, but the byte grammar sees no full form and the bare sweep
+        #     then files the stamp as `alpha.13` — DEMOTED from a current stamp
+        #     that must equal the pin to provenance that need only be <= it.
+        #   * U+2011 (non-breaking hyphen) is what a copy-paste out of Word or a
+        #     PDF produces, and is visually a hyphen. Same demotion.
+        #
+        # Enumerating confusables is hopeless, so this does not try: it flags
+        # the SHAPE. A base version glued (no space) to another dotted number
+        # through material carrying a non-ASCII byte, an "&#" reference or a
+        # "%" escape is not a token this gate can read, and the fix is to spell
+        # it in ASCII. The no-space requirement is what keeps ordinary prose out
+        # ("CQELS 2.0.0 — see §3.1" has a space after the base and is ignored).
+        pos = 1
+        while (match(substr(line, pos), /[0-9]+\.[0-9]+\.[0-9]+/)) {
+          abs = pos + RSTART - 1
+          len = RLENGTH
+          pos = abs + len
+          if (abs > 1 && substr(line, abs - 1, 1) ~ /[0-9.]/) continue
+          # Spelled out rather than matched with an interval expression: no other
+          # regex in this script uses {n,m}, and mawk — which IS the awk on the
+          # ubuntu runner — has shipped it only since 1.3.4.
+          rest = substr(line, pos)
+          nb = ""
+          for (k = 1; k <= 24; k++) {
+            ch = substr(rest, k, 1)
+            if (ch == "" || ch == " " || ch == "\t") break
+            nb = nb ch
+          }
+          lastdot = 0
+          for (k = 2; k < length(nb); k++)
+            if (substr(nb, k, 1) == "." && substr(nb, k + 1, 1) ~ /[0-9]/) lastdot = k
+          if (lastdot == 0) continue
+          k = lastdot + 1
+          while (substr(nb, k + 1, 1) ~ /[0-9]/) k++
+          nb = substr(nb, 1, k)
+          if (tolower(nb) ~ /^-(alpha|beta|rc)\./) continue
+          if (nb ~ /[^ -~]/ || nb ~ /&#/ || nb ~ /%[0-9A-Fa-f][0-9A-Fa-f]/)
+            print FILE "|" i "|spoofed|" substr(line, abs, len) nb
+        }
       }
     }
   ' "$1"
@@ -957,7 +1090,41 @@ while IFS= read -r -d '' f; do
   # maintainer's BSD sed read the file fine. `--` cannot be the fix there
   # either: BSD sed stops option parsing at the script and treats `--` as a
   # FILENAME. B1 reads through a redirect instead, which is an operand on both.
-  grep -Iq . -- "$f" 2>/dev/null || continue     # skip binary
+  #
+  # `|| continue` ALSO conflated grep's two non-zero statuses, which is the same
+  # silent drop one tier further in (round 7). grep exits 1 for "no match"
+  # (empty, or NUL-bearing so -I calls it binary) and 2 for "could not read
+  # this file"; both took the skip arm, so an unreadable tracked file
+  # contributed no record, moved no counter, set no `fail`, and the gate printed
+  # "every version claim in this repository is true". The awk-status backstop
+  # six lines below — added for exactly that failure — could never fire, because
+  # this line had already left the loop body.
+  #
+  # And "binary" is not a reason to skip a DOCUMENT. A guide saved as UTF-16
+  # (legacy Windows "Unicode") is NUL every other byte; GitHub reads the BOM and
+  # renders it as perfectly ordinary markdown, while grep calls it binary and
+  # the whole file — every stale stamp in it — went unscanned in total silence.
+  # One stray NUL appended to any tracked text file did the same with no size or
+  # diff signal at all. So a NUL-bearing file is skipped only when its EXTENSION
+  # says no reader will ever see prose in it; that is the same test the renderer
+  # applies, and it is the only reason a skip here can be honest.
+  grep -Iq . -- "$f" 2>/dev/null; rc=$?
+  if [ "$rc" -ge 2 ]; then
+    err "'$f' is tracked but could not be read, so it contributed no version records and every claim in it would have been checked vacuously."
+    continue
+  fi
+  if [ "$rc" -eq 1 ]; then
+    if LC_ALL=C tr -d '\000' < "$f" 2>/dev/null | cmp -s - "$f"; then
+      continue                                   # no NUL: empty or blank-only
+    fi
+    case "$f" in
+      *.png|*.jpg|*.jpeg|*.gif|*.ico|*.webp|*.pdf|*.zip|*.gz|*.tgz|*.jar|*.class|\
+      *.woff|*.woff2|*.ttf|*.otf|*.eot|*.mp4|*.mov|*.mp3|*.wav|*.bin|*.so|*.dylib)
+        continue ;;
+    esac
+    err "'$f' holds NUL bytes, so this gate cannot scan it — but a renderer still shows its text (a UTF-16 guide renders as ordinary markdown). Re-save it as UTF-8, or give it a binary file extension if it really is an asset."
+    continue
+  fi
   # awk's exit status was discarded, and awk's own diagnostic goes to stderr
   # without touching `fail` — so any pass that DIES (a non-UTF-8 byte under a
   # UTF-8 locale, a read error) contributed zero records and the gate reported
@@ -1014,6 +1181,9 @@ while IFS='|' read -r f ln cls tok; do
   case "$cls" in
     malformed)
       err "$f:$ln documents '$tok', which is not a usable version token — a stray character or suffix next to a version. Nothing resolves for that string."
+      ;;
+    spoofed)
+      err "$f:$ln writes a version as '$tok' — the rendered page may show an ordinary version there, but the bytes are not one (a non-ASCII character, an HTML character reference, or a percent-escape). This gate cannot tell whether that claim is true. Spell the token in plain ASCII."
       ;;
     current)
       # A2 — an unmarked token is a claim about NOW.

@@ -503,12 +503,21 @@ prov "...and 'Prior to the \`X\` release, …'" \
 prov "...and 'From the \`X\` onward, …' (P2 keeps its adjacency)" \
   'From the `2.0.0-alpha.11` onward, cross-event guards are honored.'
 
-# ...and the article must not become a bridge: a marker governing token A still
-# does not reach an unrelated token B behind a comma, article or no article.
-d=$(newfix)
-printf 'Stable since `2.0.0-alpha.11`, the `2.0.0-alpha.13` jar is the one to install.\n' >> "$d/README.md"
-checkmsg 1 "an article does not carry a marker onto an unrelated token" \
-  "claims version \`2.0.0-alpha.13\`" "$d"
+# ...and the article inside the COORDINATION path, which the five cases above do
+# not reach: "since `X` and the `Y`" spends the coordination on the masked token
+# and then still has to step over the article to reach the marker.
+#
+# This replaces a case that read "Stable since `X`, the `Y` jar is the one to
+# install." and was named for the article. It was vacuous (round 7): the walk
+# breaks unconditionally at the masked `X` long before the article could matter,
+# so it passed byte-identically with the article fix reverted, and it was
+# behaviourally indistinguishable from its article-free sibling below, which
+# pins that masked-token boundary already. The article arm can only ever extend
+# the walk's reach TOWARD a marker, so its failure mode is a false EXEMPTION —
+# it is pinnable in the must-not-fire direction and nowhere else, and every case
+# here is verified to fire once the arm is reverted.
+prov "...and the article inside a coordination  'since \`X\` and the \`Y\`'" \
+  'Stable since `2.0.0-alpha.11` and the `2.0.0-alpha.13` line were both shipped.'
 # The link target of a token whose PROSE copy on the same line is already
 # provenance is that same claim written twice. Judged on its own it fired,
 # because four ordinary words ("see the release notes") sit between the marker
@@ -837,6 +846,52 @@ d=$(newfix)
 printf '\n<!--\nParked release notes.\nBefore `2.0.0-alpha.13`, cross-event guards were ignored.\n-->\n' >> "$d/README.md"
 check 0 "...and the same parked text spread over a multi-line comment" "$d"
 
+# CODE IS NOT MARKUP, and this is where the cross-line comment state bit back
+# (round 7). Inside a fence `<!--` is literal rendered TEXT: it opens nothing.
+# The lexer opened a span on it anyway, never found a closer, and blanked every
+# line to EOF — so a stale stamp below an ordinary documentation fence produced
+# no record, no error and exit 0. One sentence of prose about hiding a block is
+# enough to arm it; the round-5 gate, whose stripper worked one line at a time,
+# fired correctly on the identical document.
+d=$(newfix)
+printf '\n```text\nstrip the marker <!-- like this\n```\n\nLatest release: `2.0.0-alpha.13`\n' >> "$d/README.md"
+checkmsg 1 "an opener shown INSIDE A FENCE does not blank the rest of the file" \
+  "claims version \`2.0.0-alpha.13\`" "$d"
+
+d=$(newfix)
+printf '\nTo hide a paragraph, prefix it with `<!--`.\n\nLatest release: `2.0.0-alpha.13`\n' >> "$d/CQELS-QL_SPEC.md"
+checkmsg 1 "...and an opener quoted in an INLINE CODE SPAN does not either" \
+  "claims version \`2.0.0-alpha.13\`" "$d"
+
+# ...in a file A5 does not cover, where there is no vacuity net at all: the
+# required-file guard only notices the blanking when the opener sits ABOVE the
+# guide's stamps, so line order alone decided the direction.
+d=$(newfix)
+printf 'Use `<!--` to comment out a block.\n\nLatest release: `2.0.0-alpha.13`\n' > "$d/MIGRATION.md"
+checkmsg 1 "...and in a file no vacuity guard covers" "MIGRATION.md:3 claims version" "$d"
+
+# The mirror: a CLOSED comment displayed inside a fence is rendered text a
+# reader sees, so it is a claim and must be scanned — the lexer used to strip it.
+d=$(newfix)
+printf '\n```xml\n<!-- pin the current release: 2.0.0-alpha.13 -->\n```\n' >> "$d/README.md"
+checkmsg 1 "a comment RENDERED inside a fence is a visible claim, not a stripped one" \
+  "claims version \`2.0.0-alpha.13\`" "$d"
+
+# ...and an opener with no closer anywhere is malformed input, not a span. It
+# must fail CLOSED — the opener blanks its own line and the rest of the file
+# stays visible — because the alternative (blank to EOF) is the answer that
+# makes the gate quieter, which is the one answer it must never give.
+d=$(newfix)
+printf '\n<!-- parked note\n\nLatest release: `2.0.0-alpha.13`\n' >> "$d/README.md"
+checkmsg 1 "an UNTERMINATED opener does not hide the claims below it" \
+  "claims version \`2.0.0-alpha.13\`" "$d"
+
+# ...and the fence exemption must not cost the round-6 fix: a real multi-line
+# comment OUTSIDE code still hides both its marker and its token.
+d=$(newfix)
+printf '\n<!-- Parked.\nBefore `2.0.0-alpha.13` guards were ignored.\n-->\n\n```text\n<!-- shown, not parsed\n```\n' >> "$d/README.md"
+check 0 "...while a real multi-line comment outside code is still invisible" "$d"
+
 # ...and the mirror of that, which is the direction that lets a gate certify
 # nothing: an in-comment token used to count as a CURRENT stamp, so one
 # invisible line satisfied A5 for a guide whose rendered text states no version
@@ -1042,6 +1097,54 @@ d=$(newfix)
 printf '\nBefore `%s`, the signed manifest listed the alpha.13 jar.\n' "$PIN" >> "$d/SUPPLY_CHAIN.md"
 check 0 "...and the documented remedy — the bare form — is accepted as history" "$d"
 
+# Spellings the RENDERER decodes and the byte grammar does not. Case folding
+# closed one of these; the rest arrive through transports folding cannot see
+# (round 7), and both failure modes are silent:
+#
+#   * a Cyrillic "а" in "alpha" renders identically and matched NOTHING — not
+#     current, not bare, not malformed — exactly the silence the case fix
+#     removed, reopened one byte lower down;
+#   * "&#45;" and "%2D" render as a hyphen, so the reader sees a full current
+#     stamp while the byte grammar sees no full form and the bare sweep DEMOTES
+#     the stamp to `alpha.13` — provenance, which need only be <= the pin;
+#   * U+2011 is what a paste out of Word or a PDF produces and is visually a
+#     hyphen. Same demotion, and the only observable was one extra provenance
+#     count.
+#
+# Confusables cannot be enumerated, so the rule flags the SHAPE and refuses to
+# guess. All four are pinned because each is a different transport.
+d=$(newfix)
+printf '\nLatest release: `2.0.0-\320\260lpha.13`\n' >> "$d/README.md"
+checkmsg 1 "a HOMOGLYPH inside the channel word is refused, not silently unmatched" \
+  "the rendered page may show an ordinary version" "$d"
+
+d=$(newfix)
+printf '\nLatest release: 2.0.0&#45;alpha.13\n' >> "$d/README.md"
+checkmsg 1 "an HTML character reference for the dash is refused, not demoted to bare" \
+  "the rendered page may show an ordinary version" "$d"
+
+d=$(newfix)
+printf '\nLatest release: 2.0.0\342\200\221alpha.13\n' >> "$d/README.md"
+checkmsg 1 "a non-breaking hyphen (Word/PDF paste) is refused, not demoted to bare" \
+  "the rendered page may show an ordinary version" "$d"
+
+d=$(newfix)
+printf '\nSee [notes](https://github.com/cqels/CQELS4J/releases/tag/v2.0.0%%2Dalpha.13).\n' >> "$d/README.md"
+checkmsg 1 "a percent-escaped dash in a link target is refused" \
+  "the rendered page may show an ordinary version" "$d"
+
+# ...and the rule must not fire on ordinary documentation. A non-ASCII byte NEAR
+# a version is everywhere in these guides (an em dash, a section sign, an accent
+# in a translated line); what makes a token unreadable is non-ASCII GLUED INTO
+# it, with no space, between the base and another dotted number.
+d=$(newfix)
+printf '\nCQELS 2.0.0 — see §3.1. Publi\303\251e pour 2.0.0 — rien \303\240 signaler.\nBound to 192.168.0.1:8080 and 127.0.0.1, build 1.2.3.4.5.\n' >> "$d/CQELS-QL_SPEC.md"
+check 0 "...and non-ASCII prose merely NEAR a version is not a spoofed token" "$d"
+
+d=$(newfix)
+printf '\n    REL=org/cqels/cqels-mcp/%s/cqels-mcp-%s-shaded.jar\n' "$PIN" "$PIN" >> "$d/SUPPLY_CHAIN.md"
+check 0 "...nor is a plain-ASCII artifact path with a percent-free URL" "$d"
+
 echo
 echo "the fence that is CURRENT passes when it is current (boundary, both sides)"
 
@@ -1244,6 +1347,44 @@ checkmsg 1 "a tracked path beginning with '-' is scanned, not eaten as an option
 
 d=$(newfix); printf '# Release notes\n\nBuilt against `%s`.\n' "$PIN" > "$d/-RELEASE-NOTES.md"
 check 0 "...and the same file with a CORRECT stamp stays silent" "$d"
+
+# ...and a file that grep calls BINARY. `grep -I` says binary the moment it sees
+# a NUL, and the skip was unconditional, so a guide saved as UTF-16 (legacy
+# Windows "Unicode") — which GitHub reads by its BOM and renders as perfectly
+# ordinary markdown — was dropped entirely: no record, no counter change, no
+# diagnostic, exit 0 over every stale stamp in it. The skip is also UPSTREAM of
+# the awk-status backstop below, so that net could never catch it (round 7).
+d=$(newfix)
+printf '# Notes\n\nLatest release: `2.0.0-alpha.13`\n' > "$WORK/u8.md"
+iconv -f UTF-8 -t UTF-16LE "$WORK/u8.md" > "$WORK/u16.md"
+{ printf '\377\376'; cat "$WORK/u16.md"; } > "$d/NOTES.md"
+checkmsg 1 "a UTF-16 guide is refused, not silently dropped as binary" \
+  "holds NUL bytes" "$d"
+
+# ...and the same drop with no size or diff signal whatever: ONE stray NUL
+# appended to an ordinary UTF-8 guide.
+d=$(newfix)
+printf '# Notes\n\nLatest release: `2.0.0-alpha.13`\n\000' > "$d/NOTES.md"
+checkmsg 1 "...and one stray NUL byte cannot silence a guide either" \
+  "holds NUL bytes" "$d"
+
+# ...while a real binary ASSET stays silent. No renderer shows prose in a .png,
+# so its extension is the honest reason to skip it — and the only one.
+d=$(newfix)
+printf '\211PNG\r\n\032\n\000\000\000\rIHDR\000\000' > "$d/logo.png"
+check 0 "...but a genuine binary asset is still skipped without complaint" "$d"
+
+# grep's OTHER non-zero status. 1 is "no match", 2 is "could not read this
+# file", and `|| continue` gave them the same arm — so an unreadable tracked
+# file contributed nothing, moved no counter, and the gate printed "every
+# version claim in this repository is true" (round 7). awk exits 2 on the same
+# input, so the backstop below would have caught it had it ever been reached.
+d=$(newfix)
+printf 'Ships `2.0.0-alpha.13` today.\n' > "$d/NOTES.md"
+reindex "$d"; chmod 000 "$d/NOTES.md"
+checkmsg 1 "an UNREADABLE tracked file is reported, not counted as 'no match'" \
+  "could not be read" "$d"
+chmod 644 "$d/NOTES.md"
 
 echo
 echo "the locale — every rule here is ASCII, and awk is not (macOS)"
