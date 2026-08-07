@@ -43,6 +43,13 @@ this automatically. This checklist covers the parts it cannot.
    scripts/ci/version-truth-gate.sh --deep # docs vs the real server surface
    ```
 
+   Prerequisites: the offline and `--online` tiers need nothing but git, awk,
+   sed, grep and curl. `--deep` builds `mcp-server` and parses one JSON-RPC
+   session, so it needs **java, maven and python3** — and so does the self-test
+   above, which drives `--deep` against recorded transcripts. Without python3
+   both report `INCONCLUSIVE … is not on PATH` (exit 3), not a documentation
+   defect.
+
 5. **Open the PR** and let CI repeat the offline + online tiers.
 
 6. **After the merge, run the workflow once by hand**

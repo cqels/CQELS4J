@@ -16,7 +16,10 @@
 #
 # Run: scripts/ci/version-truth-gate.test.sh
 # No network and no JVM: the online tier runs against a PATH-shimmed curl, and
-# the deep tier against a recorded JSON-RPC transcript.
+# the deep tier against a recorded JSON-RPC transcript. It does need python3 —
+# both to build a few fixtures and because the deep tier parses the transcript
+# with it. Without it the deep cases are INCONCLUSIVE (exit 3), which is a
+# missing prerequisite, not a finding; see RELEASING.md step 4.
 
 set -uo pipefail
 
@@ -291,6 +294,33 @@ check 1 "...and the em-dash spelling of it too (no colon involved)" "$d"
 d=$(newfix)
 printf '\n**Tested vtgsep before release:** `2.0.0-alpha.13` on JDK 17 and 21.\n' >> "$d/README.md"
 check 1 "...and the label boundary sentinel cannot be forged in prose" "$d"
+
+# ...and the label defence must know the NOUN, not one spelling of it. "version"
+# was consumed by the filler arm one line before the noun-object arm could see
+# it, so the walk sailed through and returned provenance unconditionally: the
+# identical label shape with one word changed exempted a stale stamp, in both
+# the `before` and the `prior to` spelling (round 6).
+d=$(newfix)
+printf '\n**Tested before version:** `2.0.0-alpha.13` on JDK 17 and 21.\n' >> "$d/README.md"
+checkmsg 1 "'Tested before VERSION: X' is a current stamp too — the synonym of the noun" \
+  "claims version \`2.0.0-alpha.13\`" "$d"
+
+d=$(newfix)
+printf '\n**Verified prior to version:** `2.0.0-alpha.13` on JDK 17 and 21.\n' >> "$d/README.md"
+checkmsg 1 "...and the 'prior to' spelling of it" "claims version \`2.0.0-alpha.13\`" "$d"
+
+d=$(newfix)
+printf '\n**Tested before version** — `2.0.0-alpha.13` on JDK 17 and 21.\n' >> "$d/README.md"
+check 1 "...and the em-dash spelling, which needs no colon" "$d"
+
+# ...and the same word must not poison the OPENER, exactly as "release" must
+# not: these are true history and the walk has to reach the marker through it.
+prov_md "'Before version \`X\`, <old behaviour>' is provenance" \
+  'Before version `2.0.0-alpha.11`, the checkpoint manifest listed no header.'
+prov_md "...and under a lead-in, 'In CQELS, before version \`X\`, …'" \
+  'In CQELS, before version `2.0.0-alpha.11`, cross-event guards were ignored.'
+prov_md "...and 'since version \`X\`' stays untouched (since never consults the noun)" \
+  'The engine resolves an explicit function IRI since version `2.0.0-alpha.11`.'
 
 # ...but the noun must not poison the standard historical OPENER, which is the
 # same three words with nothing in front of them. Both fired on true, naturally
@@ -567,6 +597,30 @@ printf 'Documented since `2.0.0-alpha.13`, `2.0.0-alpha.13` is the current relea
 checkmsg 1 "...nor does the SAME token repeated in prose (only a link target inherits)" \
   "claims version \`2.0.0-alpha.13\`" "$d"
 
+# ...and the verb is not glued to the nominal. Anchored as if it were, ONE
+# ordinary adverb between them missed the rule and the coordination carried the
+# marker across the masked first token again — a clause that says in words it is
+# the current release was classified provenance (round 6). Same mechanism class
+# as the round-5 filler word that reopened the mirror guard.
+d=$(newfix)
+printf 'Stable since `2.0.0-alpha.11` and `2.0.0-alpha.13` is now the latest release.\n' >> "$d/README.md"
+checkmsg 1 "an adverb between the verb and the nominal does not reopen the coordination" \
+  "claims version \`2.0.0-alpha.13\`" "$d"
+
+d=$(newfix)
+printf 'Stable since `2.0.0-alpha.11` and `2.0.0-alpha.13` is still the current release.\n' >> "$d/README.md"
+check 1 "...nor does 'is still the current release'" "$d"
+
+d=$(newfix)
+printf 'Stable since `2.0.0-alpha.11` and `2.0.0-alpha.13`, which is the latest release, ships today.\n' >> "$d/README.md"
+check 1 "...nor the relative-pronoun spelling ', which is the latest release'" "$d"
+
+# ...and the adverb slot must stay an ALLOW-LIST. A wildcard there would match
+# the NEGATION, which is a true statement about a superseded release — the same
+# trap the past-tense arm fell into in round 4.
+prov_md "'is NOT the latest release' under a marker is history, not a stale stamp" \
+  'Guards are honored since `2.0.0-alpha.11` and `2.0.0-alpha.13` is not the latest release.'
+
 # ...and the MIRROR of that rule, which was missing: the clause that names the
 # token as the current one may sit BEFORE it. P3 looks only forward, so
 # appending "is the first release …" to the repo's own stamp label exempted a
@@ -597,6 +651,46 @@ checkmsg 1 "...and one word of filler between the label and the stamp does not r
 d=$(newfix)
 printf '\n**Latest version:** the `2.0.0-alpha.13` is the first release with the MCP server.\n' >> "$d/README.md"
 checkmsg 1 "...nor does an article, on the other spelling of the nominal" \
+  "claims version \`2.0.0-alpha.13\`" "$d"
+
+# ...and the filler may sit BETWEEN the adjective and its noun, which is where
+# English usually puts the product name. Tolerated only AFTER the noun, the noun
+# itself landed in the trailing-run position — a set that does not contain
+# "release" — so one word REORDERED from the round-5 shape above reopened the
+# same evasion (round 6).
+d=$(newfix)
+printf '\n**Current CQELS release:** `2.0.0-alpha.13` is the first release with the MCP server.\n' >> "$d/README.md"
+checkmsg 1 "filler BETWEEN the adjective and the noun does not reopen the P3 evasion" \
+  "claims version \`2.0.0-alpha.13\`" "$d"
+
+d=$(newfix)
+printf '\nThe current CQELS release `2.0.0-alpha.13` is the first release with the MCP server.\n' >> "$d/README.md"
+checkmsg 1 "...and the same sentence with no label at all — plain release-note prose" \
+  "claims version \`2.0.0-alpha.13\`" "$d"
+
+# ...including when the filler is a BARE DECIMAL, which is how this project
+# writes its own name. prep() masked only full-grammar tokens, so the dot in
+# "CQELS 2.0" was read as a clause end and severed the label from its stamp
+# (round 6).
+d=$(newfix)
+printf '\n**Current CQELS 2.0 release:** `2.0.0-alpha.13` is the first release with the MCP server.\n' >> "$d/README.md"
+checkmsg 1 "...and a bare decimal in the label does not sever it from the stamp" \
+  "claims version \`2.0.0-alpha.13\`" "$d"
+
+# The other direction of that same severing, which is the expensive one: the
+# marker is TRUE history, the dot cut `before` down to "0 release", the walk
+# never reached "since", and the remedy the error printed was the wording
+# already on the line.
+prov_md "'Since CQELS 2.0 release \`X\`, …' — a bare decimal is not a clause end" \
+  'Since CQELS 2.0 release `2.0.0-alpha.11`, the engine resolves an explicit function IRI.'
+prov_md "...and the same with 'Before CQELS 2.0 release \`X\`, …'" \
+  'Before CQELS 2.0 release `2.0.0-alpha.11`, cross-event guards were ignored.'
+
+# ...but a REAL sentence end still ends the clause: masking the decimal must not
+# cost the before-side truncation its only job.
+d=$(newfix)
+printf '\nNothing has moved since CQELS 2.0. CQELS `2.0.0-alpha.13` powers the demos.\n' >> "$d/README.md"
+checkmsg 1 "...and a real period after a bare decimal still ends the clause" \
   "claims version \`2.0.0-alpha.13\`" "$d"
 
 # ...and the other direction: P3 without that nominal is still provenance, in
@@ -704,15 +798,54 @@ PY
 checkmsg 1 "...and CRLF does not turn that invisible comment back into a governing marker" \
   "claims version \`2.0.0-alpha.13\`" "$d"
 
-# ...and the shape only continuous() can refuse: a comment that OPENS on an
-# earlier line, so the line above the stamp holds the tail of it and no "<!--"
-# for the in-line stripper to find. Both must stay — the same-line stripper
-# added in round 5 covers the two cases above whether or not this refusal is
-# there, so without this case deleting the refusal leaves the whole suite green.
+# ...and the shape that motivated tracking the comment state ACROSS lines: a
+# comment that OPENS on an earlier line, so the line above the stamp holds the
+# tail of it and no "<!--" for the in-line stripper to find. (continuous()
+# refuses this one on the trailing "-->" as well; the case below is the same
+# construct with that refusal stepped around.)
 d=$(newfix)
 printf '\n<!-- introduced\nsince CQELS -->\n`2.0.0-alpha.13` is the release to install.\n' >> "$d/README.md"
 checkmsg 1 "...and a comment whose OPENING is on an earlier line does not govern it either" \
   "claims version \`2.0.0-alpha.13\`" "$d"
+
+# ...and the same construct with the comment CLOSING MID-LINE. The refusal in
+# continuous() is end-anchored on "-->", and stripcomments() cannot see an
+# opener two lines up, so one word of filler after the closer walked past both
+# and an invisible "since" governed a stale landing stamp with the gate
+# reporting OK (round 6). Any of {CQELS, the, version, release} does it.
+d=$(newfix)
+printf '\n<!--\nsince --> CQELS\n`2.0.0-alpha.13` is the release to install.\n' >> "$d/README.md"
+checkmsg 1 "...and a comment that CLOSES MID-LINE cannot smuggle a marker onto the stamp below" \
+  "claims version \`2.0.0-alpha.13\`" "$d"
+
+# ...and the other direction of the same rule: what follows the closer IS
+# visible, so a real marker there still governs the token on the next line.
+d=$(newfix)
+printf '\n<!-- parked\nnote --> Cross-event guards have been supported since\nCQELS `2.0.0-alpha.11` in the engine core.\n' >> "$d/CQELS-QL_SPEC.md"
+check 0 "...but visible prose AFTER the closer still governs the line below it" "$d"
+
+# A TOKEN INSIDE a comment is not a rendered claim at all. It used to be scanned
+# as one while every word that could mark it was stripped, so parked release
+# notes fired as a stale current stamp — and the remedy the message printed
+# ("reword it as provenance, since `X`") was already written inside the comment,
+# where it was stripped too. Nothing but deleting the parked text cleared it.
+d=$(newfix)
+printf '\n<!-- Before `2.0.0-alpha.13`, cross-event guards on negated steps were ignored. -->\n' >> "$d/README.md"
+check 0 "a version token PARKED INSIDE a comment is not a claim about anything" "$d"
+
+d=$(newfix)
+printf '\n<!--\nParked release notes.\nBefore `2.0.0-alpha.13`, cross-event guards were ignored.\n-->\n' >> "$d/README.md"
+check 0 "...and the same parked text spread over a multi-line comment" "$d"
+
+# ...and the mirror of that, which is the direction that lets a gate certify
+# nothing: an in-comment token used to count as a CURRENT stamp, so one
+# invisible line satisfied A5 for a guide whose rendered text states no version
+# at all — the precise failure the vacuity guard exists to prevent (round 6).
+d=$(newfix)
+sed -i.bak "s|$PIN|THE-LATEST-RELEASE|g" "$d/GETTING_STARTED.md"
+printf '\n<!-- doc-rev marker: %s -->\n' "$PIN" >> "$d/GETTING_STARTED.md"
+checkmsg 1 "an invisible comment does not satisfy the current-stamp vacuity guard" \
+  "pass vacuously" "$d"
 
 # ...and the SAME-LINE spelling, which was defended nowhere. continuous() refuses
 # the join from a comment on the line ABOVE; nothing stripped a comment from the
@@ -769,8 +902,15 @@ checkmsg 1 "a since-sentence ENDING IN A LINK does not exempt the next sentence'
 # clause marks (round 2). The must-not-fire counterparts are the house-style
 # link and "since `X` and `Y`" above: the same token repeated, and a
 # coordination, are the only two ways a token may sit between marker and object.
+#
+# The tail of these two fixtures matters. Both used to end "…is/remains the
+# current release", which trips the FORWARD current-predicate rule and returns
+# before the backward walk ever runs — so they reported ok under the exact
+# masked-token regression they are named for, and only their table-cell and
+# comma-plus-conjunction siblings were holding the line (round 6). The tail is
+# now neutral, so the classification can only come from the walk.
 d=$(newfix)
-printf 'Stable since `2.0.0-alpha.11`, `2.0.0-alpha.13` remains the current release.\n' >> "$d/README.md"
+printf 'Stable since `2.0.0-alpha.11`, `2.0.0-alpha.13` ships today.\n' >> "$d/README.md"
 checkmsg 1 "a marker governing token A does not exempt an unrelated token B after a comma" \
   "claims version \`2.0.0-alpha.13\`" "$d"
 
@@ -779,7 +919,7 @@ printf '\n| Introduced | Current |\n|---|---|\n| since `2.0.0-alpha.11` | `2.0.0
 check 1 "...nor across a table cell boundary ('| Introduced | Current |' matrix row)" "$d"
 
 d=$(newfix)
-printf 'Supported since `2.0.0-alpha.11` — `2.0.0-alpha.13` is the current release.\n' >> "$d/README.md"
+printf 'Supported since `2.0.0-alpha.11` — `2.0.0-alpha.13` ships today.\n' >> "$d/README.md"
 check 1 "...nor across an em-dash" "$d"
 
 # ...and not across a comma plus a CONJUNCTION either, which is the ordinary
@@ -926,11 +1066,17 @@ checkmsg 1 "heading count vs table rows" "the tables under it list 3" "$d"
 d=$(newfix); sed -i.bak 's|\*\*3 tools\*\*|**4 tools**|' "$d/README.md"
 checkmsg 1 "cross-file drift: README.md vs mcp-server/README.md" "The two landing pages disagree" "$d"
 
+# These two must name the INTRA-FILE assertion. Bumping only the declaration
+# also breaks the cross-file claim in README.md, so both errors fire on the one
+# mutation and a bare exit code cannot tell them apart: the whole suite stayed
+# green with the "declares N but lists M" comparisons deleted outright (round
+# 6). The tools pair two cases up already does it this way.
 d=$(newfix); sed -i.bak 's|Resources (2 + 1 template)|Resources (3 + 1 template)|' "$d/mcp-server/README.md"
-check 1 "resource count vs the listed cqels:// URIs" "$d"
+checkmsg 1 "resource count vs the listed cqels:// URIs" \
+  "declares 3 resources but lists 2 concrete" "$d"
 
 d=$(newfix); sed -i.bak 's|\*\*Prompts (2)|**Prompts (3)|' "$d/mcp-server/README.md"
-check 1 "prompt count vs the listed names" "$d"
+checkmsg 1 "prompt count vs the listed names" "declares 3 prompts but lists 2 names" "$d"
 
 # ...and the other direction, which is the expensive one here. The claim greps
 # were unanchored whole-file scans, so every number-plus-noun in ordinary prose
@@ -1190,6 +1336,22 @@ PY
 VTG_TEST_CURL=all200 check 0 "a CRLF guide does not hand curl a URL with a CR (a permanent, unclearable exit 3)" \
   "$d" --online
 
+# ...and B1 must actually READ every current-stamp line, including one in a file
+# whose name starts with a dash. Round 5 gave grep its `--` and recorded that
+# "sed takes its path after the program text, where a leading dash is already a
+# filename" — true of BSD sed, FALSE of GNU sed, which permutes options past the
+# script. So on ubuntu — where the links job runs — `sed -n Np -RELEASE-NOTES.md`
+# died with "invalid option -- 'R'", `|| true` swallowed it, that file's links
+# were never probed, and the run still printed "every channel it names resolves"
+# (round 6). B1 reads through a redirect now, which is an operand on both.
+# NOTE: this case can only turn red where the defect was reachable — under GNU
+# sed, i.e. in CI. On a BSD/macOS sed it passed before the fix as well.
+d=$(newfix)
+printf '# Release notes\n\nBuilt against `%s` — notes at https://raw.githubusercontent.com/cqels/maven/main/releases/notes/%s/NOTES.md\n' \
+  "$PIN" "$PIN" > "$d/-RELEASE-NOTES.md"
+VTG_TEST_CURL=all200 checkmsg 0 "the online tier harvests links from a file whose name starts with '-'" \
+  "releases/notes/$PIN/NOTES.md" "$d" --online
+
 echo
 echo "…and a network hiccup is INCONCLUSIVE (exit 3), never a defect"
 
@@ -1260,6 +1422,27 @@ d=$(newfix); VTG_DEEP_CAPTURE="$WORK/t-tmpl2" checkmsg 1 "a renamed template pla
 head -3 "$WORK/t-good" > "$WORK/t-cut"
 d=$(newfix); VTG_DEEP_CAPTURE="$WORK/t-cut" checkmsg 3 "a truncated session is INCONCLUSIVE, not a defect report" \
   "Not a documentation defect" "$d" --deep
+
+# ...and a MISSING INTERPRETER is not a missing answer. The parse ran inside
+# `if ! …`, so "python3: command not found" took the truncated-session arm and
+# the gate reported "the server did not answer every discovery call … re-run" —
+# every clause of which is false, and no re-run can clear it. RELEASING.md sends
+# maintainers to run this tier locally, and this same suite drives it eight
+# times, so one absent interpreter turned all of that red with a diagnosis of
+# the wrong machine (round 6). Both directions are asserted: the new message
+# must name the interpreter, and it must NOT blame the server.
+d=$(newfix)
+reindex "$d"
+out=$( cd "$d" && VTG_DEEP_CAPTURE="$WORK/t-good" VTG_PYTHON3=python3-does-not-exist "$SUT" --deep 2>&1 ); rc=$?
+if [ "$rc" -eq 3 ] \
+   && printf '%s' "$out" | grep -qF 'is not on PATH' \
+   && ! printf '%s' "$out" | grep -qF 'the server did not answer'; then
+  printf '  ok    a missing python3 is named as such, not blamed on the server\n'; pass=$((pass + 1))
+else
+  printf '  FAIL  a missing python3 should exit 3 naming the interpreter (got %s)\n' "$rc"
+  printf '%s\n' "$out" | sed 's/^/          /'
+  fail=$((fail + 1))
+fi
 
 echo
 echo "arguments"

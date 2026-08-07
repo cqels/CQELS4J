@@ -110,10 +110,13 @@
 #   0  every claim checked and true
 #   1  a documentation defect — a claim in this repo is false
 #   2  usage error, or the pin itself is unusable (see A1)
-#   3  INCONCLUSIVE — the network could not be reached. Never mapped to pass
-#      (a gate that can pass having checked nothing is not a gate) and never
-#      worded as a defect (a gate that cries wolf on a GitHub hiccup gets
-#      ignored, which comes to the same thing). Re-run.
+#   3  INCONCLUSIVE — the check could not be MADE: the network was unreachable,
+#      mcp-server would not build, or a tool the tier needs (python3) is not
+#      installed. Never mapped to pass (a gate that can pass having checked
+#      nothing is not a gate) and never worded as a defect (a gate that cries
+#      wolf on a GitHub hiccup gets ignored, which comes to the same thing).
+#      The message says WHICH of those it was, because "re-run" is useless
+#      advice for the two that are not transient.
 #
 # Local use
 # ---------
@@ -346,6 +349,9 @@ scan_file() {
     # --> `X`") threw the "since" away and fired on a true provenance line.
     # An unterminated "<!--" runs to the end of the string, which is how markdown
     # reads it.
+    # (decomment() below now blanks every comment out of the line before any of
+    # this runs, so in practice this finds nothing left to strip; it is kept as
+    # the in-clause backstop for the two shapes above, and costs one index().)
     function stripcomments(s,   out, p) {
       out = ""
       while ((p = index(s, "<!--")) > 0) {
@@ -358,6 +364,69 @@ scan_file() {
       return out s
     }
 
+    function blanks(n) { return (n > 0) ? sprintf("%" n "s", "") : "" }
+
+    # A COMMENT IS NOT PART OF THE DOCUMENT — in either direction, and across
+    # line breaks. The invisibility rule used to be enforced in two places that
+    # both work on one line at a time (continuous() for the line above,
+    # stripcomments() for the line itself), and a comment that OPENS on one line
+    # and CLOSES on another defeated both at once (round 6):
+    #
+    #   * a marker inside the comment governed a stamp outside it. The closer
+    #     rule in continuous() only refuses a prev line ENDING in "-->", so
+    #     "<!--" / "since --> CQELS" / "`2.0.0-alpha.13` is the release to
+    #     install." was reported OK — stripcomments() cannot see an opener two
+    #     lines earlier, so the invisible "since" survived as ordinary prose.
+    #   * a TOKEN inside the comment was scanned as a rendered claim, while
+    #     every word that could mark it was stripped — a class no edit could
+    #     fix in place. Parked release notes ("<!-- Before `2.0.0-alpha.13`,
+    #     guards were ignored. -->") fired as a stale current stamp, and the
+    #     remedy the error printed was the wording already inside the comment.
+    #     The same asymmetry satisfied A5: after the visible stamps in a guide were
+    #     reworded away, one invisible "<!-- doc-rev marker: PIN -->" was enough
+    #     for the vacuity guard to certify a landing page stating no version.
+    #
+    # So comment spans are blanked here, once, with the open/closed state
+    # carried ACROSS lines — the way a renderer reads them. Blanking (rather
+    # than deleting) keeps the line length, which every offset in the scanner
+    # depends on. INCMT is the carried state and is reset per file by the caller.
+    function decomment(s,   out, p) {
+      out = ""
+      while (length(s) > 0) {
+        if (INCMT) {
+          p = index(s, "-->")
+          if (p == 0) return out blanks(length(s))
+          out = out blanks(p + 2)
+          s = substr(s, p + 3)
+          INCMT = 0
+        } else {
+          p = index(s, "<!--")
+          if (p == 0) return out s
+          out = out substr(s, 1, p - 1)
+          s = substr(s, p)
+          INCMT = 1
+        }
+      }
+      return out
+    }
+
+    # A BARE DECIMAL is one word too, and its dot is not a clause end. Only the
+    # full grammar was masked, so every other numeric mention kept its dot and
+    # the clause truncation below read it as a sentence boundary — including in
+    # the OWN NAME of this product. "CQELS 2.0" (README.md:1) and "SPARQL 1.1"
+    # (README.md:190) are written all over these guides, and both directions
+    # failed on them (round 6):
+    #   * "Since CQELS 2.0 release `X`, …" truncated `before` to "0 release",
+    #     the walk never reached "since", and TRUE provenance was reported as a
+    #     stale current stamp — with the printed remedy ("reword as since `X`")
+    #     already on the line.
+    #   * the same cut severed a LABEL from its stamp, so "**Current CQELS 2.0
+    #     release:** `X` is the first release with the MCP server" defeated the
+    #     mirror guard and P3 exempted a stale stamp.
+    # The digits are JOINED rather than dropped, so the word is still visibly a
+    # number to the reader of a VTG_DUMP and cannot collide with a marker word.
+    # The walk steps over it as version-qualifying filler, exactly as it steps
+    # over "CQELS" and "the".
     function prep(s,   out, tok) {
       s = stripcomments(s)
       s = stripurls(s)
@@ -365,6 +434,14 @@ scan_file() {
       while (match(s, /[0-9]+\.[0-9]+\.[0-9]+-[A-Za-z]+\.[0-9]+/)) {
         tok = substr(s, RSTART, RLENGTH)
         out = out substr(s, 1, RSTART - 1) " v" flat(tok) " "
+        s = substr(s, RSTART + RLENGTH)
+      }
+      s = out s
+      out = ""
+      while (match(s, /[0-9]+(\.[0-9]+)+/)) {
+        tok = substr(s, RSTART, RLENGTH)
+        gsub(/\./, "", tok)
+        out = out substr(s, 1, RSTART - 1) " " tok " "
         s = substr(s, RSTART + RLENGTH)
       }
       return out s
@@ -453,7 +530,17 @@ scan_file() {
       # the token, which is what the error message asks for — made the sentence
       # false (round 4). The arm was never load-bearing: all four cases that
       # exercise this rule are present tense.
-      if (a ~ /^(is|are|remains?|stays?) the (current|latest|newest)( |$)/) return "current"
+      #
+      # The verb and the nominal are NOT adjacent in ordinary English. Anchored
+      # as if they were, one adverb reopened the coordination transparency
+      # verbatim: "Stable since `X` and `Y` is now the latest release" was
+      # reported OK on a stale `Y`, as were "is still the current release" and
+      # the relative-pronoun spelling ", which is the latest release" (round 6).
+      # The adverb slot is an ALLOW-LIST, deliberately: a `[a-z]+` wildcard
+      # there would match "is NOT the latest release", which is a true
+      # historical statement about a superseded release and must stay
+      # provenance — the same trap the past-tense arm fell into.
+      if (a ~ /^(which )?(is|are|remains?|stays?)( (now|still|currently|already))? the (current|latest|newest)( |$)/) return "current"
 
       # P1: the marker must GOVERN the token — only version-qualifying filler
       # may sit between the two. A plain word-distance window instead of this
@@ -514,8 +601,21 @@ scan_file() {
         # stale current stamp, while the article-free spelling of the same
         # sentence passed (round 4). It defended nothing: the whole suite stays
         # green with it added.
-        if (lw == "cqels" || lw == "code" || lw == "version" || lw == "v" || lw == "the") { coord = 0; continue }
-        if (lw == "release" && !nounobj) { nounobj = 1; continue }
+        if (lw == "cqels" || lw == "code" || lw == "v" || lw == "the") { coord = 0; continue }
+        # A bare decimal — "CQELS 2.0", "SPARQL 1.1" — is version-qualifying
+        # filler like the product name beside it. prep() joins its digits, so it
+        # arrives here as a plain number and cannot be confused with a masked
+        # version token (which is spelled v200alpha13).
+        if (lw ~ /^[0-9]+$/) { coord = 0; continue }
+        # "version" is the SYNONYM of "release" here, not filler. Consumed one
+        # arm earlier it never armed nounobj, so the label defence knew exactly
+        # one noun: "**Tested before release:** `X`" fired (a current stamp,
+        # correctly) while "**Tested before version:** `X`" and "**Verified
+        # prior to version:** `X`" — the identical shape, one word different —
+        # sailed through the walk and exempted a stale stamp (round 6). The
+        # header of this gate states the contract in terms of the noun, not of
+        # one spelling of it.
+        if ((lw == "release" || lw == "version") && !nounobj) { nounobj = 1; continue }
         # The label/lead-in mark itself is transparent to the walk — it is only
         # consulted at the marker, above. Opaque, it broke "Available since: `X`"
         # (a must-not-fire case) and every other marker introduced by a colon.
@@ -563,7 +663,17 @@ scan_file() {
       # `2.0.0-alpha.13` is the first release with the MCP server" was reported OK
       # (round 5). The repo writes exactly that shape ("**Applies to:** CQELS
       # `X`", " * CQELS {@code X}"), so the filler run is allowed here too.
-      if (tolower(b) ~ /(^| )(current|latest|newest)( release| version)?( (cqels|code|version|v|the|vtgsep))*$/) return "current"
+      #
+      # ...and the filler may sit BETWEEN the adjective and its noun as well as
+      # after it. Allowed only after it, the noun landed in the trailing-run
+      # position — which does not contain "release" — and the guard failed on an
+      # ordinary English noun phrase: "**Current CQELS release:** `X` is the
+      # first release with the MCP server" exempted a stale stamp under an
+      # explicit current-release label, and so did the same sentence with no
+      # label at all ("The current CQELS release `X` is the first release …",
+      # plain release-note prose). One word reordered from the round-5 shape
+      # that IS caught (round 6).
+      if (tolower(b) ~ /(^| )(current|latest|newest)( (cqels|code|v|the|[0-9]+))*( release| version)?( (cqels|code|version|v|the|vtgsep|[0-9]+))*$/) return "current"
       if (a ~ /^(is|was) the first release( |$)/) return "provenance"
       return "current"
     }
@@ -615,6 +725,13 @@ scan_file() {
       # defeats the remedy this gate exists to force, which is to resolve WHERE
       # THE NEXT READER SEES IT. Not markdown-gated — pom.xml puts a comment
       # directly above <cqels.version> today.
+      #
+      # This rule is now the BACKSTOP, not the mechanism: it is end-anchored, so
+      # a comment closing mid-line with one word of filler after it ("<!--" /
+      # "since --> CQELS" / stamp) walked straight past it (round 6). Comment
+      # spans are resolved in decomment(), with the state carried across lines,
+      # so by the time the text of this line reaches classify() there is nothing
+      # invisible left in it whether or not this refusal fires.
       if (p ~ /-->[ \t]*$/) return 0                     # prev is an HTML comment
       md = (FILE ~ /\.md$/)
       if (md) {
@@ -671,10 +788,16 @@ scan_file() {
     { sub(/\r$/, ""); L[FNR] = $0 }
 
     END {
+      # One pass in file order to resolve the comment spans, because the state
+      # is carried across lines. D[] is what the reader sees; L[] is what the
+      # file says, and the structural rules in continuous() (a heading, a fence,
+      # a trailing "-->") are asked of L[] because they are about the SOURCE.
+      INCMT = 0
+      for (i = 1; i <= FNR; i++) D[i] = decomment(L[i])
       for (i = 1; i <= FNR; i++) {
-        line = L[i]
-        prev = (i > 1 && continuous(L[i-1], line)) ? L[i-1] : ""
-        nxt  = (i < FNR && continuous(line, L[i+1])) ? L[i+1] : ""
+        line = D[i]
+        prev = (i > 1 && continuous(L[i-1], L[i])) ? D[i-1] : ""
+        nxt  = (i < FNR && continuous(L[i], L[i+1])) ? D[i+1] : ""
         masked = line
         # Matching is done on a LOWERCASED copy, and every offset taken from it
         # indexes the original — which holds only because LC_ALL=C is forced at
@@ -824,10 +947,16 @@ while IFS= read -r -d '' f; do
   # top-level `-RELEASE-NOTES.md` as an option bundle, failed with exit 2, and
   # `|| continue` dropped the file with no record, no counter change and no err
   # — a stale stamp inside it passed with "every version claim in this
-  # repository is true" (round 5). This is the only place a git-derived path
-  # reaches a command in option position: awk and sed take theirs after the
-  # program text, where a leading dash is already a filename, and adding `--`
-  # to those would break them on BSD.
+  # repository is true" (round 5).
+  #
+  # awk is safe without it (measured: mawk and BSD awk both read a leading-dash
+  # path handed to them after the program text). sed is NOT — and the round-5
+  # note here claimed it was, which is why the same defect survived one tier
+  # down until round 6. GNU sed PERMUTES options past the script operand, so
+  # B1's `sed -n Np FILE` died with "invalid option -- 'R'" on ubuntu while the
+  # maintainer's BSD sed read the file fine. `--` cannot be the fix there
+  # either: BSD sed stops option parsing at the script and treats `--` as a
+  # FILENAME. B1 reads through a redirect instead, which is an operand on both.
   grep -Iq . -- "$f" 2>/dev/null || continue     # skip binary
   # awk's exit status was discarded, and awk's own diagnostic goes to stderr
   # without touching `fail` — so any pass that DIES (a non-UTF-8 byte under a
@@ -1087,7 +1216,14 @@ if [ "$ONLINE" -eq 1 ]; then
         # curl refused it with exit 3 and the links job reported INCONCLUSIVE
         # "re-run" forever on a link that returns 200 (round 5). That inverts
         # what exit 3 promises, and it hides a genuinely dead link as flake.
-        sed -n "${ln}p" "$f" \
+        #
+        # The path is fed through a REDIRECT, not as an argument: GNU sed
+        # permutes options past the script, so a tracked `-RELEASE-NOTES.md`
+        # was parsed as an option bundle on ubuntu, sed exited 1, `|| true`
+        # swallowed it and that file's version-bearing links were never probed
+        # — with the run still printing "every channel it names resolves"
+        # (round 6). See the note beside the `grep -Iq . --` in A7.
+        sed -n "${ln}p" < "$f" \
           | tr -d '\r' \
           | grep -oE 'https?://[^ )>"'"'"'`]+' \
           | sed 's/[.,;:]*$//' \
@@ -1198,7 +1334,21 @@ if [ "$DEEP" -eq 1 ]; then
     wait "$WRITER" 2>/dev/null
   fi
 
-  if ! python3 - "$TRANSCRIPT" "$WORK" <<'PY'
+  # A MISSING INTERPRETER IS NOT A MISSING ANSWER. The parse used to run inside
+  # `if ! …`, so `python3: command not found` took the same arm as a truncated
+  # session and the gate said "the server did not answer every discovery call …
+  # re-run" — every clause of which is false when python3 is merely absent, and
+  # no re-run can ever clear it. RELEASING.md tells maintainers to run all four
+  # commands locally, and two of them need this interpreter (the self-test
+  # drives --deep eight times through VTG_DEEP_CAPTURE, so the whole suite goes
+  # red with the same misleading text). VTG_PYTHON3 exists so the self-test can
+  # pin that, and so a maintainer can point the tier at a specific interpreter.
+  PY3=${VTG_PYTHON3:-python3}
+  if ! command -v "$PY3" >/dev/null 2>&1; then
+    echo "??:   INCONCLUSIVE — '$PY3' is not on PATH, and the deep tier parses the server transcript with it. Nothing about the documentation was checked. This tier needs java, maven and python3 (see RELEASING.md step 4); install it and re-run."
+    exit 3
+  fi
+  "$PY3" - "$TRANSCRIPT" "$WORK" <<'PY'
 import json, os, sys
 transcript, out = sys.argv[1], sys.argv[2]
 found = {}
@@ -1237,8 +1387,15 @@ if absent:
     sys.stderr.write('no %s frame in the transcript\n' % ', '.join(absent))
     sys.exit(9)
 PY
-  then
+  rc=$?
+  if [ "$rc" -eq 9 ]; then
     echo "??:   INCONCLUSIVE — the server did not answer every discovery call. Not a documentation defect; re-run."
+    exit 3
+  elif [ "$rc" -ne 0 ]; then
+    # 9 is the parser's own "a discovery frame is missing" verdict. Anything
+    # else is the parser itself failing, and saying the SERVER did not answer
+    # would be a diagnosis of the wrong machine.
+    echo "??:   INCONCLUSIVE — the transcript parser exited $rc without reading the advertised surface. Not a documentation defect; re-run."
     exit 3
   fi
 
