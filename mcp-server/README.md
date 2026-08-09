@@ -193,7 +193,7 @@ Two options:
 
 - **The published server, natively.** `org.cqels:cqels-mcp` ships a ready-to-run `-shaded`
   jar with a built-in Streamable-HTTP transport. Download it from the
-  [2.0.0-alpha.16 release](https://github.com/cqels/CQELS4J/releases/tag/v2.0.0-alpha.16)
+  [2.0.0-alpha.18 release](https://github.com/cqels/CQELS4J/releases/tag/v2.0.0-alpha.18)
   (no credentials needed) and run it with `CQELS_MCP_TRANSPORT=http`
   (host/port/path, bearer-token auth, and origin allow-lists are configurable via
   `CQELS_MCP_HTTP_*` environment variables). This is the production remote path — it starts

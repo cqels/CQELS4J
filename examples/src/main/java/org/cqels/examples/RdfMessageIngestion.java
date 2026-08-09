@@ -12,7 +12,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Example — the <strong>W3C RSP Community Group "RDF Messages"</strong> stream envelope (CQELS 2.0.0-alpha.16).
+ * Example — the <strong>W3C RSP Community Group "RDF Messages"</strong> stream envelope (CQELS 2.0.0-alpha.18).
  *
  * <p>An <em>RDF Message</em> is "an RDF Dataset that is intended to be interpreted atomically as a single
  * communicative act". CQELS
