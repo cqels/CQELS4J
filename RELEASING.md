@@ -34,7 +34,7 @@ this automatically. This checklist covers the parts it cannot.
    emissions on the new version, not merely compile. Capture output before and
    after the bump and account for every difference.
 
-4. **Run all three gate tiers locally:**
+4. **Run all three gate tiers locally, then the capability probe:**
 
    ```bash
    scripts/ci/version-truth-gate.test.sh   # the gate's own tests
@@ -49,6 +49,21 @@ this automatically. This checklist covers the parts it cannot.
    above, which drives `--deep` against recorded transcripts. Without python3
    both report `INCONCLUSIVE … is not on PATH` (exit 3), not a documentation
    defect.
+
+   Then re-check the documented engine limitations, which the version tiers
+   cannot see:
+
+   ```bash
+   scripts/ci/capability-probe.sh   # needs java + maven
+   ```
+
+   This repository documents behaviour it works around — `CQELS-QL_SPEC.md` §6
+   and §9, `CDSP_MAPPING.md` §4–5, and several example Javadocs. A bump is the
+   moment those claims most often become false, and they rot **silently**: when
+   upstream fixes one, the workarounds keep working and nothing else fails. The
+   probe asserts both directions — caveats that are no longer true, and
+   capabilities that have regressed — and names the files to edit. Exit 3 again
+   means it could not run, not that the docs are wrong.
 
 5. **Open the PR** and let CI repeat the offline + online tiers.
 

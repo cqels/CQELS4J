@@ -151,6 +151,32 @@ jobs:
       # It still fails the job — fail-closed — but the log says to re-run.
       - run: scripts/ci/version-truth-gate.sh --online
 
+  # Behaviour truth, as opposed to version truth. This repo documents engine limitations
+  # ("X does not work on 2.0.0-alpha.18, work around it like this") in CQELS-QL_SPEC.md,
+  # CDSP_MAPPING.md and several example Javadocs. Those claims rot in a direction the
+  # version-truth job cannot see: when upstream FIXES one, nothing here breaks -- the
+  # workarounds keep working and the build stays green while the docs quietly start lying.
+  # scripts/ci/capability-probe.sh asserts both directions and names the files to edit.
+  #
+  # Runs on PRs too, unlike tools-reality: a PR is exactly where a new caveat gets written,
+  # and a caveat that was never true should not be merged. It only builds examples/ (seconds),
+  # not the 64 MB shaded server, so it is cheap enough for that.
+  capability-truth:
+    needs: version-truth
+    if: github.event_name != 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-java@3a4f6e1af504cf6a31855fa899c6aa5355ba6c12 # v4.7.0
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+      # Exit 3 means "could not run" (toolchain or mirror unreachable), not "the docs are
+      # wrong" -- same convention as the gate's --online tier. Still fails, log says re-run.
+      - run: scripts/ci/capability-probe.sh
+
   tools-reality:
     needs: version-truth
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'

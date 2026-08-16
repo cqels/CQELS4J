@@ -85,6 +85,9 @@ mvn -q exec:java -Dexec.mainClass=org.cqels.examples.reasoning.BoundedTransitive
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.reasoning.RetractableInference
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.reasoning.MissionPreservationAsp
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.reasoning.PersistentViolationAsp
+
+# Behaviour-truth probe (not a demo — asserts this repo's engine claims are still true):
+mvn -q exec:java -Dexec.mainClass=org.cqels.examples.CapabilityProbe
 ```
 
 Each program prints what it pushes and what the engine emits, then exits on its own.
@@ -241,6 +244,26 @@ Each demo pairs the derivation with a case that must NOT derive, so the semantic
 | [`SosaObservations`](src/main/java/org/cqels/examples/SosaObservations.java) | W3C [SOSA/SSN](https://www.w3.org/TR/vocab-ssn/) + multi-pattern stream join | Average / count per (vehicle × observed VSS signal) — the `observedProperty` keeps speed and battery readings apart. |
 | [`VehicleSignalsCdsp`](src/main/java/org/cqels/examples/VehicleSignalsCdsp.java) | COVESA [VSS](https://covesa.global/) (CDSP) + `GROUP BY` + `HAVING` | The flagship query: per-vehicle top/average speed over a window, emitting only vehicles that were speeding. |
 | [`RdfMessageIngestion`](src/main/java/org/cqels/examples/RdfMessageIngestion.java) | W3C [RSP CG **RDF Messages**](https://w3c-cg.github.io/rsp/spec/messages) N-Quads envelope (`RdfMessageCodec`, alpha.9) | Decode a `VERSION "1.2-messages"` document into atomic observations and push each as one stream element, so a multi-pattern `[NOW]` query binds two predicates of the *same* observation. |
+
+## Keeping the caveats honest
+
+Several demos document engine behaviour they work around
+(["issue #54"](https://github.com/cqels/CQELS4J/issues/54),
+[#55](https://github.com/cqels/CQELS4J/issues/55),
+[#57](https://github.com/cqels/CQELS4J/issues/57)). Those notes rot in a direction nothing else
+catches: when upstream **fixes** one, the workaround keeps working and the build stays green while
+the prose quietly becomes false.
+
+[`CapabilityProbe`](src/main/java/org/cqels/examples/CapabilityProbe.java) is not a demo — it
+asserts both directions and fails if reality and the documentation have diverged, naming the files
+to edit:
+
+```bash
+scripts/ci/capability-probe.sh
+```
+
+It runs on every PR and nightly (`.github/workflows/version-truth.yml`), and `RELEASING.md` step 4
+runs it on a version bump — the moment such claims most often stop being true.
 
 ## Adapting them
 
