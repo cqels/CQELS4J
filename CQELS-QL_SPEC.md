@@ -1,6 +1,6 @@
 # CQELS-QL Language Specification
 
-**Applies to:** CQELS `2.0.0-alpha.18` · **Based on:** SPARQL 1.1, extended with RSP-QL / C-SPARQL / LARS streaming constructs.
+**Applies to:** CQELS `2.0.0-alpha.19` · **Based on:** SPARQL 1.1, extended with RSP-QL / C-SPARQL / LARS streaming constructs.
 
 CQELS-QL (*Continuous Query Evaluation over Linked Streams — Query Language*) is **SPARQL 1.1 plus
 streaming**. If you know SPARQL, you already know most of it: `SELECT`, `FILTER`, `BIND`, `OPTIONAL`,
@@ -348,9 +348,17 @@ are called out.
 - **`GROUP BY ?a, ?b`** · **`HAVING(expr)`** — aggregation (required for aggregates to apply) +
   post-aggregation filter; `HAVING` references the **SELECT aliases** (e.g. `HAVING(?cnt > 1)`, not
   `HAVING(COUNT(*) > 1)`).
-- **`ORDER BY ?v [ASC|DESC]`** (default `ASC`) · **`LIMIT n`** — note that over a *streaming windowed
-  aggregate* the engine currently emits per-group rows as they update rather than a single ranked,
-  truncated result set.
+- **`ORDER BY ?v [ASC|DESC]`** (default `ASC`) · **`LIMIT n`** — semantics depend on the query shape
+  (since `2.0.0-alpha.19`; earlier alphas silently produced no ordered/limited output over an
+  unbounded stream):
+  - *Windowed* queries (`[RANGE …]`, `[SLIDE …]`, `[TRIPLES N]`) apply `ORDER BY` / `LIMIT` **per
+    evaluation batch, at window close**, in solution-modifier order (see below) — i.e. each window's
+    result set is sorted and truncated independently.
+  - *Unwindowed* (`[NOW]`) queries that combine `ORDER BY` with `LIMIT n` run as a **continuous
+    top-`n`**: the current top-`n` result set is re-emitted whenever it changes.
+  - A bare `ORDER BY` (no `LIMIT`), or a bare `LIMIT` (no `ORDER BY`), over an unbounded,
+    non-windowed stream is **rejected at query registration** — ordering or truncating an unbounded
+    stream on a non-time-ascending attribute isn't well-defined without a window or a top-`n` bound.
 
 **Evaluation order:** stream patterns → static lookup join → `UNION` → `OPTIONAL` →
 `FILTER NOT EXISTS` → `FILTER` → `BIND` → `GROUP BY` + aggregates → `HAVING` → `ORDER BY` → `LIMIT`.
