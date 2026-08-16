@@ -5,8 +5,9 @@
 CQELS-QL (*Continuous Query Evaluation over Linked Streams — Query Language*) is **SPARQL 1.1 plus
 streaming**. If you know SPARQL, you already know most of it: `SELECT`, `FILTER`, `BIND`, `OPTIONAL`,
 `UNION`, aggregates and `GROUP BY` / `HAVING` behave as in SPARQL 1.1. (`ORDER BY` / `LIMIT` are
-supported with a streaming caveat, and `MINUS` is not yet executed — registration rejects it with a
-hint to use `FILTER NOT EXISTS` — see [§9](#9-standard-sparql-features-supported-as-is).)
+supported with a streaming caveat, `MINUS` is not yet executed — registration rejects it with a
+hint to use `FILTER NOT EXISTS` — property paths are not supported, and a few SPARQL 1.1 built-ins
+are not yet evaluated; see [§9](#9-standard-sparql-features-supported-as-is) for the full list.)
 
 This document focuses on **what CQELS-QL adds on top of SPARQL** — the constructs you won't find in a
 plain triple store. The standard SPARQL surface is summarized briefly in
@@ -235,6 +236,17 @@ WHERE {
 Because the lookup re-reads the static store per element, updates to background facts are reflected on the
 next matching element.
 
+**Elimination semantics.** A static pattern is a *required* join, exactly as in SPARQL 1.1: if the
+lookup finds no match, the row is eliminated. This is what lets a static pattern act as a **guard** —
+"only vehicles in this fleet", "only signals the model declares" — and not merely as enrichment.
+
+> **Known defect on `2.0.0-alpha.18`:** the engine does not currently enforce this. A static pattern
+> that fails to match is dropped instead of eliminating the row, so the row survives with the
+> pattern's variables unbound — `OPTIONAL` semantics where an inner join is required. Enrichment
+> (a pattern that *does* match) binds correctly, so the common case looks right; the failure is
+> silent and shows up as **over-reporting** in guards. A fully-constant static pattern is evaluated
+> correctly. Until this is fixed, re-check guard conditions in the result listener.
+
 ---
 
 ## 7. Complex Event Processing (CEP)
@@ -326,8 +338,23 @@ are called out.
 - **Aggregates:** `COUNT(*)` / `COUNT(?v)`, `SUM`, `AVG`, `MIN`, `MAX`, `GROUP_CONCAT(?v; SEPARATOR=", ")`.
   *Note:* aggregates are computed **per group — an explicit `GROUP BY` is required**; without it the engine
   emits the raw bindings rather than an aggregate.
-- **`FILTER(expr)`** — operators `= != < > <= >= && || !` `+ - * /`, plus built-ins (`BOUND`, `IF`,
-  `CONCAT`, `STR`, `year(...)`, …); full SPARQL effective-boolean-value semantics.
+- **`FILTER(expr)`** — operators `= != < > <= >= && || !` `+ - * /`, plus built-ins; full SPARQL
+  effective-boolean-value semantics. Verified working on `2.0.0-alpha.18`: `BOUND`, `IF`, `STR`,
+  `CONCAT`, `ABS`, `SUBSTR`, `IRI`, `year(...)`.
+  **Not every SPARQL 1.1 built-in is evaluated**, and an unevaluated one fails the same silent way an
+  unregistered function IRI does — no registration error, `FILTER` simply never matches and `BIND`
+  leaves the variable unbound. Known gaps on `2.0.0-alpha.18`:
+
+  | Construct | SPARQL 1.1 | Status | Use instead |
+  |-----------|-----------|--------|-------------|
+  | `REPLACE(str, pattern, repl)` | §17.4.3.14 | **not evaluated** | post-process in the result listener |
+  | `sameTerm(a, b)` | §17.4.1.1 | **not evaluated** | `STR(?a) = STR(?b)`, or `?a = <full-iri>` |
+  | *prefixed name as a constant inside `FILTER`* | §4.1.1 | **not resolved** — the same prefix works in triple patterns | write the full IRI in angle brackets |
+  | `xsd:dateTime` subtraction / `xsd:duration` comparison | XPath-derived, outside the SPARQL 1.1 operator table | not evaluated | express the interval as a **window** ([§3](#3-windows)) |
+
+  The last row is not a conformance gap — SPARQL 1.1 does not define `-` over two `xsd:dateTime`
+  values — but it is worth stating, because porting rule engines that do (RDFox, for one) will reach
+  for it. A window expresses the same constraint declaratively and bounds engine state as well.
 - **`BIND(expr AS ?v)`** — computed variables (evaluated after `FILTER`).
 - **Extension functions (SPARQL 1.1 §17.6)** — since `2.0.0-alpha.11`, a `FILTER` / `BIND` /
   `SELECT`-expression call to an **explicit function IRI** — `<urn:cqels:fn:haversine>(…)` or a
@@ -342,6 +369,14 @@ are called out.
   SPARQL type error**: `FILTER` drops the row, `BIND` leaves the variable unbound.
 - **`OPTIONAL { … }`** — left outer join (unmatched optional variables are unbound).
 - **`{ … } UNION { … }`** — alternative patterns merged before `FILTER`.
+- **Property paths (`/`, `^`, `+`, `*`, `?`, `|`)** — **not supported, and not currently rejected.**
+  On `2.0.0-alpha.18` a path such as `?a skos:broader+ ?b` prints a parser error to stderr
+  (`extraneous input '+'`) yet **registration still succeeds**, after which the engine evaluates a
+  *different* pattern from the one written and can return rows that look plausible. This is the one
+  unsupported construct that does not fail loud, so treat a path in a query as a defect until the
+  engine rejects it. Write the hops explicitly (`?a skos:broader ?mid . ?mid skos:broader ?b .`) for a
+  fixed depth, or use a recursive rule (see the
+  [`BoundedTransitiveClosure`](examples/) example) for unbounded closure.
 - **`FILTER NOT EXISTS { … }`** — anti-join (exclude rows with a match). (`MINUS` is not yet executed;
   since `2.0.0-alpha.13` registering a query containing `MINUS` **fails loud** with a hint to rewrite it
   as `FILTER NOT EXISTS` — earlier alphas parsed it but silently skipped it.)

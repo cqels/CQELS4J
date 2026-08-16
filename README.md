@@ -225,6 +225,14 @@ smoke test.
 
 ---
 
+## Interoperability with COVESA CDSP
+
+[CDSP_MAPPING.md](CDSP_MAPPING.md) maps the [COVESA CDSP](https://github.com/COVESA/cdsp)
+knowledge layer onto CQELS rule by rule — what its RDFox Datalog rules and SPARQL output queries
+become as continuous queries, which CQELS features the port needs, and which are not ready yet.
+The worked example is runnable:
+[`CdspDrivingStyle`](examples/src/main/java/org/cqels/examples/cdsp/CdspDrivingStyle.java).
+
 ## Query language and standards
 
 **CQELS-QL** is a continuous-query language: [SPARQL 1.1](https://www.w3.org/TR/sparql11-query/)
