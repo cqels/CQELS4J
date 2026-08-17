@@ -144,10 +144,21 @@ visible; the ticker instead demonstrates window eviction (the run outlasts the w
 | [`ShaclValidation`](src/main/java/org/cqels/examples/ShaclValidation.java) | continuous [SHACL](https://www.w3.org/TR/shacl/) — `cqels-shacl` | Require every `sosa:Observation` to carry a result; `conforms` flips from `false` to `true` as the result arrives for the same observation. |
 | [`AspReasoning`](src/main/java/org/cqels/examples/AspReasoning.java) | Answer-Set Programming — `cqels-asp` | A logic rule derives `convoy(V1,V2)` for two distinct vehicles reporting telemetry together (join + inequality). |
 
-> alpha.7 also ships an opt-in *warm parse-cache* ASP solver backend (`WarmParseCacheAspSolverBackend`,
-> parses the base program once and reuses it across continuous solves) — it is engine-API opt-in via the
-> 5-arg `AspContinuousQuery` constructor and not yet reachable through the `CQELSEngine` facade these
-> examples use, so there is no demo of it here.
+> Since `2.0.0-alpha.7` the ASP module also ships an opt-in *warm parse-cache* solver backend
+> (`WarmParseCacheAspSolverBackend`, parses the base program once and reuses it across continuous
+> solves). It is not exposed by the `registerAspQuery` convenience overloads — those always use the
+> default backend — but it **is** reachable from the engine facade: construct the query with the
+> 5-arg `AspContinuousQuery` constructor and hand it to the generic `registerQuery`, which accepts
+> it because `AspContinuousQuery implements ContinuousQuery`:
+>
+> ```java
+> AspContinuousQuery q = new AspContinuousQuery(
+>         "WarmConvoy", program, cfg, new AspFactMapper(), new WarmParseCacheAspSolverBackend());
+> engine.registerQuery(q, result -> …);   // solves, using the warm cache
+> ```
+>
+> No demo ships here yet — but the reason is scope, not reachability: the snippet above was run
+> against `2.0.0-alpha.18` and does register and solve.
 
 ### Reasoning showcase (`org.cqels.examples.reasoning`)
 
