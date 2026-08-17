@@ -1,5 +1,9 @@
 package org.cqels.examples;
 
+import org.cqels.asp.config.AspStreamSolveConfig;
+import org.cqels.asp.integration.AspFactMapper;
+import org.cqels.asp.query.AspContinuousQuery;
+import org.cqels.asp.solver.WarmParseCacheAspSolverBackend;
 import org.cqels.engine.CQELSEngine;
 import org.cqels.engine.DataStream;
 import org.eclipse.rdf4j.model.IRI;
@@ -31,6 +35,14 @@ import java.util.concurrent.CopyOnWriteArrayList;
  *   <li><strong>Capabilities</strong> — documented as working, and relied on by the examples. If one
  *       breaks, that is a regression in a new engine release.</li>
  * </ul>
+ *
+ * <p>Not every claim is about query evaluation. The last pair of checks covers <em>API shape</em>:
+ * that the warm parse-cache ASP backend is reachable through the facade's generic
+ * {@code registerQuery} (asserted by registering one and seeing it solve), and that
+ * {@code registerAspQuery} still has no backend-accepting overload (checked reflectively, since that
+ * is a statement about the API's shape rather than about behaviour). Both underwrite the note beside
+ * the reasoning demos in {@code examples/README.md}; if the facade grows such an overload, that note
+ * needs revisiting and this probe says so.
  *
  * <p>Either way a failure means "reality and the documentation have diverged", which is exactly the
  * class of defect this repository exists to avoid. Run it whenever the pin moves — `RELEASING.md`
@@ -67,12 +79,16 @@ public class CapabilityProbe {
         caveat("     sameTerm() is not evaluated",
                 sameTermEvaluates(),
                 "CQELS-QL_SPEC.md §9 gap table (and issue #55)");
+        caveat("     registerAspQuery has no backend-accepting overload",
+                registerAspQueryTakesBackend(),
+                "examples/README.md note under 'Reasoning & validation'");
 
         System.out.println("\n-- capabilities (documented as WORKING; the examples depend on these) --");
         capability("stream-static enrichment binds static variables", staticEnrichmentBinds());
         capability("FILTER/BIND builtins: ABS, CONCAT, IRI, SUBSTR, IF", builtinsWork());
         capability("atomic multi-statement element joins in a query", atomicElementJoins());
         capability("GROUP BY with aggregates", groupByWorks());
+        capability("warm parse-cache ASP backend reachable via registerQuery", warmBackendReachable());
 
         System.out.println("\n" + "-".repeat(72));
         if (DIVERGENCES.isEmpty()) {
@@ -175,7 +191,52 @@ public class CapabilityProbe {
         return !rows.isEmpty();
     }
 
+    /**
+     * The examples README states the warm parse-cache ASP backend is not exposed by the
+     * {@code registerAspQuery} convenience overloads. If the facade grows one that accepts an
+     * {@code AspSolverBackend}, that note is stale — checked reflectively, since the claim is
+     * about the shape of the API rather than about behaviour.
+     */
+    private static boolean registerAspQueryTakesBackend() {
+        for (java.lang.reflect.Method m : CQELSEngine.class.getMethods()) {
+            if (!m.getName().equals("registerAspQuery")) {
+                continue;
+            }
+            for (Class<?> p : m.getParameterTypes()) {
+                if (org.cqels.asp.solver.AspSolverBackend.class.isAssignableFrom(p)) {
+                    return true;   // an overload now takes a backend => the note is stale
+                }
+            }
+        }
+        return false;
+    }
+
     // ---- capability probes ---------------------------------------------------------------
+
+    /**
+     * The README claims the warm parse-cache backend IS reachable through the facade, via the
+     * 5-arg {@code AspContinuousQuery} constructor and the generic {@code registerQuery}. That is a
+     * documented, runnable snippet, so it is asserted here rather than trusted.
+     */
+    private static boolean warmBackendReachable() {
+        try (CQELSEngine engine = CQELSEngine.builder().id("probe-warm").withMemoryStore().build()) {
+            DataStream stream = engine.createStream("default");
+            List<Object> rows = new CopyOnWriteArrayList<>();
+            AspContinuousQuery q = new AspContinuousQuery(
+                    "ProbeWarm",
+                    "convoy(V1,V2) :- obs(V1), obs(V2), V1 != V2.",
+                    AspStreamSolveConfig.builder().build(),
+                    new AspFactMapper(),
+                    new WarmParseCacheAspSolverBackend());
+            engine.registerQuery(q, rows::add);
+            engine.start();
+            stream.pushTriple(C + "v1", C + "obs", C + "x");
+            Thread.sleep(1200);
+            return !rows.isEmpty();
+        } catch (Exception e) {
+            return false;
+        }
+    }
 
     private static boolean staticEnrichmentBinds() throws Exception {
         List<Object> rows = run(engine -> {

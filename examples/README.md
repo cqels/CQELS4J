@@ -262,6 +262,10 @@ to edit:
 scripts/ci/capability-probe.sh
 ```
 
+It covers API-shape claims too, not just query behaviour: that the warm parse-cache ASP backend is
+reachable through the facade's generic `registerQuery` (asserted by registering one and seeing it
+solve), and that `registerAspQuery` still has no backend-accepting overload (checked reflectively).
+
 It runs on every PR and nightly (`.github/workflows/version-truth.yml`), and `RELEASING.md` step 4
 runs it on a version bump — the moment such claims most often stop being true.
 
