@@ -57,7 +57,10 @@ import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
  *       the rule network entirely.</li>
  * </ul>
  * Filed as #57 (multi-statement), #58 (background graph) and #56 (property paths), each with a
- * minimal reproducer.
+ * minimal reproducer. #56 is listed although no query here contains a path expression: the
+ * natural way to write this rollup is {@code ?narrow skos:broader+ ?broad} in the query itself,
+ * and the reason it is a pair of RETE rules instead is that property paths do not execute. The
+ * rules are the workaround for #56.
  *
  * <p>This is the streaming counterpart of what a SKOS-aware catalogue browser does offline, and it
  * is the piece that makes an s2dm model useful at query time rather than only at design time: the

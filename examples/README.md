@@ -156,10 +156,15 @@ seeds a catalogue mirroring the real schemas in the s2dm repository.
 | [`S2dmInstanceZones`](src/main/java/org/cqels/examples/cdsp/S2dmInstanceZones.java) | `FILTER` over instance-tag bindings + `GROUP BY` on a compound (row × side) key | S2DM **instance tags**: one `Door.isOpen` concept tagged with an `InCabinZone` (row × side) replaces VSS's exploded `…Row1.DriverSide.IsOpen` paths — "any door, any zone" binds row/side as data, a rear-passenger-side interlock filters on the tag, and a dashboard counts open doors per zone. A third row changes the data, not the query. |
 | [`SkosConceptRollup`](src/main/java/org/cqels/examples/cdsp/SkosConceptRollup.java) | Custom RETE rules (`cqels-reasoning-rete`) over `skos:broader` | Rolling observations up the concept hierarchy: `Seat`/`Door` readings answer a query that asks only about `Cabin`, while `Powertrain` — narrower than `Vehicle` but not than `Cabin` — correctly stays out. SKOS carries no RDFS entailment, so the lift is stated as an explicit rule rather than inherited from `rdfs:subClassOf`. |
 
-> These three are written against the **published** `2.0.0-alpha.18` surface. Three engine
-> limitations met while building them are filed as [#54](https://github.com/cqels/CQELS4J/issues/54),
-> [#55](https://github.com/cqels/CQELS4J/issues/55) and [#57](https://github.com/cqels/CQELS4J/issues/57),
-> and each demo's Javadoc names the one it works around rather than hiding it.
+> These are written against the **published** `2.0.0-alpha.18` surface. Five engine limitations
+> came up while building them, each filed with a minimal reproducer:
+> [#54](https://github.com/cqels/CQELS4J/issues/54) (static patterns do not eliminate),
+> [#55](https://github.com/cqels/CQELS4J/issues/55) (prefixed names in `FILTER`),
+> [#56](https://github.com/cqels/CQELS4J/issues/56) (property paths),
+> [#57](https://github.com/cqels/CQELS4J/issues/57) (reasoner skips atomic elements) and
+> [#58](https://github.com/cqels/CQELS4J/issues/58) (rules cannot read the background graph).
+> Each demo's Javadoc names the ones it works around rather than hiding them —
+> `SkosConceptRollup` alone hits three, which is why its list is the longest.
 
 ### Query dialects
 | Class | CQELS feature | Scenario |
