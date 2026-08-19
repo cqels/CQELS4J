@@ -110,12 +110,31 @@ public final class Fleet {
     private Fleet() { }
 
     /**
+     * Zero-pad a minted identifier so that <strong>lexicographic order matches minting order</strong>.
+     *
+     * <p>This is not cosmetic. {@code CdspDrivingStyle} orders a pair of frames with
+     * {@code FILTER(STR(?f1) < STR(?f2))}, because CQELS-QL on this release cannot compare event
+     * times. Unpadded, {@code "frame/10" < "frame/9"} is true, so at the 9→10 rollover the
+     * comparison inverts, the query reads the speed from the EARLIER frame, and the stale-speed
+     * false alert that scenario 4 exists to prevent comes back. Found in review, with a probe that
+     * straddled the rollover deliberately.
+     *
+     * <p>Eight digits is far more than any demo emits, and the padding is a demo-scoped device: it
+     * makes identifier order a faithful proxy for arrival order <em>within one run</em>. It is not
+     * a general technique — a real deployment orders by event time, which is what this release
+     * cannot yet express.
+     */
+    private static String seq(long n) {
+        return String.format("%08d", n);
+    }
+
+    /**
      * Push one VSS reading wrapped as a {@code sosa:Observation} (five triples sharing a fresh
      * observation IRI) — the canonical event used throughout the demos.
      */
     public static void pushObservation(DataStream stream, String sensor, String vehicle,
                                        String vssSignal, double value) {
-        String obs = EX + "obs/" + OBS_SEQ.incrementAndGet();
+        String obs = EX + "obs/" + seq(OBS_SEQ.incrementAndGet());
         stream.pushTriple(obs, RDF_TYPE, OBSERVATION);
         stream.pushTriple(obs, MADE_BY_SENSOR, sensor);
         stream.pushTriple(obs, OBSERVED_PROPERTY, vssSignal);
@@ -129,7 +148,7 @@ public final class Fleet {
      */
     public static void pushObservationAt(DataStream stream, String sensor, String vehicle,
                                          String vssSignal, double value, long timestamp) {
-        IRI obs = VF.createIRI(EX + "obs/" + OBS_SEQ.incrementAndGet());
+        IRI obs = VF.createIRI(EX + "obs/" + seq(OBS_SEQ.incrementAndGet()));
         stream.push(obs, VF.createIRI(RDF_TYPE), VF.createIRI(OBSERVATION), timestamp);
         stream.push(obs, VF.createIRI(MADE_BY_SENSOR), VF.createIRI(sensor), timestamp);
         stream.push(obs, VF.createIRI(OBSERVED_PROPERTY), VF.createIRI(vssSignal), timestamp);
@@ -151,7 +170,7 @@ public final class Fleet {
      */
     public static void pushFrame(DataStream stream, String sensor, String vehicle,
                                  String signalA, double valueA, String signalB, double valueB) {
-        IRI obs = VF.createIRI(EX + "frame/" + OBS_SEQ.incrementAndGet());
+        IRI obs = VF.createIRI(EX + "frame/" + seq(OBS_SEQ.incrementAndGet()));
         stream.push(List.of(
                 VF.createStatement(obs, VF.createIRI(RDF_TYPE), VF.createIRI(OBSERVATION)),
                 VF.createStatement(obs, VF.createIRI(MADE_BY_SENSOR), VF.createIRI(sensor)),
@@ -162,7 +181,7 @@ public final class Fleet {
 
     /** Push a driving-incident event ({@code ?event fleet:event <eventClass>}) — used by the CEP demos. */
     public static void pushDrivingEvent(DataStream stream, String eventClass) {
-        stream.pushTriple(FLEET + "event/" + EVT_SEQ.incrementAndGet(), EVENT, eventClass);
+        stream.pushTriple(FLEET + "event/" + seq(EVT_SEQ.incrementAndGet()), EVENT, eventClass);
     }
 
     /**
@@ -170,7 +189,7 @@ public final class Fleet {
      * and whose result is a typed WKT literal — the SOSA-shaped form of a GPS reading, used by the geo demo.
      */
     public static void pushLocationObservation(DataStream stream, String sensor, String vehicle, String wkt) {
-        IRI obs = VF.createIRI(EX + "obs/" + OBS_SEQ.incrementAndGet());
+        IRI obs = VF.createIRI(EX + "obs/" + seq(OBS_SEQ.incrementAndGet()));
         stream.push(obs, VF.createIRI(RDF_TYPE), VF.createIRI(OBSERVATION));
         stream.push(obs, VF.createIRI(MADE_BY_SENSOR), VF.createIRI(sensor));
         stream.push(obs, VF.createIRI(OBSERVED_PROPERTY), VF.createIRI(LOCATION));

@@ -73,6 +73,11 @@ public final class S2dm {
     public static final String SKOS_BROADER = SKOS + "broader";
     public static final String SKOS_MEMBER = SKOS + "member";
 
+    // The exporter gives every concept a SECOND rdf:type from the s2dm ontology, which is what a
+    // consumer queries when it wants "all object types" without relying on collection membership.
+    public static final String S2DM_OBJECT_TYPE = S2DM + "ObjectType";
+    public static final String S2DM_FIELD = S2DM + "Field";
+
     // ---- the two collections every s2dm skeleton emits --------------------------------------
     public static final String OBJECT_CONCEPTS = CONCEPT + "ObjectConcepts";
     public static final String FIELD_CONCEPTS = CONCEPT + "FieldConcepts";
@@ -132,8 +137,8 @@ public final class S2dm {
     public static void seedConceptGraph(CQELSEngine engine) {
         try (RepositoryConnection conn = engine.getRepository().getConnection()) {
             // the two collections the s2dm SHACL shapes require to be non-empty
-            conn.add(VF.createIRI(OBJECT_CONCEPTS), VF.createIRI(Fleet.RDF_TYPE), VF.createIRI(SKOS_COLLECTION));
-            conn.add(VF.createIRI(FIELD_CONCEPTS), VF.createIRI(Fleet.RDF_TYPE), VF.createIRI(SKOS_COLLECTION));
+            collection(conn, OBJECT_CONCEPTS, "Object Concepts");
+            collection(conn, FIELD_CONCEPTS, "Field Concepts");
 
             // -- object concepts (GraphQL types) --
             objectConcept(conn, C_VEHICLE, "Vehicle", "High-level vehicle data.");
@@ -143,10 +148,10 @@ public final class S2dm {
             objectConcept(conn, C_POWERTRAIN, "Powertrain", "Powertrain and traction-battery data.");
 
             // -- field concepts (GraphQL fields) --
-            fieldConcept(conn, F_AVERAGE_SPEED, "averageSpeed", "Average speed of the vehicle");
-            fieldConcept(conn, F_SEAT_OCCUPIED, "isOccupied", "Whether the seat is occupied.");
-            fieldConcept(conn, F_DOOR_OPEN, "isOpen", "Whether the door is open.");
-            fieldConcept(conn, F_BATTERY_SOC, "stateOfCharge", "Traction-battery state of charge.");
+            fieldConcept(conn, F_AVERAGE_SPEED, "Vehicle.averageSpeed", "Average speed of the vehicle");
+            fieldConcept(conn, F_SEAT_OCCUPIED, "Seat.isOccupied", "Whether the seat is occupied.");
+            fieldConcept(conn, F_DOOR_OPEN, "Door.isOpen", "Whether the door is open.");
+            fieldConcept(conn, F_BATTERY_SOC, "Powertrain.stateOfCharge", "Traction-battery state of charge.");
 
             // -- the curated taxonomy: narrower -> broader --
             broader(conn, C_SEAT, C_CABIN);
@@ -161,21 +166,40 @@ public final class S2dm {
         }
     }
 
+    /** A collection, with the language-tagged prefLabel the exporter gives it. */
+    private static void collection(RepositoryConnection conn, String iri, String label) {
+        conn.add(VF.createIRI(iri), VF.createIRI(Fleet.RDF_TYPE), VF.createIRI(SKOS_COLLECTION));
+        conn.add(VF.createIRI(iri), VF.createIRI(SKOS_PREF_LABEL), VF.createLiteral(label, "en"));
+    }
+
     /** A GraphQL object type as {@code skos:Concept} + membership of {@code ObjectConcepts}. */
     private static void objectConcept(RepositoryConnection conn, String iri, String label, String definition) {
-        concept(conn, iri, label, definition, OBJECT_CONCEPTS);
+        concept(conn, iri, label, definition, OBJECT_CONCEPTS, S2DM_OBJECT_TYPE);
     }
 
     /** A GraphQL field as {@code skos:Concept} + membership of {@code FieldConcepts}. */
     private static void fieldConcept(RepositoryConnection conn, String iri, String label, String definition) {
-        concept(conn, iri, label, definition, FIELD_CONCEPTS);
+        concept(conn, iri, label, definition, FIELD_CONCEPTS, S2DM_FIELD);
     }
 
+    /**
+     * One concept in the shape {@code s2dm generate skos-skeleton} actually emits — read off the
+     * exporter's {@code skos.py} rather than assumed:
+     * <ul>
+     *   <li>{@code rdf:type skos:Concept} <em>and</em> a second type from the s2dm ontology
+     *       ({@code s2dm:ObjectType} or {@code s2dm:Field});</li>
+     *   <li>a <strong>language-tagged</strong> {@code skos:prefLabel} — the exporter always writes
+     *       {@code Literal(label, lang=...)}, so a query matching a plain literal finds nothing;</li>
+     *   <li>an untagged {@code skos:definition};</li>
+     *   <li>membership of the matching collection.</li>
+     * </ul>
+     */
     private static void concept(RepositoryConnection conn, String iri, String label,
-                                String definition, String collection) {
+                                String definition, String collection, String s2dmType) {
         IRI c = VF.createIRI(iri);
         conn.add(c, VF.createIRI(Fleet.RDF_TYPE), VF.createIRI(SKOS_CONCEPT));
-        conn.add(c, VF.createIRI(SKOS_PREF_LABEL), VF.createLiteral(label));
+        conn.add(c, VF.createIRI(Fleet.RDF_TYPE), VF.createIRI(s2dmType));
+        conn.add(c, VF.createIRI(SKOS_PREF_LABEL), VF.createLiteral(label, "en"));
         conn.add(c, VF.createIRI(SKOS_DEFINITION), VF.createLiteral(definition));
         conn.add(VF.createIRI(collection), VF.createIRI(SKOS_MEMBER), c);
     }
