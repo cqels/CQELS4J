@@ -190,20 +190,26 @@ public class FirstQuery {
 
 CQELS 2.0 is an alpha, and a handful of constructs do not yet behave as SPARQL 1.1 specifies.
 They are grouped here because they share one signature that makes them expensive to discover
-alone: **they all fail silently.** Nothing is rejected at registration and no error is logged —
-a query simply returns wrong rows, or none. If a query is inexplicably quiet, check this list
-before assuming your data is at fault.
+alone: **nothing is rejected at registration.** The query goes live and simply returns wrong rows,
+or none. Only the property-path case prints anything at all — a parser diagnostic on stderr, which
+is easy to miss because registration succeeds anyway and the query then runs. If a query is
+inexplicably quiet, or a guard reports more than it should, check this list before assuming your
+data is at fault.
 
 | What | Symptom | Do this instead |
 |------|---------|-----------------|
 | A static (non-`STREAM`) pattern that finds no match ([#54](https://github.com/cqels/CQELS4J/issues/54)) | The row survives instead of being eliminated, so patterns used as **guards** over-report | Re-check the guard condition in your result listener |
 | A prefixed name inside `FILTER` ([#55](https://github.com/cqels/CQELS4J/issues/55)) | `FILTER(?x = ex:Thing)` never matches, though the same prefix works in triple patterns | Write the full IRI: `FILTER(?x = <http://.../Thing>)` |
-| Property paths — `+`, `*`, `/`, `^` ([#56](https://github.com/cqels/CQELS4J/issues/56)) | Registration succeeds despite a parser error, then evaluates a *different* pattern | Write the hops explicitly, or use a recursive rule |
-| `REPLACE()` and `sameTerm()` | The variable is left unbound / the filter never matches | `STR(?a) = STR(?b)` for `sameTerm`; do `REPLACE` in the listener |
+| Property paths — `+`, `*`, `/`, `^` ([#56](https://github.com/cqels/CQELS4J/issues/56)) | A parser error is printed to **stderr**, but registration succeeds anyway and a *different* pattern is evaluated | Write the hops explicitly, or use a recursive rule |
+| `REPLACE()` and `sameTerm()` | The variable is left unbound / the filter never matches | `?a = <full-iri>`; `STR(?a) = STR(?b)` **only if both are IRIs** — `STR` cannot tell an IRI from a string literal with the same text. `REPLACE` moves to the listener |
 | Rules over atomically pushed multi-statement elements ([#57](https://github.com/cqels/CQELS4J/issues/57)) | The reasoner skips them entirely, so no inference fires | Push those statements one at a time |
 
+| Rules matching the background graph ([#58](https://github.com/cqels/CQELS4J/issues/58)) | The reasoner reads stream elements only, so an ontology in the store is invisible to rules | Push the ontology onto the stream at start-up |
+
 Everything else in [`CQELS-QL_SPEC.md`](CQELS-QL_SPEC.md) behaves as documented, and the demos in
-[`examples/`](examples/) are all verified to run against this release.
+[`examples/`](examples/) are all verified to run against this release. `scripts/ci/capability-probe.sh`
+asserts every row above on each PR, so if one is fixed upstream this table fails CI rather than
+quietly going out of date.
 
 ---
 

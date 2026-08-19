@@ -41,7 +41,7 @@ specifications CQELS builds on and aligns with.
 
 ## Quick start
 
-Three lines, no credentials at any point — JDK 17+ and Maven 3.8+ are the only prerequisites:
+Three lines, no credentials at any point — Git, JDK 17+ and Maven 3.8+ are all you need:
 
 ```bash
 git clone https://github.com/cqels/CQELS4J.git
