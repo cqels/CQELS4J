@@ -92,6 +92,9 @@ public class CapabilityProbe {
         caveat("#57 reasoner skips multi-statement (atomic) elements",
                 reasonerSeesAtomicElements(),
                 "S2dm.pushConceptSignalUnbatched, SkosConceptRollup.java, GETTING_STARTED.md table");
+        caveat("#58 reasoner cannot match the background graph",
+                reasonerSeesBackgroundGraph(),
+                "SkosConceptRollup.java, CDSP_MAPPING.md §5, GETTING_STARTED.md limitations table");
         caveat("     registerAspQuery has no backend-accepting overload",
                 registerAspQueryTakesBackend(),
                 "examples/README.md note under 'Reasoning & validation'");
@@ -312,6 +315,51 @@ public class CapabilityProbe {
         }
     }
 
+    /**
+     * #58: rule conditions cannot match the background graph — only stream elements.
+     *
+     * <p>Seeds the hierarchy edge into the REPOSITORY (where an s2dm catalogue naturally lives),
+     * pushes only the observation, and asks whether the lift rule fires. It does not today, which
+     * is why {@code SkosConceptRollup} pushes its hierarchy onto the stream.
+     *
+     * <p>Added because #64's limitations table claims the probe asserts every row, and #58 was the
+     * one row nothing covered (codex, round 2).
+     */
+    private static boolean reasonerSeesBackgroundGraph() throws Exception {
+        IRI of = VF.createIRI(C + "of");
+        IRI broader = VF.createIRI(C + "broader");
+        Rule lift = Rule.builder().id("probe-bg")
+                .condition(RuleCondition.builder()
+                        .addPattern(TriplePattern.builder()
+                                .subjectVar("o").predicate(of).objectVar("narrow").build())
+                        .addPattern(TriplePattern.builder()
+                                .subjectVar("narrow").predicate(broader).objectVar("broad").build())
+                        .build())
+                .consequent(RuleConsequent.builder()
+                        .addTemplate(TripleTemplate.builder()
+                                .subjectVar("o").predicate(of).objectVar("broad").build())
+                        .build())
+                .priority(10).build();
+        ReasoningConfig cfg = ReasoningConfig.builder()
+                .ruleSet(RuleSet.of(lift)).enableRecursiveInference(true).maxRecursionDepth(4).build();
+        try (CQELSEngine engine = CQELSEngine.builder()
+                .id("probe-58").withMemoryStore()
+                .addStreamProcessor(new ReactiveReteAdapter(cfg)::apply).build()) {
+            try (RepositoryConnection conn = engine.getRepository().getConnection()) {
+                conn.add(VF.createIRI(C + "leaf"), broader, VF.createIRI(C + "mid"));
+            }
+            DataStream stream = engine.createStream("S");
+            List<Object> inferred = new CopyOnWriteArrayList<>();
+            engine.registerCqelsQuery(withRegister(
+                    "SELECT ?o FROM STREAM S [TRIPLES 1]\n"
+                    + "WHERE { STREAM S { ?o <" + C + "of> <" + C + "mid> . } }\n"), inferred::add);
+            engine.start();
+            stream.pushTriple(C + "o1", C + "of", C + "leaf");   // hierarchy is in the STORE only
+            Thread.sleep(1200);
+            return !inferred.isEmpty();
+        }
+    }
+
     // ---- capability probes ---------------------------------------------------------------
 
     /**
@@ -421,16 +469,21 @@ public class CapabilityProbe {
                     Thread.sleep(1500);
                     s.pushTriple(C + "o4", C + "group", C + "g2");
                 });
-        // Require the group/count ASSOCIATION, not two independent substrings: checking only that
-        // "g1" and "n=2" both appear somewhere would pass on rows {g1,n=1} and {g2,n=2} (codex,
-        // round 2). Each row's own map must pair g1 with 2.
+        // Require the group/count ASSOCIATION within a single row, and require BOTH expected
+        // groups. Checking substrings across rows passes on {g1,n=1}+{g2,n=2}; checking only g1
+        // passes on an engine that silently drops every second group (codex, rounds 2 and 3).
+        boolean g1 = false;
+        boolean g2 = false;
         for (Object row : rows) {
             String one = row.toString();
             if (one.contains("g=" + C + "g1") && one.contains("n=2")) {
-                return true;
+                g1 = true;
+            }
+            if (one.contains("g=" + C + "g2") && one.contains("n=1")) {
+                g2 = true;
             }
         }
-        return false;
+        return g1 && g2;
     }
 
     // ---- harness -------------------------------------------------------------------------
