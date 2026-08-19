@@ -1,15 +1,20 @@
 # The only CI this repository has, and deliberately so.
 #
-# This repo ships documentation about a release published elsewhere. Nothing
-# here compiles, so nothing here fails when a claim goes stale — see the header
-# of scripts/ci/version-truth-gate.sh for the three defects that were sitting in
-# the public landing page before this existed.
+# This repo ships documentation about a release published elsewhere. Its prose can
+# go stale without anything failing, which is the failure mode every job below
+# exists to catch — see the header of scripts/ci/version-truth-gate.sh for the
+# three defects that were sitting in the public landing page before this existed.
+# (The examples DO compile, and capability-truth builds and runs them; but a
+# compiling example proves nothing about whether the prose describing it is true.)
 #
-# Four jobs, split by cost and by what a red means:
+# Five jobs, split by cost and by what a red means:
 #   version-truth   offline, seconds. Red = a claim in this repo is false.
 #   links           ~6 HEAD requests. Red = a channel this repo names is gone.
 #                   Kept separate so a network red is never confused for the
 #                   offline one; exit 3 (inconclusive) is a re-run, not a defect.
+#   capability-truth builds examples/ and asserts the engine behaviour this repo
+#                   documents. Red = a caveat is no longer true (upstream fixed
+#                   it and the prose now lies), or a relied-on feature regressed.
 #   tools-reality   builds the server. Red = the docs describe a surface the
 #                   server does not have. Too slow for every PR.
 #   schedule-health independent of all three. Red = the nightly below is not

@@ -6,6 +6,14 @@ import org.cqels.asp.query.AspContinuousQuery;
 import org.cqels.asp.solver.WarmParseCacheAspSolverBackend;
 import org.cqels.engine.CQELSEngine;
 import org.cqels.engine.DataStream;
+import org.cqels.reasoning.Rule;
+import org.cqels.reasoning.RuleCondition;
+import org.cqels.reasoning.RuleConsequent;
+import org.cqels.reasoning.RuleSet;
+import org.cqels.reasoning.TriplePattern;
+import org.cqels.reasoning.TripleTemplate;
+import org.cqels.reasoning.config.ReasoningConfig;
+import org.cqels.reasoning.engine.ReactiveReteAdapter;
 import org.eclipse.rdf4j.model.IRI;
 import org.eclipse.rdf4j.model.ValueFactory;
 import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
@@ -57,6 +65,8 @@ public class CapabilityProbe {
 
     private static final ValueFactory VF = SimpleValueFactory.getInstance();
     private static final String C = "https://example.org/probe#";
+    private static final java.util.concurrent.atomic.AtomicLong QUERY_SEQ =
+            new java.util.concurrent.atomic.AtomicLong();
     private static final List<String> DIVERGENCES = new ArrayList<>();
     private static int checks = 0;
 
@@ -79,6 +89,9 @@ public class CapabilityProbe {
         caveat("     sameTerm() is not evaluated",
                 sameTermEvaluates(),
                 "CQELS-QL_SPEC.md §9 gap table (and issue #55)");
+        caveat("#57 reasoner skips multi-statement (atomic) elements",
+                reasonerSeesAtomicElements(),
+                "S2dm.pushConceptSignalUnbatched, SkosConceptRollup.java, GETTING_STARTED.md table");
         caveat("     registerAspQuery has no backend-accepting overload",
                 registerAspQueryTakesBackend(),
                 "examples/README.md note under 'Reasoning & validation'");
@@ -153,21 +166,47 @@ public class CapabilityProbe {
         return !rows.isEmpty();
     }
 
-    /** #56: an unsupported property path must be rejected at registration, not silently mangled. */
-    private static boolean propertyPathRejected() {
+    /**
+     * #56: a property path must either be REJECTED at registration or EXECUTED correctly. Today it
+     * is neither — registration succeeds and the engine evaluates a different pattern.
+     *
+     * <p>Checking only "did registration throw?" would be useless: if a future release implements
+     * paths properly, registration still succeeds, the check would still report "still open", and
+     * the docs would rot while CI stayed green. So this seeds a two-hop hierarchy
+     * ({@code leaf -> mid -> root}) and asks whether {@code p:broader+} actually reaches the root.
+     *
+     * <p>Resolution counts if EITHER a path-specific rejection happens, OR the transitive answer is
+     * exactly right: {@code leaf} matched, and the bogus control (a path to a concept that does not
+     * exist) matched nothing.
+     */
+    private static boolean propertyPathRejected() throws Exception {
         try (CQELSEngine engine = CQELSEngine.builder().id("probe-path").withMemoryStore().build()) {
-            engine.createStream("S");
-            engine.registerCqelsQuery(withRegister("""
-                    PREFIX p: <%s>
-                    SELECT ?x FROM STREAM S [TRIPLES 1]
-                    WHERE { STREAM S { ?o p:of ?x . } ?x p:broader+ <%sroot> . }
-                    """.formatted(C, C)), r -> { });
-            return false;   // accepted a path it cannot execute
-        } catch (Exception e) {
-            // Rejected. Only counts as "fixed" if it was rejected for the PATH — a probe that
-            // treats any failure as a fix would report a false alarm on an unrelated error.
-            String msg = String.valueOf(e.getMessage()).toLowerCase();
-            return msg.contains("path") || msg.contains("'+'") || msg.contains("extraneous");
+            try (RepositoryConnection conn = engine.getRepository().getConnection()) {
+                conn.add(VF.createIRI(C + "leaf"), VF.createIRI(C + "broader"), VF.createIRI(C + "mid"));
+                conn.add(VF.createIRI(C + "mid"), VF.createIRI(C + "broader"), VF.createIRI(C + "root"));
+            }
+            DataStream stream = engine.createStream("S");
+            List<Object> reachesRoot = new CopyOnWriteArrayList<>();
+            List<Object> reachesBogus = new CopyOnWriteArrayList<>();
+            try {
+                engine.registerCqelsQuery(withRegister("""
+                        SELECT ?x FROM STREAM S [TRIPLES 1]
+                        WHERE { STREAM S { ?o <%sof> ?x . } ?x <%sbroader>+ <%sroot> . }
+                        """.formatted(C, C, C)), reachesRoot::add);
+                engine.registerCqelsQuery(withRegister("""
+                        SELECT ?x FROM STREAM S [TRIPLES 1]
+                        WHERE { STREAM S { ?o <%sof> ?x . } ?x <%sbroader>+ <%sNoSuchRoot> . }
+                        """.formatted(C, C, C)), reachesBogus::add);
+            } catch (Exception e) {
+                String msg = String.valueOf(e.getMessage()).toLowerCase();
+                return msg.contains("path") || msg.contains("'+'") || msg.contains("extraneous");
+            }
+            engine.start();
+            stream.pushTriple(C + "o1", C + "of", C + "leaf");
+            Thread.sleep(1200);
+            // Correct transitive semantics: leaf reaches root in two hops, and reaches nothing
+            // that does not exist. Today BOTH match, which is the mangling this issue describes.
+            return !reachesRoot.isEmpty() && reachesBogus.isEmpty();
         }
     }
 
@@ -209,6 +248,56 @@ public class CapabilityProbe {
             }
         }
         return false;
+    }
+
+    /**
+     * #57: the rule network must see statements pushed as ONE atomic multi-statement element, the
+     * same way it sees single-statement pushes.
+     *
+     * <p>The previous version of this probe leaned on {@code atomicElementJoins()} — an ordinary
+     * query over an atomic element, with no reasoner attached at all. That result is independent of
+     * #57, so an upstream fix would have left {@code S2dm.pushConceptSignalUnbatched} and its
+     * Javadocs stale while this job stayed green (codex, review of #62). This attaches a reasoner
+     * and pushes through it, which is the comparison that actually matters.
+     */
+    private static boolean reasonerSeesAtomicElements() throws Exception {
+        IRI of = VF.createIRI(C + "of");
+        IRI broader = VF.createIRI(C + "broader");
+        Rule lift = Rule.builder().id("probe-lift")
+                .condition(RuleCondition.builder()
+                        .addPattern(TriplePattern.builder()
+                                .subjectVar("o").predicate(of).objectVar("narrow").build())
+                        .addPattern(TriplePattern.builder()
+                                .subjectVar("narrow").predicate(broader).objectVar("broad").build())
+                        .build())
+                .consequent(RuleConsequent.builder()
+                        .addTemplate(TripleTemplate.builder()
+                                .subjectVar("o").predicate(of).objectVar("broad").build())
+                        .build())
+                .priority(10).build();
+        ReasoningConfig cfg = ReasoningConfig.builder()
+                .ruleSet(RuleSet.of(lift)).enableRecursiveInference(true).maxRecursionDepth(4).build();
+
+        try (CQELSEngine engine = CQELSEngine.builder()
+                .id("probe-57").withMemoryStore()
+                .addStreamProcessor(new ReactiveReteAdapter(cfg)::apply).build()) {
+            DataStream stream = engine.createStream("S");
+            List<Object> inferred = new CopyOnWriteArrayList<>();
+            engine.registerCqelsQuery(withRegister(
+                    "SELECT ?o FROM STREAM S [TRIPLES 1]\n"
+                    + "WHERE { STREAM S { ?o <" + C + "of> <" + C + "mid> . } }\n"), inferred::add);
+            engine.start();
+            stream.pushTriple(C + "leaf", C + "broader", C + "mid");   // the hierarchy edge
+            Thread.sleep(300);
+            // The observation, pushed ATOMICALLY. If the reasoner sees it, the lift rule derives
+            // "<o1> of <mid>" and the query above fires. Today it does not.
+            IRI o1 = VF.createIRI(C + "o1");
+            stream.push(List.of(
+                    VF.createStatement(o1, of, VF.createIRI(C + "leaf")),
+                    VF.createStatement(o1, VF.createIRI(C + "note"), VF.createLiteral("frame"))));
+            Thread.sleep(1200);
+            return !inferred.isEmpty();
+        }
     }
 
     // ---- capability probes ---------------------------------------------------------------
@@ -262,8 +351,14 @@ public class CapabilityProbe {
                     BIND(IF(?v > 10, "hi", "lo") AS ?f) }
             """.formatted(C, C),
                 s -> s.push(C + "o1", C + "val", 250.0));
+        // Assert the VALUES, not merely that the bindings exist: a wrong ABS or SUBSTR would
+        // otherwise pass, and this check exists to catch behavioural regressions.
         String r = rows.toString();
-        return r.contains("d=") && r.contains("c=") && r.contains("i=") && r.contains("u=") && r.contains("f=");
+        return r.contains("d=150.0")            // ABS(250 - 100)
+                && r.contains("c=x250.0")       // CONCAT("x", STR(250.0))
+                && r.contains("i=" + C + "250.0")
+                && r.contains("u=25")           // SUBSTR("250.0", 1, 2)
+                && r.contains("f=hi");          // IF(250 > 10, "hi", "lo")
     }
 
     private static boolean atomicElementJoins() throws Exception {
@@ -294,12 +389,17 @@ public class CapabilityProbe {
                     // all three at once would leave the aggregate unemitted and look like a
                     // regression -- which is exactly the false alarm this pacing avoids.
                     s.pushTriple(C + "o1", C + "group", C + "g1");
-                    Thread.sleep(300);
                     s.pushTriple(C + "o2", C + "group", C + "g1");
-                    Thread.sleep(1200);
-                    s.pushTriple(C + "o3", C + "group", C + "g1");
+                    s.pushTriple(C + "o3", C + "group", C + "g2");
+                    Thread.sleep(1500);
+                    s.pushTriple(C + "o4", C + "group", C + "g2");
                 });
-        return rows.stream().anyMatch(r -> r.toString().contains("n="));
+        // Two groups with DIFFERENT known counts, so a broken grouping (everything in one bucket,
+        // or a wrong count) cannot pass. g1 has 2 members, g2 has 1 at the time the window closes.
+        String r = rows.toString();
+        boolean g1 = r.contains("g=" + C + "g1");
+        boolean twoInAGroup = r.contains("n=2");
+        return g1 && twoInAGroup;
     }
 
     // ---- harness -------------------------------------------------------------------------
@@ -310,6 +410,10 @@ public class CapabilityProbe {
     /**
      * Insert {@code REGISTER QUERY … AS} after any leading {@code PREFIX} lines — the prologue must
      * precede the REGISTER clause, so it cannot simply be prepended.
+     *
+     * <p>The name is made unique per call. A check that registers two queries in one engine used
+     * to give both the same name; the second never took effect, its result list stayed empty,
+     * and the check read that as success — reporting #56 FIXED when nothing had changed.
      */
     private static String withRegister(String query) {
         StringBuilder prologue = new StringBuilder();
@@ -323,7 +427,7 @@ public class CapabilityProbe {
                 body.append(line).append('\n');
             }
         }
-        return prologue + "REGISTER QUERY Probe AS\n" + body;
+        return prologue + "REGISTER QUERY Probe" + QUERY_SEQ.incrementAndGet() + " AS\n" + body;
     }
 
     /** One query, one fresh engine, so checks cannot contaminate each other. */
