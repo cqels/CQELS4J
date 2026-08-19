@@ -51,11 +51,11 @@ It is implemented as eight Datalog rules plus one output query.
 |---|---|---|
 | **2. `CurrentObservation`** | `AGGREGATE … BIND MAX(?pt)` per observed property, to find the most recent reading | **Not reproducible as a query** — see the note below. A window bounds *how old* a reading may be; it does not pick the *latest* one. Handled in the data model instead. |
 | **3. `within3s`** | Pairs observations whose timestamps differ by less than a window size read from an ontology individual (`car:hasWindowSize "PT3S"^^xsd:duration`) | **Not needed as a rule** — becomes the window itself, `[RANGE 3s]`. Window semantics are syntax the planner understands, not data to be interpreted. |
-| **4. `LargeAngleChange`** | Self-join on two angle observations in the window; `ABS(angle1 − angle2) > 210`; ordered by trimmed timestamp; `SKOLEM` mints an individual | Two angle patterns + `FILTER(STR(?f1) < `**`<`**` ?f2)` + `BIND(ABS(…))` + `FILTER(?angleDiff > 210)`. No individual is minted. Note `<`, not `!=`: `!=` admits both orderings of the pair and double-counts every swing. |
+| **4. `LargeAngleChange`** | Self-join on two angle observations in the window; `ABS(angle1 − angle2) > 210`; ordered by trimmed timestamp; `SKOLEM` mints an individual | Two angle patterns + `FILTER(STR(?f1) < STR(?f2))` + `BIND(ABS(…))` + `FILTER(?angleDiff > 210)`. No individual is minted. Note `<`, not `!=`: `!=` admits both orderings of the pair and double-counts every swing. |
 | **5. `HighSpeedObservation`** | Current speed reading with `speed > 10`; `SKOLEM` mints an individual | One speed pattern + `FILTER(?speed > 10)`. |
 | **6. `FixPoint`** | Correlates a latitude and a longitude observation by equal trimmed timestamp | Push lat+long as **one atomic element** (`DataStream.push(List<Statement>)`), and the correlation is structural — no timestamp-equality join at all. Same technique as `CorrelatedFaultCascade`. |
 | **7. `AggressiveDriving`** | Joins rules 4 and 5 on equal trimmed timestamp | Co-occurrence in one window is a *weaker* join: it accepts any speed reading still in the window. Restored by frame co-location — see the note below. |
-| **8. `Segment`** | Assembles start/end fix points, times, angle diff, window size; mints a segment IRI via `BIND(IRI(CONCAT(…)))` | `GROUP BY` over the window. If a segment IRI is genuinely wanted, `BIND(IRI(CONCAT(…)))` **works** (verified). |
+| **8. `Segment`** | Assembles start/end fix points, times, angle diff, window size; mints a segment IRI via `BIND(IRI(CONCAT(…)))` | Only partly. `GROUP BY` aggregates over the window and `BIND(IRI(CONCAT(…)))` does mint an IRI (verified) — but the start/end fix points and their timestamps need the pair *ordered in time*, which this release cannot do. See §2.2. |
 | **9. `avgAngleChange`** | `AGGREGATE … BIND AVG(?angle_diff)` per segment | `(AVG(?angleDiff) AS ?avgAngleChange)` with `GROUP BY`. |
 
 > **Two things a window does not give you, found in review.**
@@ -110,7 +110,8 @@ missing time comparison or a post-processing step in the listener holding the tw
 
 ## 3. The result: one query
 
-Eight rules and an output query become a single registration. This is
+The eight rules' **detection** collapses into a single registration — not the output query's
+segment assembly, which §2.2 explains this cannot reproduce. That detection is
 [`CdspDrivingStyle`](examples/src/main/java/org/cqels/examples/cdsp/CdspDrivingStyle.java),
 which runs today:
 
@@ -217,7 +218,11 @@ CDSP already exposes the data CQELS needs, in two places:
   this port entirely.
 
 Either way the destination is the same: `DataStream.push(…)` with observations shaped as SOSA,
-exactly as [`Fleet.pushObservation`](examples/src/main/java/org/cqels/examples/Fleet.java) does.
+shaped as SOSA. Note which helper: the driving-style query reads angle and speed from the SAME
+frame, so it consumes [`Fleet.pushFrame`](examples/src/main/java/org/cqels/examples/Fleet.java),
+not the one-signal-per-observation `Fleet.pushObservation`. A CDSP feed delivering each signal as
+its own observation would need grouping into frames first — which is where the "latest value"
+problem of §2.1 reappears, and worth designing for before wiring a real feed.
 
 ---
 
