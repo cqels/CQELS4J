@@ -34,6 +34,28 @@ import org.cqels.examples.Fleet;
  * carry state between Datalog rules; a continuous query has no such handoff to make, so the
  * {@code SKOLEM(...)} minting that names them is not needed either.
  *
+ * <p><strong>Two details the naive translation gets wrong</strong>, both found in review and both
+ * demonstrated by the scenarios below:
+ * <ul>
+ *   <li><em>Speed must be co-temporal with the swing.</em> CDSP's rule 2 keeps only the
+ *       {@code CurrentObservation} per property, so its speed guard reads the LATEST speed.
+ *       Matching a free-standing {@code vss:Speed} observation anywhere in the window does not: a
+ *       vehicle that was fast, slowed, then swerved still pairs with the stale fast reading and
+ *       alerts (scenario 4). CQELS-QL cannot express "the latest value of X" on this release —
+ *       there is no event-time comparison ({@code xsd:dateTime} arithmetic is not evaluated) and no
+ *       argmax. The fix is in the data model rather than the query: each telemetry <em>frame</em>
+ *       ({@link Fleet#pushFrame}) carries angle and speed in ONE atomic element, as a real vehicle
+ *       emits them, so {@code ?f2 vss:Speed ?speed} is by construction the speed at the moment of
+ *       the second angle reading.</li>
+ *   <li><em>The angle pair is unordered.</em> {@code FILTER(STR(?f1) != STR(?f2))} admits both
+ *       {@code (f1,f2)} and {@code (f2,f1)}, so every swing is counted twice — {@code COUNT}
+ *       returns 2 for a single swing. {@code STR(?f1) < STR(?f2)} admits exactly one of the two.
+ *       It de-duplicates rather than ordering in time: CDSP's rule 4 orders the pair with
+ *       {@code FILTER(?pt2 > ?pt1)} on trimmed timestamps, the comparison this release cannot do.
+ *       Ordering matters for CDSP because it labels a segment's start and end; for the symmetric
+ *       {@code ABS} difference computed here it does not.</li>
+ * </ul>
+ *
  * <p>Signals are the CDSP input set ({@code inputs/vehicle_data_required.txt}):
  * {@code Vehicle.Chassis.SteeringWheel.Angle} and {@code Vehicle.Speed}.
  *
@@ -56,23 +78,24 @@ public class CdspDrivingStyle {
                     REGISTER QUERY AggressiveDriving AS
                     SELECT ?vehicle (MAX(?angleDiff) AS ?peakAngleChange)
                                     (AVG(?angleDiff) AS ?avgAngleChange)
-                                    (MAX(?speed) AS ?peakSpeed)
+                                    (COUNT(*) AS ?swings)
                     FROM STREAM Telemetry [RANGE 3s]
                     WHERE {
                       STREAM Telemetry {
-                        ?a1 sosa:observedProperty vss:Chassis.SteeringWheel.Angle .
-                        ?a1 sosa:hasFeatureOfInterest ?vehicle .
-                        ?a1 sosa:hasSimpleResult ?angle1 .
-                        ?a2 sosa:observedProperty vss:Chassis.SteeringWheel.Angle .
-                        ?a2 sosa:hasFeatureOfInterest ?vehicle .
-                        ?a2 sosa:hasSimpleResult ?angle2 .
-                        ?sp sosa:observedProperty vss:Speed .
-                        ?sp sosa:hasFeatureOfInterest ?vehicle .
-                        ?sp sosa:hasSimpleResult ?speed .
+                        ?f1 sosa:hasFeatureOfInterest ?vehicle .
+                        ?f1 vss:Chassis.SteeringWheel.Angle ?angle1 .
+                        ?f2 sosa:hasFeatureOfInterest ?vehicle .
+                        ?f2 vss:Chassis.SteeringWheel.Angle ?angle2 .
+                        ?f2 vss:Speed ?speed .
                       }
-                      FILTER(STR(?a1) != STR(?a2))
+                      # Each unordered pair once. With '!=' both (f1,f2) and (f2,f1) match and every
+                      # swing is counted twice; '<' admits exactly one of the two. It de-duplicates
+                      # rather than ordering in time -- see the Javadoc.
+                      FILTER(STR(?f1) < STR(?f2))
                       BIND(ABS(?angle1 - ?angle2) AS ?angleDiff)
                       FILTER(?angleDiff > 210)
+                      # ?speed comes from ?f2, the SAME frame as the second angle reading, so it is
+                      # the speed AT the swing -- not any speed still sitting in the window.
                       FILTER(?speed > 10)
                     }
                     GROUP BY ?vehicle
@@ -88,31 +111,43 @@ public class CdspDrivingStyle {
 
             // Scenario 1 — a hard swerve at speed on EV-7Q2: angle 20 -> 250 (diff 230 > 210).
             System.out.println("Scenario 1 — EV-7Q2 swings 20 -> 250 deg at 64 km/h (should fire):");
-            Fleet.pushObservation(telemetry, Fleet.SENSOR_EV1, Fleet.EV1, Fleet.SPEED, 64.0);
-            Fleet.pushObservation(telemetry, Fleet.SENSOR_EV1, Fleet.EV1, Fleet.STEERING, 20.0);
+            Fleet.pushFrame(telemetry, Fleet.SENSOR_EV1, Fleet.EV1, Fleet.STEERING, 20.0, Fleet.SPEED, 64.0);
             Thread.sleep(300);
-            Fleet.pushObservation(telemetry, Fleet.SENSOR_EV1, Fleet.EV1, Fleet.STEERING, 250.0);
+            Fleet.pushFrame(telemetry, Fleet.SENSOR_EV1, Fleet.EV1, Fleet.STEERING, 250.0, Fleet.SPEED, 64.0);
             Thread.sleep(1200);
 
             // Scenario 2 — the same swing, but parked. The speed guard must suppress it.
-            Thread.sleep(3000);   // let scenario 1 age out of the 3s window
+            Thread.sleep(4000);   // comfortably past the 3s window, so scenario 1 has aged out
             System.out.println("\nScenario 2 — EV-3K8 swings 15 -> 245 deg at 4 km/h (should stay quiet):");
-            Fleet.pushObservation(telemetry, Fleet.SENSOR_EV2, Fleet.EV2, Fleet.SPEED, 4.0);
-            Fleet.pushObservation(telemetry, Fleet.SENSOR_EV2, Fleet.EV2, Fleet.STEERING, 15.0);
+            Fleet.pushFrame(telemetry, Fleet.SENSOR_EV2, Fleet.EV2, Fleet.STEERING, 15.0, Fleet.SPEED, 4.0);
             Thread.sleep(300);
-            Fleet.pushObservation(telemetry, Fleet.SENSOR_EV2, Fleet.EV2, Fleet.STEERING, 245.0);
+            Fleet.pushFrame(telemetry, Fleet.SENSOR_EV2, Fleet.EV2, Fleet.STEERING, 245.0, Fleet.SPEED, 4.0);
             Thread.sleep(1200);
             System.out.println("  (no alert: the swing is real but the vehicle is barely moving)");
 
             // Scenario 3 — at speed, but a gentle correction. The angle guard must suppress it.
-            Thread.sleep(3000);
+            Thread.sleep(4000);
             System.out.println("\nScenario 3 — EV-9TZ swings 30 -> 55 deg at 80 km/h (should stay quiet):");
-            Fleet.pushObservation(telemetry, Fleet.SENSOR_EV3, Fleet.EV3, Fleet.SPEED, 80.0);
-            Fleet.pushObservation(telemetry, Fleet.SENSOR_EV3, Fleet.EV3, Fleet.STEERING, 30.0);
+            Fleet.pushFrame(telemetry, Fleet.SENSOR_EV3, Fleet.EV3, Fleet.STEERING, 30.0, Fleet.SPEED, 80.0);
             Thread.sleep(300);
-            Fleet.pushObservation(telemetry, Fleet.SENSOR_EV3, Fleet.EV3, Fleet.STEERING, 55.0);
+            Fleet.pushFrame(telemetry, Fleet.SENSOR_EV3, Fleet.EV3, Fleet.STEERING, 55.0, Fleet.SPEED, 80.0);
             Thread.sleep(1500);
             System.out.println("  (no alert: fast, but only a 25 deg correction)");
+
+            // Scenario 4 — the case that motivated the frame model: the vehicle WAS fast, then
+            // slowed, and only then swerved. An earlier version of this query paired the swing
+            // with the stale 64 km/h reading still sitting in the window and alerted. Because
+            // speed now travels in the same frame as the angle, the swing carries 4 km/h.
+            Thread.sleep(4000);
+            System.out.println("\nScenario 4 — EV-7Q2 was at 64, SLOWED to 4, then swings"
+                    + " 20 -> 250 (should stay quiet):");
+            Fleet.pushFrame(telemetry, Fleet.SENSOR_EV1, Fleet.EV1, Fleet.STEERING, 5.0, Fleet.SPEED, 64.0);
+            Thread.sleep(300);
+            Fleet.pushFrame(telemetry, Fleet.SENSOR_EV1, Fleet.EV1, Fleet.STEERING, 20.0, Fleet.SPEED, 4.0);
+            Thread.sleep(300);
+            Fleet.pushFrame(telemetry, Fleet.SENSOR_EV1, Fleet.EV1, Fleet.STEERING, 250.0, Fleet.SPEED, 4.0);
+            Thread.sleep(1500);
+            System.out.println("  (no alert: the swing happened at 4 km/h, though 64 is still in the window)");
         }
         System.out.println("\nDone.");
     }

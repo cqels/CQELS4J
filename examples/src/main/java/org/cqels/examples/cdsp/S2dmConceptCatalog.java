@@ -118,6 +118,18 @@ public class S2dmConceptCatalog {
             System.out.println("\npush: EV-9TZ Door.isOpen = 1.0");
             S2dm.pushConceptSignal(telemetry, Fleet.EV3, S2dm.F_DOOR_OPEN, 1.0);
             Thread.sleep(900);
+
+            // The counter-example. c:Seat is an OBJECT concept: it is a member of ObjectConcepts,
+            // never of FieldConcepts, so the second query's membership guard should exclude it.
+            // On 2.0.0-alpha.18 it does not — the guard is a static pattern, and a static pattern
+            // that fails to match is dropped instead of eliminating the row (issue #54). So the
+            // line below is expected to appear under [FieldConcepts member] even though it is not
+            // one. That is the caveat, demonstrated rather than asserted: when #54 is fixed this
+            // push goes silent and the demo starts discriminating, with no edit here.
+            System.out.println("\npush: EV-7Q2 c:Seat = 1.0   (an OBJECT concept — the"
+                    + " [FieldConcepts member] query SHOULD ignore it)");
+            S2dm.pushConceptSignal(telemetry, Fleet.EV1, S2dm.C_SEAT, 1.0);
+            Thread.sleep(900);
         }
         System.out.println("\nDone.");
     }

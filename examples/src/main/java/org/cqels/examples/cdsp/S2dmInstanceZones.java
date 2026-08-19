@@ -35,7 +35,8 @@ import org.cqels.examples.Fleet;
  *   <li><em>any zone</em> — every open door, with its zone reported;</li>
  *   <li><em>a filtered zone</em> — rear passenger side only, via a {@code FILTER} on the tag;</li>
  *   <li><em>aggregated by zone</em> — {@code GROUP BY ?row ?side} counting open doors per zone,
- *       which is the shape a fleet dashboard actually renders.</li>
+ *       which is the shape a fleet dashboard actually renders. It counts door-open
+ *       <em>events</em> per vehicle, not current door state — see the comment on that query.</li>
  * </ol>
  *
  * <p>CQELS-QL features shown: multi-pattern atomic stream elements, {@code FILTER} over
@@ -100,24 +101,33 @@ public class S2dmInstanceZones {
             engine.registerCqelsQuery(rearPassenger, row ->
                     System.out.println("    !! REAR PASSENGER-SIDE door ajar -> " + row));
 
-            // 3. The dashboard shape: how many doors are open in each zone, right now.
+            // 3. The dashboard shape: door-open EVENTS per vehicle and zone over the last 5 s.
+            //    Two things this deliberately is not:
+            //      - not a per-zone count across the fleet. Without ?vehicle in the GROUP BY,
+            //        a door open on one vehicle and another on a second would merge into one
+            //        count for "REAR/PASSENGER_SIDE", which no depot dashboard wants.
+            //      - not current door STATE. A door that opened and closed inside the window
+            //        still contributed an event; deriving state would need the latest reading
+            //        per (vehicle, zone), which this release cannot express (no event-time
+            //        comparison, no argmax). The name says events, so the query is honest.
             String perZone = S2dm.PREFIXES + """
-                    REGISTER QUERY OpenDoorsPerZone AS
-                    SELECT ?row ?side (COUNT(*) AS ?openDoors)
+                    REGISTER QUERY DoorOpenEventsPerZone AS
+                    SELECT ?vehicle ?row ?side (COUNT(*) AS ?openEvents)
                     FROM STREAM Cabin [RANGE 5s]
                     WHERE {
                       STREAM Cabin {
                         ?obs c:ofConcept c:Door.isOpen .
+                        ?obs sosa:hasFeatureOfInterest ?vehicle .
                         ?obs c:row ?row .
                         ?obs c:side ?side .
                         ?obs sosa:hasSimpleResult ?open .
                       }
                       FILTER(?open > 0)
                     }
-                    GROUP BY ?row ?side
+                    GROUP BY ?vehicle ?row ?side
                     """;
             engine.registerCqelsQuery(perZone, row ->
-                    System.out.println("    [per-zone] " + row));
+                    System.out.println("    [open events per vehicle+zone] " + row));
 
             engine.start();
             System.out.println("""
