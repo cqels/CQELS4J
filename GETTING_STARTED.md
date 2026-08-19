@@ -208,11 +208,13 @@ data is at fault.
 The demos in [`examples/`](examples/) are all verified to run against this release, working around
 the rows above where they must.
 
-Two caveats about this table itself. `CQELS-QL_SPEC.md` §9 currently still describes the standard
-SPARQL surface as supported as-is, without the `REPLACE` / `sameTerm` exceptions listed here; that
-is corrected in a separate change, and until it lands the two documents disagree about those two
-functions. And nothing yet re-checks these rows automatically, so if one is fixed upstream this
-table will quietly go out of date — a CI probe that asserts each row is in review separately.
+Two caveats about this table itself, both temporary and both worth knowing while they last.
+`CQELS-QL_SPEC.md` §9 currently still describes the standard SPARQL surface as supported as-is,
+without the `REPLACE` / `sameTerm` exceptions listed here; that is corrected in a separate change,
+and until it lands the two documents disagree about those two functions. And nothing in this
+repository re-checks these rows automatically yet, so if one is fixed upstream the table will
+quietly go out of date. A CI probe that asserts each row — including the two reasoner rows — is in
+review separately; this page will point at it once it lands.
 
 ---
 
