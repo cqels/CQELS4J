@@ -177,9 +177,12 @@ Probed on `2.0.0-alpha.18` by registering one query per function and pushing a v
 | `xsd:dateTime` subtraction | **silently unsupported** — variable unbound | Not needed: the window replaces duration arithmetic |
 | `xsd:duration` comparison | **silently unsupported** — filter never matches | Not needed, as above |
 
-The three unsupported cases all fail *silently* rather than raising, which is the same failure
-mode as [#54](https://github.com/cqels/CQELS4J/issues/54)–[#57](https://github.com/cqels/CQELS4J/issues/57)
-and worth keeping in mind when porting.
+None of these raises at registration, which is what makes them expensive to find: the query goes
+live and simply returns nothing for that expression. That is the same shape as
+[#54](https://github.com/cqels/CQELS4J/issues/54), [#55](https://github.com/cqels/CQELS4J/issues/55)
+and [#57](https://github.com/cqels/CQELS4J/issues/57). [#56](https://github.com/cqels/CQELS4J/issues/56)
+is the exception worth knowing: it *does* print a parser diagnostic to stderr — but registration
+succeeds anyway, so the query still runs and the diagnostic is easy to scroll past.
 
 ---
 
@@ -217,8 +220,8 @@ CDSP already exposes the data CQELS needs, in two places:
   C++ triple assembler performs. Publishing it would remove the hand-written mapping layer from
   this port entirely.
 
-Either way the destination is the same: `DataStream.push(…)` with observations shaped as SOSA,
-shaped as SOSA. Note which helper: the driving-style query reads angle and speed from the SAME
+Either way the destination is the same: `DataStream.push(…)` with observations shaped as SOSA.
+Note which helper: the driving-style query reads angle and speed from the SAME
 frame, so it consumes [`Fleet.pushFrame`](examples/src/main/java/org/cqels/examples/Fleet.java),
 not the one-signal-per-observation `Fleet.pushObservation`. A CDSP feed delivering each signal as
 its own observation would need grouping into frames first — which is where the "latest value"
