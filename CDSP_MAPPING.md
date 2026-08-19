@@ -6,8 +6,9 @@ what CDSP **actually runs today**, not a planned configuration, and every capabi
 CQELS below was verified by running it on `2.0.0-alpha.18`.
 
 > **Scope note.** A natural question is how S2DM-on-MongoDB use cases map here. They do not,
-> because they do not exist yet: [S2DM](https://github.com/COVESA/s2dm) has no MongoDB binding
-> (its exporters are JSON Schema, SKOS, vspec and SHACL), and CDSP's own implementation concept
+> because they do not exist yet: [S2DM](https://github.com/COVESA/s2dm) has no MongoDB binding —
+> its exporters target schema languages and RDF (`avro`, `jsonschema`, `linkml`, `protobuf`,
+> `shacl`, `skos`, `vspec`), not databases — and CDSP's own implementation concept
 > records that "for the application database archetype MongoDB Realm was selected. Support for it
 > is currently a work in progress as part of the playground project backlog." The incumbent CQELS
 > would actually displace is **RDFox**, not a document store. For the S2DM concept layer itself,
@@ -38,8 +39,9 @@ below.
 ## 2. The use case: aggressive driving / driving style
 
 CDSP's worked example detects aggressive driving from steering-angle swings at speed, and reports
-driving *segments*. Inputs (`inputs/vehicle_data_required.txt`) are plain VSS paths, of which the
-detection uses `Vehicle.Chassis.SteeringWheel.Angle` and `Vehicle.Speed`.
+driving *segments*. Inputs (`inputs/vehicle_data_required.txt`) are seven plain VSS paths. The *detection rules*
+(4, 5, 7) use `Vehicle.Chassis.SteeringWheel.Angle` and `Vehicle.Speed`; rule 6 and the output
+query additionally need `Vehicle.CurrentLocation.Latitude` and `.Longitude` for the fix points.
 
 It is implemented as eight Datalog rules plus one output query.
 
@@ -85,8 +87,11 @@ BIND ((xsd:dateTime(?end) - xsd:dateTime(?start)) as ?time_diff)
 FILTER (?time_diff < "PT4S"^^xsd:duration)
 ```
 
-That final filter is the window, restated by hand because RDFox has no window operator. In CQELS
-it is the `FROM STREAM … [RANGE 4s]` clause and vanishes from the body. This matters beyond
+That final filter is a duration bound restated by hand because RDFox has no window operator. It is
+subsumed by the window rather than translated: the shipped query pairs readings inside
+`[RANGE 3s]`, and any pair it joins is therefore already less than 4 s apart. Note the two
+intervals are not the same thing — rule 3's 3 s bounds the *pairing*, while this 4 s bounds a
+*segment's* start-to-end span — which is why the subsumption is worth stating rather than assuming. This matters beyond
 tidiness: as a `FILTER` it can only be applied *after* materialising every candidate segment,
 whereas as a window it bounds the state the engine keeps in the first place.
 
@@ -203,9 +208,9 @@ want.
 
 CDSP already exposes the data CQELS needs, in two places:
 
-- **IoTDB.** CDSP upstreamed IoTDB support into VISSR, and CQELS has `cqels-storage-iotdb-session`
-  and `cqels-storage-iotdb-tsfile` modules — though note these are **not** published at
-  `2.0.0-alpha.18`, so consuming them today means building from the engine repository.
+- **IoTDB.** CDSP upstreamed IoTDB support into VISSR, and CQELS has two IoTDB storage modules.
+  `cqels-storage-iotdb-tsfile` **is** published at `2.0.0-alpha.18`; `cqels-storage-iotdb-session`
+  is **not** (404 on the release mirror), so that half means building from the engine repository.
 - **VISS over WebSocket.** The information layer speaks VISS; the unpublished `cqels-cdsp` module
   contains a `CdspWebSocketClient` and a `VssToRdfMapper` that already do the JSON→RDF step CDSP's
   C++ triple assembler performs. Publishing it would remove the hand-written mapping layer from
