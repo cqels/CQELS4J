@@ -40,22 +40,12 @@ and no `~/.m2/settings.xml` to edit — add the repository to your POM and build
 </repositories>
 ```
 
-That URL reads the release repository directly. `https://maven.cqels.org/releases` is a
-friendlier alias for the same repository and serves the same bytes — use whichever you
-prefer. The examples here use the direct form so a clean clone builds without depending on
-the alias resolving.
+Fixed versions only: the repository serves no metadata, so version ranges and `LATEST` do not
+resolve. Pin the version, as the snippet below does.
 
-Fixed versions only: neither URL serves repository metadata, so version ranges and `LATEST`
-do not resolve. Pin the version, as the snippet below does.
-
-> **If you previously used the GitHub Packages URL** you needed a classic PAT with
-> `read:packages`, because that registry rejects unauthenticated reads even for public
-> packages — a GitHub limitation, not a CQELS choice. Existing setups keep working; the URL
-> above is simply the recommended route now, and needs nothing.
->
-> Every release is mirrored byte-for-byte to it from the same cosign-signed manifest — see
-> [SUPPLY_CHAIN.md](SUPPLY_CHAIN.md) to verify what you downloaded. The one artifact not
-> served there is the runnable shaded `cqels-mcp` jar, which is attached to the
+> Every release is published from a cosign-signed manifest — see
+> [SUPPLY_CHAIN.md](SUPPLY_CHAIN.md) to verify what you downloaded. The one artifact not served
+> here is the runnable shaded `cqels-mcp` jar, which is attached to the
 > [GitHub release](https://github.com/cqels/CQELS4J/releases/latest) instead.
 
 ---
@@ -68,16 +58,27 @@ and run any demo:
 ```bash
 git clone https://github.com/cqels/CQELS4J.git
 cd CQELS4J/examples
-
-# Build
-mvn -q compile
-
-# Run the "hello world" of continuous queries
-mvn -q exec:java -Dexec.mainClass=org.cqels.examples.HelloCqels
+mvn -q compile exec:java -Dexec.mainClass=org.cqels.examples.HelloCqels
 ```
 
-A few representative scenarios (the full categorized list of 30 is in
-[`examples/README.md`](examples/README.md)) — run any with `-Dexec.mainClass`:
+You should see the alert fire for the two readings below the 20 % threshold, and nothing for
+the others:
+
+```
+Engine started. Alerting on battery state-of-charge below 20 %.
+...
+  LOW BATTERY -> {obs=https://example.org/fleet/obs/2, soc=18.5}
+...
+  LOW BATTERY -> {obs=https://example.org/fleet/obs/4, soc=12.0}
+...
+Done.
+```
+
+(abridged — the run also echoes each reading as it is pushed)
+
+That is the whole setup — no credentials, no local configuration. Every other demo runs the
+same way, swapping `-Dexec.mainClass`. A few representative ones (the full categorized list of
+30 is in [`examples/README.md`](examples/README.md)):
 
 | Class | What it shows |
 |-------|---------------|
@@ -185,7 +186,28 @@ public class FirstQuery {
 
 ---
 
-## 6. Where to go next
+## 6. Known limitations on this release
+
+CQELS 2.0 is an alpha, and a handful of constructs do not yet behave as SPARQL 1.1 specifies.
+They are grouped here because they share one signature that makes them expensive to discover
+alone: **they all fail silently.** Nothing is rejected at registration and no error is logged —
+a query simply returns wrong rows, or none. If a query is inexplicably quiet, check this list
+before assuming your data is at fault.
+
+| What | Symptom | Do this instead |
+|------|---------|-----------------|
+| A static (non-`STREAM`) pattern that finds no match ([#54](https://github.com/cqels/CQELS4J/issues/54)) | The row survives instead of being eliminated, so patterns used as **guards** over-report | Re-check the guard condition in your result listener |
+| A prefixed name inside `FILTER` ([#55](https://github.com/cqels/CQELS4J/issues/55)) | `FILTER(?x = ex:Thing)` never matches, though the same prefix works in triple patterns | Write the full IRI: `FILTER(?x = <http://.../Thing>)` |
+| Property paths — `+`, `*`, `/`, `^` ([#56](https://github.com/cqels/CQELS4J/issues/56)) | Registration succeeds despite a parser error, then evaluates a *different* pattern | Write the hops explicitly, or use a recursive rule |
+| `REPLACE()` and `sameTerm()` | The variable is left unbound / the filter never matches | `STR(?a) = STR(?b)` for `sameTerm`; do `REPLACE` in the listener |
+| Rules over atomically pushed multi-statement elements ([#57](https://github.com/cqels/CQELS4J/issues/57)) | The reasoner skips them entirely, so no inference fires | Push those statements one at a time |
+
+Everything else in [`CQELS-QL_SPEC.md`](CQELS-QL_SPEC.md) behaves as documented, and the demos in
+[`examples/`](examples/) are all verified to run against this release.
+
+---
+
+## 7. Where to go next
 
 - **Examples:** [`examples/`](examples/) — the runnable scenarios above are the
   fastest way to learn the query shapes.
