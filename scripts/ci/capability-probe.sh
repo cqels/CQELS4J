@@ -50,13 +50,17 @@ for tool in java mvn; do
 done
 
 echo "-- capability probe: building examples --"
-if ! mvn -q -B -f "${EXAMPLES_DIR}/pom.xml" compile 2>&1 | grep -vE '^WARNING|final field mutation|--enable-final-field-mutation'; then
-    :   # grep -v returns 1 on no output, which is the normal quiet-build case
-fi
+# Take the BUILD's exit status, not the presence of target/classes. CI always starts clean, so
+# either test works there — but this is also RELEASING.md step 4, run locally, where a stale
+# target/ from a previous build would mask a broken compile and the probe would then assert
+# against yesterday's classes. `clean` removes the other half of that hazard.
+BUILD_OUT="$(mvn -q -B -f "${EXAMPLES_DIR}/pom.xml" clean compile 2>&1)"
+BUILD_STATUS=$?
+echo "${BUILD_OUT}" | grep -vE '^WARNING|final field mutation|--enable-final-field-mutation' || true
 
-# A build failure here is almost always the artifact mirror being unreachable, not a defect in
+# A build failure here is usually the artifact mirror being unreachable rather than a defect in
 # the repository — distinguish the two rather than reporting a red for someone's flaky network.
-if [ ! -d "${EXAMPLES_DIR}/target/classes" ]; then
+if [ ${BUILD_STATUS} -ne 0 ] || [ ! -d "${EXAMPLES_DIR}/target/classes" ]; then
     echo "INCONCLUSIVE: examples did not compile — dependencies may be unreachable." >&2
     echo "  Check network access to https://raw.githubusercontent.com/cqels/maven/main/releases and re-run." >&2
     exit 3

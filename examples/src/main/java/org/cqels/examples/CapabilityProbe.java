@@ -88,7 +88,7 @@ public class CapabilityProbe {
                 "CQELS-QL_SPEC.md §9 gap table, CDSP_MAPPING.md §4");
         caveat("     sameTerm() is not evaluated",
                 sameTermEvaluates(),
-                "CQELS-QL_SPEC.md §9 gap table (and issue #55)");
+                "CQELS-QL_SPEC.md §9 gap table (no issue of its own; recorded on #55)");
         caveat("#57 reasoner skips multi-statement (atomic) elements",
                 reasonerSeesAtomicElements(),
                 "S2dm.pushConceptSignalUnbatched, SkosConceptRollup.java, GETTING_STARTED.md table");
@@ -308,20 +308,35 @@ public class CapabilityProbe {
      * documented, runnable snippet, so it is asserted here rather than trusted.
      */
     private static boolean warmBackendReachable() {
+        String foi = "http://www.w3.org/ns/sosa/hasFeatureOfInterest";
+        // The fact mapper emits rdf/3, never obs/1, so a rule written over obs(...) can never be
+        // satisfied — this program is the shape AspReasoning uses, and it does derive.
+        String program =
+                "convoy(V1, V2) :- rdf(O1, iri(\"" + foi + "\"), V1),\n"
+                + "                  rdf(O2, iri(\"" + foi + "\"), V2),\n"
+                + "                  V1 != V2.\n";
         try (CQELSEngine engine = CQELSEngine.builder().id("probe-warm").withMemoryStore().build()) {
             DataStream stream = engine.createStream("default");
-            List<Object> rows = new CopyOnWriteArrayList<>();
+            List<Object> derived = new CopyOnWriteArrayList<>();
             AspContinuousQuery q = new AspContinuousQuery(
-                    "ProbeWarm",
-                    "convoy(V1,V2) :- obs(V1), obs(V2), V1 != V2.",
+                    "ProbeWarm", program,
                     AspStreamSolveConfig.builder().build(),
                     new AspFactMapper(),
                     new WarmParseCacheAspSolverBackend());
-            engine.registerQuery(q, rows::add);
+            // Assert a DERIVED atom, not merely that the listener fired. The listener is invoked
+            // with an AspSolveResult on every solve tick regardless of whether anything was
+            // derived, so `!rows.isEmpty()` would pass for a backend that only echoes its inputs.
+            engine.registerQuery(q, r -> {
+                if (String.valueOf(r.getAtoms()).contains("convoy(")) {
+                    derived.add(r);
+                }
+            });
             engine.start();
-            stream.pushTriple(C + "v1", C + "obs", C + "x");
-            Thread.sleep(1200);
-            return !rows.isEmpty();
+            stream.pushTriple(C + "o1", foi, C + "vehicleA");
+            Thread.sleep(400);
+            stream.pushTriple(C + "o2", foi, C + "vehicleB");   // two distinct vehicles -> convoy
+            Thread.sleep(1500);
+            return !derived.isEmpty();
         } catch (Exception e) {
             return false;
         }
