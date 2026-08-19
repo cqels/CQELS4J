@@ -45,7 +45,7 @@ import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
  * {@code Cabin}, and it correctly stays out of the cabin query — the rollup follows the modelled
  * hierarchy rather than lifting everything everywhere.
  *
- * <p><strong>Known limits on 2.0.0-alpha.18</strong>, both verified here rather than assumed:
+ * <p><strong>Known limits on 2.0.0-alpha.18</strong>, each verified here rather than assumed:
  * <ul>
  *   <li>R2 is registered and {@code enableRecursiveInference(true)} is set, but the two-hop
  *       rollup ({@code Seat -> Cabin -> Vehicle}) does not produce a {@code Vehicle}-level match,
