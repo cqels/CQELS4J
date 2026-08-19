@@ -154,7 +154,7 @@ visible; the ticker instead demonstrates window eviction (the run outlasts the w
 > ```java
 > AspContinuousQuery q = new AspContinuousQuery(
 >         "WarmConvoy", program, cfg, new AspFactMapper(), new WarmParseCacheAspSolverBackend());
-> engine.registerQuery(q, result -> …);   // solves, using the warm cache
+> engine.registerQuery(q, result -> System.out.println(result));   // solves, using the warm cache
 > ```
 >
 > No demo ships here yet — but the reason is scope, not reachability: the snippet above was run
