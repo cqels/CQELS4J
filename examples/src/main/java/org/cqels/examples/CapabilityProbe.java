@@ -167,46 +167,44 @@ public class CapabilityProbe {
     }
 
     /**
-     * #56: a property path must either be REJECTED at registration or EXECUTED correctly. Today it
-     * is neither — registration succeeds and the engine evaluates a different pattern.
+     * #56: a property path must either be REJECTED at registration or EXECUTED correctly.
      *
-     * <p>Checking only "did registration throw?" would be useless: if a future release implements
-     * paths properly, registration still succeeds, the check would still report "still open", and
-     * the docs would rot while CI stayed green. So this seeds a two-hop hierarchy
-     * ({@code leaf -> mid -> root}) and asks whether {@code p:broader+} actually reaches the root.
+     * <p>The oracle lives entirely INSIDE the stream block, which matters. An earlier version put
+     * both path patterns in the static graph; #54 makes a non-matching static pattern survive, so
+     * the "bogus target matched nothing" half was contaminated and the check could not have
+     * distinguished a real path fix (codex, round 2). Stream patterns are not affected by #54.
      *
-     * <p>Resolution counts if EITHER a path-specific rejection happens, OR the transitive answer is
-     * exactly right: {@code leaf} matched, and the bogus control (a path to a concept that does not
-     * exist) matched nothing.
+     * <p>The hierarchy is {@code leaf -> mid -> root}. With working paths, {@code ?x broader+ root}
+     * binds BOTH {@code leaf} (two hops) and {@code mid} (one). Today the {@code +} is dropped and
+     * only {@code mid} matches, which is precisely the discrimination this needs.
      */
     private static boolean propertyPathRejected() throws Exception {
         try (CQELSEngine engine = CQELSEngine.builder().id("probe-path").withMemoryStore().build()) {
-            try (RepositoryConnection conn = engine.getRepository().getConnection()) {
-                conn.add(VF.createIRI(C + "leaf"), VF.createIRI(C + "broader"), VF.createIRI(C + "mid"));
-                conn.add(VF.createIRI(C + "mid"), VF.createIRI(C + "broader"), VF.createIRI(C + "root"));
-            }
             DataStream stream = engine.createStream("S");
-            List<Object> reachesRoot = new CopyOnWriteArrayList<>();
-            List<Object> reachesBogus = new CopyOnWriteArrayList<>();
+            List<Object> toRoot = new CopyOnWriteArrayList<>();
+            List<Object> toBogus = new CopyOnWriteArrayList<>();
             try {
-                engine.registerCqelsQuery(withRegister("""
-                        SELECT ?x FROM STREAM S [TRIPLES 1]
-                        WHERE { STREAM S { ?o <%sof> ?x . } ?x <%sbroader>+ <%sroot> . }
-                        """.formatted(C, C, C)), reachesRoot::add);
-                engine.registerCqelsQuery(withRegister("""
-                        SELECT ?x FROM STREAM S [TRIPLES 1]
-                        WHERE { STREAM S { ?o <%sof> ?x . } ?x <%sbroader>+ <%sNoSuchRoot> . }
-                        """.formatted(C, C, C)), reachesBogus::add);
+                engine.registerCqelsQuery(withRegister(
+                        "SELECT ?x FROM STREAM S [RANGE 5s]\n"
+                        + "WHERE { STREAM S { ?x <" + C + "broader>+ <" + C + "root> . } }\n"), toRoot::add);
+                engine.registerCqelsQuery(withRegister(
+                        "SELECT ?x FROM STREAM S [RANGE 5s]\n"
+                        + "WHERE { STREAM S { ?x <" + C + "broader>+ <" + C + "nope> . } }\n"), toBogus::add);
             } catch (Exception e) {
                 String msg = String.valueOf(e.getMessage()).toLowerCase();
+                // Only a PATH-specific rejection counts; an unrelated failure must not read as a fix.
+                // A future engine rejecting paths with some other wording reads as "still open",
+                // which fails safe: it can never report green when it should not.
                 return msg.contains("path") || msg.contains("'+'") || msg.contains("extraneous");
             }
             engine.start();
-            stream.pushTriple(C + "o1", C + "of", C + "leaf");
-            Thread.sleep(1200);
-            // Correct transitive semantics: leaf reaches root in two hops, and reaches nothing
-            // that does not exist. Today BOTH match, which is the mangling this issue describes.
-            return !reachesRoot.isEmpty() && reachesBogus.isEmpty();
+            stream.pushTriple(C + "leaf", C + "broader", C + "mid");
+            Thread.sleep(200);
+            stream.pushTriple(C + "mid", C + "broader", C + "root");
+            Thread.sleep(1500);
+            boolean twoHopWorks = toRoot.toString().contains(C + "leaf");
+            boolean bogusClean = toBogus.isEmpty();
+            return twoHopWorks && bogusClean;
         }
     }
 
@@ -296,7 +294,21 @@ public class CapabilityProbe {
                     VF.createStatement(o1, of, VF.createIRI(C + "leaf")),
                     VF.createStatement(o1, VF.createIRI(C + "note"), VF.createLiteral("frame"))));
             Thread.sleep(1200);
-            return !inferred.isEmpty();
+            boolean atomicSeen = !inferred.isEmpty();
+
+            // Positive control. The documented workaround is to push one statement at a time; if
+            // THAT stopped working, the check above would also be empty and we would report "#57
+            // still open" while the real news is a regression in the workaround (codex, round 2).
+            inferred.clear();
+            stream.pushTriple(C + "o2", C + "of", C + "leaf");
+            Thread.sleep(1200);
+            boolean unbatchedSeen = !inferred.isEmpty();
+            if (!unbatchedSeen) {
+                DIVERGENCES.add("REGRESSED — the #57 workaround itself (single-statement pushes no "
+                        + "longer reach the rule network)\n      S2dm.pushConceptSignalUnbatched is "
+                        + "now broken too; #57's verdict below is not meaningful");
+            }
+            return atomicSeen;
         }
     }
 
@@ -409,12 +421,16 @@ public class CapabilityProbe {
                     Thread.sleep(1500);
                     s.pushTriple(C + "o4", C + "group", C + "g2");
                 });
-        // Two groups with DIFFERENT known counts, so a broken grouping (everything in one bucket,
-        // or a wrong count) cannot pass. g1 has 2 members, g2 has 1 at the time the window closes.
-        String r = rows.toString();
-        boolean g1 = r.contains("g=" + C + "g1");
-        boolean twoInAGroup = r.contains("n=2");
-        return g1 && twoInAGroup;
+        // Require the group/count ASSOCIATION, not two independent substrings: checking only that
+        // "g1" and "n=2" both appear somewhere would pass on rows {g1,n=1} and {g2,n=2} (codex,
+        // round 2). Each row's own map must pair g1 with 2.
+        for (Object row : rows) {
+            String one = row.toString();
+            if (one.contains("g=" + C + "g1") && one.contains("n=2")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     // ---- harness -------------------------------------------------------------------------
