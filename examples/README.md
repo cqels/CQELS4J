@@ -152,13 +152,21 @@ visible; the ticker instead demonstrates window eviction (the run outlasts the w
 > it because `AspContinuousQuery implements ContinuousQuery`:
 >
 > ```java
+> // The fact mapper emits rdf/3, so write the rule over rdf(...), as AspReasoning does.
+> String foi = "http://www.w3.org/ns/sosa/hasFeatureOfInterest";
+> String program = "convoy(V1, V2) :- rdf(O1, iri(\"" + foi + "\"), V1),\n"
+>                + "                  rdf(O2, iri(\"" + foi + "\"), V2), V1 != V2.\n";
+> AspStreamSolveConfig cfg = AspStreamSolveConfig.builder().build();
+>
 > AspContinuousQuery q = new AspContinuousQuery(
 >         "WarmConvoy", program, cfg, new AspFactMapper(), new WarmParseCacheAspSolverBackend());
-> engine.registerQuery(q, result -> System.out.println(result));   // solves, using the warm cache
+> engine.registerQuery(q, result -> System.out.println(result.getAtoms()));
 > ```
 >
-> No demo ships here yet — but the reason is scope, not reachability: the snippet above was run
-> against `2.0.0-alpha.18` and does register and solve.
+> No demo ships here yet — the reason is scope, not reachability. The block above was compiled and
+> run verbatim against `2.0.0-alpha.18`: it registers through the facade and the solver derives
+> `convoy(...)` atoms. Note the rule shape — a program written over `obs(...)` registers and
+> returns result objects but derives nothing, because the mapper only ever emits `rdf/3`.
 
 ### Reasoning showcase (`org.cqels.examples.reasoning`)
 
