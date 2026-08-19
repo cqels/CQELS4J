@@ -348,7 +348,7 @@ are called out.
   | Construct | SPARQL 1.1 | Status | Use instead |
   |-----------|-----------|--------|-------------|
   | `REPLACE(str, pattern, repl)` | §17.4.3.14 | **not evaluated** | post-process in the result listener |
-  | `sameTerm(a, b)` | §17.4.1.1 | **not evaluated** | `STR(?a) = STR(?b)`, or `?a = <full-iri>` |
+  | `sameTerm(a, b)` | §17.4.1.1 | **not evaluated** | `?a = <full-iri>`; or `STR(?a) = STR(?b)` **only when both are known to be IRIs** — `STR` erases the distinction between an IRI and a string literal with the same lexical form, and between a plain and a language-tagged literal, so it is strictly weaker than `sameTerm` |
   | *prefixed name as a constant inside `FILTER`* | §4.1.1 | **not resolved** — the same prefix works in triple patterns | write the full IRI in angle brackets |
   | `xsd:dateTime` subtraction / `xsd:duration` comparison | XPath-derived, outside the SPARQL 1.1 operator table | not evaluated | express the interval as a **window** ([§3](#3-windows)) |
 

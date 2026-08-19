@@ -47,14 +47,33 @@ It is implemented as eight Datalog rules plus one output query.
 
 | CDSP rule (`driving_style_inference_rules.dlog`) | What it does | CQELS-QL equivalent |
 |---|---|---|
-| **2. `CurrentObservation`** | `AGGREGATE … BIND MAX(?pt)` per observed property, to find the most recent reading | **Not needed.** It exists only to recover "latest" from a store that retains everything. A window already means recent. |
+| **2. `CurrentObservation`** | `AGGREGATE … BIND MAX(?pt)` per observed property, to find the most recent reading | **Not reproducible as a query** — see the note below. A window bounds *how old* a reading may be; it does not pick the *latest* one. Handled in the data model instead. |
 | **3. `within3s`** | Pairs observations whose timestamps differ by less than a window size read from an ontology individual (`car:hasWindowSize "PT3S"^^xsd:duration`) | **Not needed as a rule** — becomes the window itself, `[RANGE 3s]`. Window semantics are syntax the planner understands, not data to be interpreted. |
-| **4. `LargeAngleChange`** | Self-join on two angle observations in the window; `ABS(angle1 − angle2) > 210`; ordered by trimmed timestamp; `SKOLEM` mints an individual | Two angle patterns + `FILTER(STR(?a1) != STR(?a2))` + `BIND(ABS(…))` + `FILTER(?angleDiff > 210)`. No individual is minted. |
+| **4. `LargeAngleChange`** | Self-join on two angle observations in the window; `ABS(angle1 − angle2) > 210`; ordered by trimmed timestamp; `SKOLEM` mints an individual | Two angle patterns + `FILTER(STR(?f1) < `**`<`**` ?f2)` + `BIND(ABS(…))` + `FILTER(?angleDiff > 210)`. No individual is minted. Note `<`, not `!=`: `!=` admits both orderings of the pair and double-counts every swing. |
 | **5. `HighSpeedObservation`** | Current speed reading with `speed > 10`; `SKOLEM` mints an individual | One speed pattern + `FILTER(?speed > 10)`. |
 | **6. `FixPoint`** | Correlates a latitude and a longitude observation by equal trimmed timestamp | Push lat+long as **one atomic element** (`DataStream.push(List<Statement>)`), and the correlation is structural — no timestamp-equality join at all. Same technique as `CorrelatedFaultCascade`. |
-| **7. `AggressiveDriving`** | Joins rules 4 and 5 on equal trimmed timestamp | **Not needed.** Co-occurrence in one window is the join. |
+| **7. `AggressiveDriving`** | Joins rules 4 and 5 on equal trimmed timestamp | Co-occurrence in one window is a *weaker* join: it accepts any speed reading still in the window. Restored by frame co-location — see the note below. |
 | **8. `Segment`** | Assembles start/end fix points, times, angle diff, window size; mints a segment IRI via `BIND(IRI(CONCAT(…)))` | `GROUP BY` over the window. If a segment IRI is genuinely wanted, `BIND(IRI(CONCAT(…)))` **works** (verified). |
 | **9. `avgAngleChange`** | `AGGREGATE … BIND AVG(?angle_diff)` per segment | `(AVG(?angleDiff) AS ?avgAngleChange)` with `GROUP BY`. |
+
+> **Two things a window does not give you, found in review.**
+>
+> **Rule 2 is not redundant.** A window says "no older than N seconds"; rule 2 says "the most
+> recent". Those differ exactly when a signal changes inside the window — a vehicle at 64 km/h that
+> slows to 4 and *then* swerves still has the 64 reading in scope, and a naive translation alerts on
+> it. CQELS-QL cannot express "the latest value of X" on `2.0.0-alpha.18`: there is no event-time
+> comparison (`xsd:dateTime` arithmetic is not evaluated — see §4) and no argmax. A second stream
+> with its own `[TRIPLES 1]` window would say it, but multi-source joins with count windows are
+> rejected: *"not yet supported … tracked as a follow-up to issue #185"*.
+>
+> The fix is in the **data model**, not the query. A telemetry *frame* carries angle and speed in one
+> atomic element, as a vehicle actually samples them, so the speed guard reads the speed at the
+> moment of the swing. `CdspDrivingStyle` scenario 4 is that case, and it stays silent.
+>
+> **Rule 4's ordering is only partly reproduced.** `STR(?f1) < STR(?f2)` de-duplicates the
+> unordered pair; it does not order the two readings in time. That is fine for the symmetric `ABS`
+> difference, and not fine for anything that labels a segment's *start* and *end* — which is exactly
+> what §2.2 needs.
 
 ### 2.2 The output query
 
@@ -74,6 +93,14 @@ whereas as a window it bounds the state the engine keeps in the first place.
 The `REPLACE(REPLACE(?s, "^.*#", ""), "[^a-zA-Z0-9]", "")` segment-id cleanup is presentation, and
 `REPLACE` is not supported (see §4) — do it in the result listener.
 
+**What this mapping does not reproduce.** The output query projects a *segment*: an id, a start and
+end fix point with their coordinates, and start and end timestamps. The continuous query in §3
+projects per-vehicle aggregates over a window instead. Getting from one to the other needs the
+start/end **ordering** of the angle pair, and the fix points correlated to those two instants — both
+resting on the event-time comparison this release does not have. So the honest summary is: the
+*detection* collapses to one query; the *segment assembly* does not, and would need either the
+missing time comparison or a post-processing step in the listener holding the two frames.
+
 ---
 
 ## 3. The result: one query
@@ -86,21 +113,17 @@ which runs today:
 REGISTER QUERY AggressiveDriving AS
 SELECT ?vehicle (MAX(?angleDiff) AS ?peakAngleChange)
                 (AVG(?angleDiff) AS ?avgAngleChange)
-                (MAX(?speed) AS ?peakSpeed)
+                (COUNT(*) AS ?swings)
 FROM STREAM Telemetry [RANGE 3s]
 WHERE {
   STREAM Telemetry {
-    ?a1 sosa:observedProperty vss:Chassis.SteeringWheel.Angle .
-    ?a1 sosa:hasFeatureOfInterest ?vehicle .
-    ?a1 sosa:hasSimpleResult ?angle1 .
-    ?a2 sosa:observedProperty vss:Chassis.SteeringWheel.Angle .
-    ?a2 sosa:hasFeatureOfInterest ?vehicle .
-    ?a2 sosa:hasSimpleResult ?angle2 .
-    ?sp sosa:observedProperty vss:Speed .
-    ?sp sosa:hasFeatureOfInterest ?vehicle .
-    ?sp sosa:hasSimpleResult ?speed .
+    ?f1 sosa:hasFeatureOfInterest ?vehicle .
+    ?f1 vss:Chassis.SteeringWheel.Angle ?angle1 .
+    ?f2 sosa:hasFeatureOfInterest ?vehicle .
+    ?f2 vss:Chassis.SteeringWheel.Angle ?angle2 .
+    ?f2 vss:Speed ?speed .
   }
-  FILTER(STR(?a1) != STR(?a2))
+  FILTER(STR(?f1) < STR(?f2))
   BIND(ABS(?angle1 - ?angle2) AS ?angleDiff)
   FILTER(?angleDiff > 210)
   FILTER(?speed > 10)
@@ -108,18 +131,26 @@ WHERE {
 GROUP BY ?vehicle
 ```
 
+`?f1` and `?f2` are telemetry **frames**, each carrying angle and speed together, which is what
+makes `?speed` the speed *at* the swing rather than any speed still in the window.
+
 Observed output, including both discriminating negatives:
 
 ```
 Scenario 1 — EV-7Q2 swings 20 -> 250 deg at 64 km/h (should fire):
-  AGGRESSIVE DRIVING -> {avgAngleChange=230.0, peakSpeed=64.0, peakAngleChange=230.0, vehicle=…/EV-7Q2}
+  AGGRESSIVE DRIVING -> {avgAngleChange=230.0, peakAngleChange=230.0, swings=1, vehicle=…/EV-7Q2}
 
 Scenario 2 — EV-3K8 swings 15 -> 245 deg at 4 km/h (should stay quiet):
   (no alert: the swing is real but the vehicle is barely moving)
 
 Scenario 3 — EV-9TZ swings 30 -> 55 deg at 80 km/h (should stay quiet):
   (no alert: fast, but only a 25 deg correction)
+
+Scenario 4 — EV-7Q2 was at 64, SLOWED to 4, then swings 20 -> 250 (should stay quiet):
+  (no alert: the swing happened at 4 km/h, though 64 is still in the window)
 ```
+
+`swings=1`, not 2: `<` admits each unordered pair once. Scenario 4 is the stale-speed case.
 
 The intermediate individuals RDFox mints — `LargeAngleChange`, `HighSpeedObservation`,
 `AggressiveDriving`, `FixPoint` — exist to carry state from one Datalog rule to the next. A
