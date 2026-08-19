@@ -203,13 +203,16 @@ data is at fault.
 | Property paths — `+`, `*`, `/`, `^` ([#56](https://github.com/cqels/CQELS4J/issues/56)) | A parser error is printed to **stderr**, but registration succeeds anyway and a *different* pattern is evaluated | Write the hops explicitly, or use a recursive rule |
 | `REPLACE()` and `sameTerm()` | The variable is left unbound / the filter never matches | `?a = <full-iri>`; `STR(?a) = STR(?b)` **only if both are IRIs** — `STR` cannot tell an IRI from a string literal with the same text. `REPLACE` moves to the listener |
 | Rules over atomically pushed multi-statement elements ([#57](https://github.com/cqels/CQELS4J/issues/57)) | The reasoner skips them entirely, so no inference fires | Push those statements one at a time |
-
 | Rules matching the background graph ([#58](https://github.com/cqels/CQELS4J/issues/58)) | The reasoner reads stream elements only, so an ontology in the store is invisible to rules | Push the ontology onto the stream at start-up |
 
-Everything else in [`CQELS-QL_SPEC.md`](CQELS-QL_SPEC.md) behaves as documented, and the demos in
-[`examples/`](examples/) are all verified to run against this release. `scripts/ci/capability-probe.sh`
-asserts every row above on each PR, so if one is fixed upstream this table fails CI rather than
-quietly going out of date.
+The demos in [`examples/`](examples/) are all verified to run against this release, working around
+the rows above where they must.
+
+Two caveats about this table itself. `CQELS-QL_SPEC.md` §9 currently still describes the standard
+SPARQL surface as supported as-is, without the `REPLACE` / `sameTerm` exceptions listed here; that
+is corrected in a separate change, and until it lands the two documents disagree about those two
+functions. And nothing yet re-checks these rows automatically, so if one is fixed upstream this
+table will quietly go out of date — a CI probe that asserts each row is in review separately.
 
 ---
 

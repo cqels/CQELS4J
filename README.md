@@ -58,9 +58,9 @@ It should print a low-battery alert for each reading below 20 %:
 
 Every other demo runs the same way, swapping `-Dexec.mainClass`. Full walkthrough in
 **[GETTING_STARTED.md](GETTING_STARTED.md)**, including the
-[known limitations](GETTING_STARTED.md#6-known-limitations-on-this-release) of this alpha — a
-short list of constructs that currently fail *silently*, worth reading before you debug your
-own data.
+[known limitations](GETTING_STARTED.md#6-known-limitations-on-this-release) of this alpha — a short
+list of constructs that are accepted at registration but do not behave as SPARQL 1.1 specifies.
+Most give no diagnostic at all; worth reading before you debug your own data.
 
 ```java
 // Smart EV fleet: alert when a vehicle's battery state-of-charge drops below 20 %.
