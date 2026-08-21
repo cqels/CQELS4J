@@ -29,7 +29,10 @@ import org.cqels.examples.Fleet;
  *   <li>Rules 8, 9 {@code Segment} / {@code avgAngleChange} — assembling a result individual and
  *       averaging over it becomes {@code GROUP BY} + {@code AVG}.</li>
  * </ul>
- * Eight rules and a query become one query. The intermediate individuals
+ * The eight rules' <strong>detection</strong> becomes one query. The output query's segment
+ * assembly does not: it projects a segment id, start and end fix points with coordinates, and both
+ * timestamps, all of which need the angle pair ordered <em>in time</em> — the comparison this
+ * release cannot make. See {@code CDSP_MAPPING.md} §2.2. The intermediate individuals
  * ({@code LargeAngleChange}, {@code HighSpeedObservation}, {@code AggressiveDriving}) exist only to
  * carry state between Datalog rules; a continuous query has no such handoff to make, so the
  * {@code SKOLEM(...)} minting that names them is not needed either.
