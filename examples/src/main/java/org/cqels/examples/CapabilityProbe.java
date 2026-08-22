@@ -287,7 +287,8 @@ public class CapabilityProbe {
             List<Object> inferred = new CopyOnWriteArrayList<>();
             engine.registerCqelsQuery(withRegister(
                     "SELECT ?o FROM STREAM S [TRIPLES 1]\n"
-                    + "WHERE { STREAM S { ?o <" + C + "of> <" + C + "mid> . } }\n"), inferred::add);
+                    + "WHERE { STREAM S { ?o <" + C + "of> <" + C + "mid> . } }\n"),
+                    r -> { if (String.valueOf(r).contains(C + "o1")) { inferred.add(r); } });
             engine.start();
             stream.pushTriple(C + "leaf", C + "broader", C + "mid");   // the hierarchy edge
             Thread.sleep(300);
@@ -298,7 +299,6 @@ public class CapabilityProbe {
                     VF.createStatement(o1, of, VF.createIRI(C + "leaf")),
                     VF.createStatement(o1, VF.createIRI(C + "note"), VF.createLiteral("frame"))));
             Thread.sleep(1200);
-            boolean atomicSeen = !inferred.isEmpty();
 
             // Positive control. The documented workaround is to push one statement at a time; if
             // THAT stopped working, the check above would also be empty and we would report "#57
@@ -316,6 +316,13 @@ public class CapabilityProbe {
             stream.pushTriple(C + "o2", C + "of", C + "leaf");
             Thread.sleep(1200);
             boolean unbatchedSeen = !unbatched.isEmpty();
+
+            // Read the atomic result AFTER the control's wait, not before it. Snapshotting it
+            // earlier discarded any row that arrived during that extra second — so an engine that
+            // had actually fixed #57 but derived slowly would still have been reported "still
+            // open", the exact false-negative this check exists to avoid (codex, round 4). The
+            // list is filtered on the o1 subject, so the later o2 push cannot contaminate it.
+            boolean atomicSeen = !inferred.isEmpty();
             if (!unbatchedSeen) {
                 DIVERGENCES.add("REGRESSED — the #57 workaround itself (single-statement pushes no "
                         + "longer reach the rule network)\n      S2dm.pushConceptSignalUnbatched is "
