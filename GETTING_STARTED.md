@@ -77,8 +77,8 @@ Done.
 (abridged — the run also echoes each reading as it is pushed)
 
 That is the whole setup — no credentials, no local configuration. Every other demo runs the
-same way, swapping `-Dexec.mainClass`. A few representative ones (the full categorized list of
-30 is in [`examples/README.md`](examples/README.md)):
+same way, swapping `-Dexec.mainClass`. A few representative ones — the full categorized list is in
+[`examples/README.md`](examples/README.md):
 
 | Class | What it shows |
 |-------|---------------|
