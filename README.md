@@ -41,14 +41,26 @@ specifications CQELS builds on and aligns with.
 
 ## Quick start
 
-Run a continuous query in under a minute — no credentials required at any point
-(full setup in **[GETTING_STARTED.md](GETTING_STARTED.md)**):
+Three lines, no credentials at any point — Git, JDK 17+ and Maven 3.8+ are all you need:
 
 ```bash
 git clone https://github.com/cqels/CQELS4J.git
 cd CQELS4J/examples
 mvn -q compile exec:java -Dexec.mainClass=org.cqels.examples.HelloCqels
 ```
+
+It should print a low-battery alert for each reading below 20 %:
+
+```
+  LOW BATTERY -> {obs=https://example.org/fleet/obs/2, soc=18.5}
+  LOW BATTERY -> {obs=https://example.org/fleet/obs/4, soc=12.0}
+```
+
+Every other demo runs the same way, swapping `-Dexec.mainClass`. Full walkthrough in
+**[GETTING_STARTED.md](GETTING_STARTED.md)**, including the
+[known limitations](GETTING_STARTED.md#6-known-limitations-on-this-release) of this alpha — a short
+list of constructs that are accepted at registration but do not behave as SPARQL 1.1 specifies.
+Most give no diagnostic at all; worth reading before you debug your own data.
 
 ```java
 // Smart EV fleet: alert when a vehicle's battery state-of-charge drops below 20 %.
@@ -89,20 +101,10 @@ try (CQELSEngine engine = CQELSEngine.builder().withMemoryStore().build()) {
 </dependencies>
 ```
 
-> **No account, no token, no `settings.xml`.** (GitHub Packages' Maven registry, where these
-> are also published, has no anonymous read even for public packages — a GitHub limitation,
-> not a CQELS choice — which is why the coordinates above point elsewhere.)
+> **No account, no token, no `settings.xml`.**
 
-Two URLs serve the same bytes, and either works:
-
-| URL | |
-|---|---|
-| `https://raw.githubusercontent.com/cqels/maven/main/releases` | reads the repository directly — no custom domain in the path, so it keeps working whatever DNS does |
-| `https://maven.cqels.org/releases` | the friendlier alias for the same repository, via GitHub Pages |
-
-The examples in this project use the first, so a clean clone builds without depending on the
-alias. Prefer the second if you like the shorter URL. Both resolve fixed versions; neither
-supports version ranges or `LATEST`, because repository metadata is deliberately not served.
+Fixed versions only — the repository serves no metadata, so version ranges and `LATEST` do not
+resolve. Pin the version, as above.
 
 ---
 
@@ -152,7 +154,7 @@ electric-vehicle fleet / vehicle-to-grid (V2G) scenario.)
 | Demo | Feature | Scenario |
 |------|---------|----------|
 | [`CorrelatedFaultCascade`](examples/src/main/java/org/cqels/examples/cdsp/CorrelatedFaultCascade.java) | CEP multi-triple (reified) events + cross-event `STR()` correlation filters + `FILTER(SEQ(?e1; ?e2; ?e3))` | Fault cascade: three different subsystem alerts from the same vehicle within 15 s → send it to the depot; the same alerts spread across two vehicles stay silent. |
-| [`DriverAttentionWatchdog`](examples/src/main/java/org/cqels/examples/cdsp/DriverAttentionWatchdog.java) | CEP correlated negated sequence step `FILTER(SEQ(?e1; NOT ?e2; ?e3))` + same-vehicle guards, including on the negated step (honored since CQELS 2.0.0-alpha.13) | Driver-attention watchdog: fast driving, then no braking by the same vehicle before its next fast reading → attention alert; another vehicle's brake does not suppress it. |
+| [`DriverAttentionWatchdog`](examples/src/main/java/org/cqels/examples/cdsp/DriverAttentionWatchdog.java) | CEP correlated negated sequence step `FILTER(SEQ(?e1; NOT ?e2; ?e3))` + same-vehicle guards, including on the negated step | Driver-attention watchdog: fast driving, then no braking by the same vehicle before its next fast reading → attention alert; another vehicle's brake does not suppress it. |
 | [`SuddenSwerveDetector`](examples/src/main/java/org/cqels/examples/cdsp/SuddenSwerveDetector.java) | Two-reading temporal self-join in one `[RANGE 3s]` window + `BIND(ABS(…))` delta | Sudden-swerve incident: the steering wheel swings > 90° between two readings while above 50 km/h. |
 | [`WetRoadBraking`](examples/src/main/java/org/cqels/examples/cdsp/WetRoadBraking.java) | Context-gated self-join (rain triple gates the reading pair) | Hard braking specifically on a wet road: a > 20 km/h drop fires only when it was raining as braking began. |
 | [`FleetRiskLeaderboard`](examples/src/main/java/org/cqels/examples/cdsp/FleetRiskLeaderboard.java) | Windowed `GROUP BY` + `COUNT(*)`/`AVG` over a multi-pattern join + `HAVING` floor | Rolling per-vehicle risk score: speeding / violent-steering violations per 10 s window. |

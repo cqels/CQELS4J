@@ -114,8 +114,9 @@ Enumerated from a live `tools/list` against this jar.
 ## Build
 
 ```bash
-# org.cqels:cqels-mcp resolves anonymously from https://maven.cqels.org/releases,
-# which this POM already points at. No token, no ~/.m2/settings.xml.
+# org.cqels:cqels-mcp resolves anonymously from
+# https://raw.githubusercontent.com/cqels/maven/main/releases, which this POM already
+# points at. No token, no ~/.m2/settings.xml.
 mvn -q package
 # -> target/cqels-mcp-server.jar  (a single runnable jar)
 ```
