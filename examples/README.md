@@ -148,7 +148,9 @@ lets subject-matter experts model in **GraphQL SDL**; its tooling projects that 
 that projection is ordinary RDF, it drops straight into CQELS as static context — so a
 continuous query can be written against *modelled concepts* instead of hard-coded VSS signal
 paths. [`S2dm`](src/main/java/org/cqels/examples/cdsp/S2dm.java) holds the shared vocabulary and
-seeds a catalogue mirroring the real schemas in the s2dm repository.
+seeds a catalogue in the shape the exporter emits — the typing, language-tagged labelling and
+collection structure are faithful to it; the concepts themselves are only partly drawn from the
+s2dm repository's own schemas, with a couple added to give the rollup a hierarchy.
 
 | Class | CQELS feature | Scenario |
 |-------|---------------|----------|

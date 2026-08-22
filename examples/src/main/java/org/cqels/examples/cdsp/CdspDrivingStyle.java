@@ -62,6 +62,20 @@ import org.cqels.examples.Fleet;
  *       {@code ABS} difference computed here it does not.</li>
  * </ul>
  *
+ * <p><strong>What the frame model still does not fix.</strong> Co-locating angle and speed makes
+ * them co-temporal, so {@code ?f2}'s speed is the speed in that frame. It does not make
+ * {@code ?f2} the <em>later</em> frame: that is decided by {@code STR(?f1) < STR(?f2)}, which
+ * orders by minted identifier, i.e. by <em>arrival</em>. For a live in-order feed arrival order is
+ * event order and the query is correct. Feed it out of order — a replay, a buffered batch, a
+ * back-fill — and the pair can be read backwards, so the speed is taken from what was actually the
+ * earlier frame and the stale-speed alert returns even though every frame carries its own correct
+ * speed. Verified in review with a replay that pushed the later frame first.
+ *
+ * <p>There is no query-level fix on this release: choosing the later of two elements requires
+ * comparing event times, and {@code xsd:dateTime} arithmetic is not evaluated. So the honest scope
+ * of this demo is <strong>an in-order live feed</strong>. A replay harness must either restore
+ * arrival order or do the pairing outside the query.
+ *
  * <p>Signals are the CDSP input set ({@code inputs/vehicle_data_required.txt}):
  * {@code Vehicle.Chassis.SteeringWheel.Angle} and {@code Vehicle.Speed}.
  *
