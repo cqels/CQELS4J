@@ -91,7 +91,16 @@ That final filter is a duration bound restated by hand because RDFox has no wind
 subsumed by the window rather than translated: the shipped query pairs readings inside
 `[RANGE 3s]`, and any pair it joins is therefore already less than 4 s apart. Note the two
 intervals are not the same thing — rule 3's 3 s bounds the *pairing*, while this 4 s bounds a
-*segment's* start-to-end span — which is why the subsumption is worth stating rather than assuming. This matters beyond
+*segment's* start-to-end span — which is why the subsumption is worth stating rather than assuming.
+
+**And it holds only while stream time tracks phenomenon time.** CDSP's `PT4S` is measured on the
+readings' own `sosa:phenomenonTime`; a CQELS window is measured on the time an element enters the
+stream. For a live feed those track each other and the subsumption is sound. For a **replay** — or
+any ingestion that batches, buffers or back-fills — they come apart: readings hours apart in
+phenomenon time can arrive inside one 3-second window and be paired, which CDSP's filter would have
+excluded. `Fleet.pushFrame` drops CDSP's timestamps and lets the engine stamp arrival, so it is a
+live-feed helper. CQELS does accept an explicit event timestamp on `push(…)`, so a replay harness
+should carry `phenomenonTime` through rather than relying on arrival order. This matters beyond
 tidiness: as a `FILTER` it can only be applied *after* materialising every candidate segment,
 whereas as a window it bounds the state the engine keeps in the first place.
 
