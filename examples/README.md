@@ -144,10 +144,36 @@ visible; the ticker instead demonstrates window eviction (the run outlasts the w
 | [`ShaclValidation`](src/main/java/org/cqels/examples/ShaclValidation.java) | continuous [SHACL](https://www.w3.org/TR/shacl/) — `cqels-shacl` | Require every `sosa:Observation` to carry a result; `conforms` flips from `false` to `true` as the result arrives for the same observation. |
 | [`AspReasoning`](src/main/java/org/cqels/examples/AspReasoning.java) | Answer-Set Programming — `cqels-asp` | A logic rule derives `convoy(V1,V2)` for two distinct vehicles reporting telemetry together (join + inequality). |
 
-> alpha.7 also ships an opt-in *warm parse-cache* ASP solver backend (`WarmParseCacheAspSolverBackend`,
-> parses the base program once and reuses it across continuous solves) — it is engine-API opt-in via the
-> 5-arg `AspContinuousQuery` constructor and not yet reachable through the `CQELSEngine` facade these
-> examples use, so there is no demo of it here.
+> Since `2.0.0-alpha.7` the ASP module also ships an opt-in *warm parse-cache* solver backend
+> (`WarmParseCacheAspSolverBackend`, parses the base program once and reuses it across continuous
+> solves). It is not exposed by the `registerAspQuery` convenience overloads — those always use the
+> default backend — but it **is** reachable from the engine facade: construct the query with the
+> 5-arg `AspContinuousQuery` constructor and hand it to the generic `registerQuery`, which accepts
+> it because `AspContinuousQuery implements ContinuousQuery`:
+>
+> ```java
+> String foi = "http://www.w3.org/ns/sosa/hasFeatureOfInterest";
+> // The fact mapper emits rdf/3, so write the rule over rdf(...), as AspReasoning does.
+> String program = "convoy(V1, V2) :- rdf(O1, iri(\"" + foi + "\"), V1),\n"
+>                + "                  rdf(O2, iri(\"" + foi + "\"), V2), V1 != V2.\n";
+>
+> try (CQELSEngine engine = CQELSEngine.builder().id("warm").withMemoryStore().build()) {
+>     DataStream stream = engine.createStream("default");
+>     AspContinuousQuery q = new AspContinuousQuery(
+>             "WarmConvoy", program, AspStreamSolveConfig.builder().build(),
+>             new AspFactMapper(), new WarmParseCacheAspSolverBackend());
+>     engine.registerQuery(q, result -> System.out.println(result.getAtoms()));
+>     engine.start();
+>     stream.pushTriple("https://ex.org/o1", foi, "https://ex.org/vehicleA");
+>     stream.pushTriple("https://ex.org/o2", foi, "https://ex.org/vehicleB");
+>     Thread.sleep(1500);
+> }
+> ```
+>
+> No demo ships here yet — the reason is scope, not reachability. The block above was compiled and
+> run verbatim against `2.0.0-alpha.18` (inside a `main`, with the obvious imports) and prints
+> `convoy(...)` atoms: it registers through the facade and the solver derives. Note the rule shape — a program written over `obs(...)` registers and
+> returns result objects but derives nothing, because the mapper only ever emits `rdf/3`.
 
 ### Reasoning showcase (`org.cqels.examples.reasoning`)
 
