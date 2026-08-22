@@ -20,8 +20,8 @@ import org.cqels.examples.Fleet;
  *       to recover "the latest reading" from a store that keeps everything. A window is <em>not</em>
  *       a substitute: it bounds how OLD a reading may be, not which one is newest, and the two
  *       differ exactly when a signal changes inside the window. Believing otherwise is what caused
- *       the stale-speed defect described below. Rule 2 has no query-level equivalent on this
- *       release; the frame model is what stands in for it.</li>
+ *       the stale-speed defect described below. What stands in for rule 2 here is the frame model
+ *       plus event-time ordering: the speed read is the one in the later of the two frames.</li>
  *   <li>Rule 3 {@code within3s} — pairs readings inside a 3-second window whose size is read from
  *       an ontology individual ({@code car:hasWindowSize "PT3S"^^xsd:duration}). In CQELS the
  *       window is syntax: {@code [RANGE 3s]}. This disappears.</li>
@@ -57,24 +57,25 @@ import org.cqels.examples.Fleet;
  *       {@code (f1,f2)} and {@code (f2,f1)}, so every swing is counted twice — {@code COUNT}
  *       returns 2 for a single swing. {@code STR(?f1) < STR(?f2)} admits exactly one of the two.
  *       It de-duplicates rather than ordering in time: CDSP's rule 4 orders the pair with
- *       {@code FILTER(?pt2 > ?pt1)} on trimmed timestamps, the comparison this release cannot do.
- *       Ordering matters for CDSP because it labels a segment's start and end; for the symmetric
- *       {@code ABS} difference computed here it does not.</li>
+ *       {@code FILTER(?pt2 > ?pt1)} on trimmed timestamps — the same comparison this query now
+ *       makes on {@code sosa:phenomenonTime}. Ordering is not optional here either: {@code ?f2}
+ *       alone supplies the speed, so which frame is {@code ?f2} decides which speed the guard
+ *       reads. (The {@code ABS} difference is symmetric; the speed guard is not.)</li>
  * </ul>
  *
- * <p><strong>What the frame model still does not fix.</strong> Co-locating angle and speed makes
- * them co-temporal, so {@code ?f2}'s speed is the speed in that frame. It does not make
- * {@code ?f2} the <em>later</em> frame: that is decided by {@code STR(?f1) < STR(?f2)}, which
- * orders by minted identifier, i.e. by <em>arrival</em>. For a live in-order feed arrival order is
- * event order and the query is correct. Feed it out of order — a replay, a buffered batch, a
- * back-fill — and the pair can be read backwards, so the speed is taken from what was actually the
- * earlier frame and the stale-speed alert returns even though every frame carries its own correct
- * speed. Verified in review with a replay that pushed the later frame first.
+ * <p><strong>Ordering is by event time, not arrival.</strong> Co-locating angle and speed in one
+ * frame makes them co-temporal; it does not by itself make {@code ?f2} the <em>later</em> frame.
+ * An earlier version ordered the pair with {@code STR(?f1) < STR(?f2)} — minted-identifier order,
+ * i.e. arrival — which reads a replayed or buffered pair backwards and reinstates the stale-speed
+ * alert. Scenario 5 is that case.
  *
- * <p>There is no query-level fix on this release: choosing the later of two elements requires
- * comparing event times, and {@code xsd:dateTime} arithmetic is not evaluated. So the honest scope
- * of this demo is <strong>an in-order live feed</strong>. A replay harness must either restore
- * arrival order or do the pairing outside the query.
+ * <p>The fix is to order by {@code sosa:phenomenonTime}, which the frames now carry:
+ * {@code FILTER(?t1 < ?t2)}. Relational comparison on {@code xsd:dateTime} <strong>is</strong>
+ * evaluated on this release — it is <em>subtraction</em> of two of them, yielding a duration, that
+ * is not, and the two are different capabilities. Conflating them is what previously led this
+ * documentation to claim event-time ordering was impossible here and to scope the demo to an
+ * in-order feed; it is neither impossible nor so scoped. Ordering this way also subsumes the
+ * de-duplication that {@code <} was doing, since exactly one of the two orderings satisfies it.
  *
  * <p>Signals are the CDSP input set ({@code inputs/vehicle_data_required.txt}):
  * {@code Vehicle.Chassis.SteeringWheel.Angle} and {@code Vehicle.Speed}.
@@ -103,15 +104,19 @@ public class CdspDrivingStyle {
                     WHERE {
                       STREAM Telemetry {
                         ?f1 sosa:hasFeatureOfInterest ?vehicle .
+                        ?f1 sosa:phenomenonTime ?t1 .
                         ?f1 vss:Chassis.SteeringWheel.Angle ?angle1 .
                         ?f2 sosa:hasFeatureOfInterest ?vehicle .
+                        ?f2 sosa:phenomenonTime ?t2 .
                         ?f2 vss:Chassis.SteeringWheel.Angle ?angle2 .
                         ?f2 vss:Speed ?speed .
                       }
-                      # Each unordered pair once. With '!=' both (f1,f2) and (f2,f1) match and every
-                      # swing is counted twice; '<' admits exactly one of the two. It de-duplicates
-                      # rather than ordering in time -- see the Javadoc.
-                      FILTER(STR(?f1) < STR(?f2))
+                      # Order by EVENT time, not arrival. This both de-duplicates the pair (with
+                      # '!=' each swing matches twice, once per ordering) and makes ?f2 genuinely
+                      # the later frame -- so ?f2's speed is the speed AT the swing however the
+                      # frames arrived. Relational comparison on xsd:dateTime IS evaluated on this
+                      # release; it is subtraction of two of them that is not.
+                      FILTER(?t1 < ?t2)
                       BIND(ABS(?angle1 - ?angle2) AS ?angleDiff)
                       FILTER(?angleDiff > 210)
                       # ?speed comes from ?f2, the SAME frame as the second angle reading, so it is
@@ -168,6 +173,22 @@ public class CdspDrivingStyle {
             Fleet.pushFrame(telemetry, Fleet.SENSOR_EV1, Fleet.EV1, Fleet.STEERING, 250.0, Fleet.SPEED, 4.0);
             Thread.sleep(1500);
             System.out.println("  (no alert: the swing happened at 4 km/h, though 64 is still in the window)");
+
+            // Scenario 5 — the same slowed-then-swerved case, REPLAYED out of order: the later
+            // frame is pushed FIRST. Ordering by minted identifier (arrival) read this pair
+            // backwards and alerted on the stale 64; ordering by sosa:phenomenonTime does not,
+            // because ?f2 is the later frame whichever arrives first.
+            Thread.sleep(4000);
+            System.out.println("\nScenario 5 — the same case REPLAYED out of order, later frame"
+                    + " pushed first (should stay quiet):");
+            Fleet.pushFrameAt(telemetry, Fleet.SENSOR_EV2, Fleet.EV2, Fleet.STEERING, 250.0,
+                    Fleet.SPEED, 4.0, "2026-01-01T00:00:09Z");     // later event, arrives first
+            Thread.sleep(300);
+            Fleet.pushFrameAt(telemetry, Fleet.SENSOR_EV2, Fleet.EV2, Fleet.STEERING, 20.0,
+                    Fleet.SPEED, 64.0, "2026-01-01T00:00:01Z");    // earlier event, arrives second
+            Thread.sleep(1500);
+            System.out.println("  (no alert: ?f2 is the 00:00:09 frame by event time, so the guard"
+                    + " reads 4 km/h — not the 64 that arrived later)");
         }
         System.out.println("\nDone.");
     }

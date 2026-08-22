@@ -7,6 +7,7 @@ import org.eclipse.rdf4j.model.ValueFactory;
 import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
 import org.eclipse.rdf4j.repository.RepositoryConnection;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -52,6 +53,7 @@ public final class Fleet {
     public static final String RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
     public static final String RDFS_SUBCLASSOF = "http://www.w3.org/2000/01/rdf-schema#subClassOf";
     public static final String GEO_WKT = "http://www.opengis.net/ont/geosparql#wktLiteral";
+    public static final String XSD_DATETIME = "http://www.w3.org/2001/XMLSchema#dateTime";
 
     // ---- SOSA terms -----------------------------------------------------------------------
     public static final String OBSERVATION = SOSA + "Observation";
@@ -60,6 +62,7 @@ public final class Fleet {
     public static final String OBSERVED_PROPERTY = SOSA + "observedProperty";
     public static final String HAS_SIMPLE_RESULT = SOSA + "hasSimpleResult";
     public static final String HAS_FEATURE_OF_INTEREST = SOSA + "hasFeatureOfInterest";
+    public static final String PHENOMENON_TIME = SOSA + "phenomenonTime";
 
     // ---- VSSo ----------------------------------------------------------------------------
     public static final String VEHICLE_CLASS = VSSO_CORE + "Vehicle";
@@ -175,11 +178,30 @@ public final class Fleet {
      */
     public static void pushFrame(DataStream stream, String sensor, String vehicle,
                                  String signalA, double valueA, String signalB, double valueB) {
+        pushFrameAt(stream, sensor, vehicle, signalA, valueA, signalB, valueB,
+                Instant.now().toString());
+    }
+
+    /**
+     * As {@link #pushFrame}, with an explicit {@code sosa:phenomenonTime} — the time the vehicle
+     * SAMPLED the frame, as opposed to the time it reaches the stream.
+     *
+     * <p>Carrying it is what lets a query order two frames by event time rather than by arrival,
+     * which matters as soon as data can be replayed, buffered or back-filled. The timestamp is a
+     * typed {@code xsd:dateTime} literal because that is the form CQELS-QL can compare: relational
+     * operators on {@code xsd:dateTime} are evaluated on this release, even though subtraction of
+     * two of them (yielding a duration) is not.
+     */
+    public static void pushFrameAt(DataStream stream, String sensor, String vehicle,
+                                   String signalA, double valueA, String signalB, double valueB,
+                                   String phenomenonTime) {
         IRI obs = VF.createIRI(EX + "frame/" + seq(OBS_SEQ.incrementAndGet()));
         stream.push(List.of(
                 VF.createStatement(obs, VF.createIRI(RDF_TYPE), VF.createIRI(OBSERVATION)),
                 VF.createStatement(obs, VF.createIRI(MADE_BY_SENSOR), VF.createIRI(sensor)),
                 VF.createStatement(obs, VF.createIRI(HAS_FEATURE_OF_INTEREST), VF.createIRI(vehicle)),
+                VF.createStatement(obs, VF.createIRI(PHENOMENON_TIME),
+                        VF.createLiteral(phenomenonTime, VF.createIRI(XSD_DATETIME))),
                 VF.createStatement(obs, VF.createIRI(signalA), VF.createLiteral(valueA)),
                 VF.createStatement(obs, VF.createIRI(signalB), VF.createLiteral(valueB))));
     }

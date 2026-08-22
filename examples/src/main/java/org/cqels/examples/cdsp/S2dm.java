@@ -128,8 +128,9 @@ public final class S2dm {
     private S2dm() { }
 
     /**
-     * Seed the s2dm SKOS concept graph — the RDF a {@code s2dm generate skos-skeleton} run emits
-     * for a small vehicle schema.
+     * Seed the s2dm SKOS concept graph — RDF in the shape a {@code s2dm generate skos-skeleton}
+     * run emits, over a small hand-built vehicle vocabulary rather than the output of an actual
+     * schema run (see the class Javadoc for exactly which concepts come from where).
      *
      * <p>Every object type and field becomes a {@code skos:Concept} with a {@code skos:prefLabel}
      * (mandatory in the s2dm SHACL shapes) and, where the GraphQL description existed, a
