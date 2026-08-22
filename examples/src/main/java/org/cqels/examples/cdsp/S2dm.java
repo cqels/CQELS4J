@@ -29,9 +29,18 @@ import java.util.concurrent.atomic.AtomicLong;
  * </pre>
  *
  * <p>Produced by {@code s2dm generate skos-skeleton --schema Vehicle.graphql --output vss.ttl}.
- * The concepts seeded in {@link #seedConceptGraph} mirror the real schemas in the s2dm repository
- * ({@code examples/graphql-to-skos/sample.graphql} and {@code examples/seat-to-vspec}), so the
- * demos exercise the shape s2dm actually emits rather than an invented one.
+ * The concepts seeded in {@link #seedConceptGraph} follow the <em>shape</em> the exporter emits —
+ * the typing, labelling and collection structure read off its {@code skos.py} — so the demos
+ * exercise real s2dm output rather than an invented encoding. The concepts themselves are only
+ * partly drawn from the repository's schemas ({@code examples/graphql-to-skos/sample.graphql}
+ * contributes {@code Vehicle.averageSpeed}; {@code examples/seat-to-vspec} contributes
+ * {@code Cabin} and {@code Seat}); {@code Door} and {@code Powertrain} are added here so the
+ * demos have a hierarchy worth rolling up. It is a faithful shape over a convenient vocabulary,
+ * not a reproduction of either schema.
+ *
+ * <p>Two things the real exporter also emits that are not modelled here, because no demo reads
+ * them: {@code skos:note} on described concepts, and the per-enum {@code skos:Collection} for
+ * each GraphQL enum.
  *
  * <p><strong>Why this matters for CQELS.</strong> A VSS observation carries a signal IRI and a
  * number. That is enough to compute with, but not enough to <em>explain</em>: nothing in the

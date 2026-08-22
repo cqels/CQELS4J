@@ -17,8 +17,11 @@ import org.cqels.examples.Fleet;
  * <p><strong>What the Datalog rules spend their effort on, and why CQELS does not need it:</strong>
  * <ul>
  *   <li>Rule 2 {@code CurrentObservation} — an {@code AGGREGATE MAX(phenomenonTime)} per property,
- *       to recover "the latest reading" from a store that keeps everything. A window already means
- *       recent, so this disappears.</li>
+ *       to recover "the latest reading" from a store that keeps everything. A window is <em>not</em>
+ *       a substitute: it bounds how OLD a reading may be, not which one is newest, and the two
+ *       differ exactly when a signal changes inside the window. Believing otherwise is what caused
+ *       the stale-speed defect described below. Rule 2 has no query-level equivalent on this
+ *       release; the frame model is what stands in for it.</li>
  *   <li>Rule 3 {@code within3s} — pairs readings inside a 3-second window whose size is read from
  *       an ontology individual ({@code car:hasWindowSize "PT3S"^^xsd:duration}). In CQELS the
  *       window is syntax: {@code [RANGE 3s]}. This disappears.</li>
