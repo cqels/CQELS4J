@@ -3,6 +3,7 @@ package org.cqels.examples;
 import org.cqels.asp.config.AspStreamSolveConfig;
 import org.cqels.asp.integration.AspFactMapper;
 import org.cqels.asp.query.AspContinuousQuery;
+import org.cqels.asp.solver.AspSolverBackend;
 import org.cqels.asp.solver.WarmParseCacheAspSolverBackend;
 import org.cqels.engine.CQELSEngine;
 import org.cqels.engine.DataStream;
@@ -302,10 +303,19 @@ public class CapabilityProbe {
             // Positive control. The documented workaround is to push one statement at a time; if
             // THAT stopped working, the check above would also be empty and we would report "#57
             // still open" while the real news is a regression in the workaround (codex, round 2).
-            inferred.clear();
+            //
+            // It must NOT reuse `inferred`: clearing and re-reading the same list lets a late
+            // result for the ATOMIC o1 land after the clear and be counted as proof that the
+            // unbatched o2 worked (codex, round 3). A separate list keyed to o2 cannot confuse
+            // the two, because each row carries its own subject.
+            List<Object> unbatched = new CopyOnWriteArrayList<>();
+            engine.registerCqelsQuery(withRegister(
+                    "SELECT ?o FROM STREAM S [TRIPLES 1]\n"
+                    + "WHERE { STREAM S { ?o <" + C + "of> <" + C + "mid> . } }\n"),
+                    r -> { if (String.valueOf(r).contains(C + "o2")) { unbatched.add(r); } });
             stream.pushTriple(C + "o2", C + "of", C + "leaf");
             Thread.sleep(1200);
-            boolean unbatchedSeen = !inferred.isEmpty();
+            boolean unbatchedSeen = !unbatched.isEmpty();
             if (!unbatchedSeen) {
                 DIVERGENCES.add("REGRESSED — the #57 workaround itself (single-statement pushes no "
                         + "longer reach the rule network)\n      S2dm.pushConceptSignalUnbatched is "
@@ -375,17 +385,19 @@ public class CapabilityProbe {
                 "convoy(V1, V2) :- rdf(O1, iri(\"" + foi + "\"), V1),\n"
                 + "                  rdf(O2, iri(\"" + foi + "\"), V2),\n"
                 + "                  V1 != V2.\n";
+        // Deriving convoy proves a solve happened; it does NOT prove the backend we supplied was
+        // the one that ran, because the DEFAULT backend derives the same atom (codex, round 3).
+        // Wrapping it is what closes that: if AspContinuousQuery ever ignored the 5-arg backend
+        // argument, `invoked` stays false and this check fails even though convoy still appears.
+        InvocationRecordingBackend backend =
+                new InvocationRecordingBackend(new WarmParseCacheAspSolverBackend());
         try (CQELSEngine engine = CQELSEngine.builder().id("probe-warm").withMemoryStore().build()) {
             DataStream stream = engine.createStream("default");
             List<Object> derived = new CopyOnWriteArrayList<>();
             AspContinuousQuery q = new AspContinuousQuery(
                     "ProbeWarm", program,
                     AspStreamSolveConfig.builder().build(),
-                    new AspFactMapper(),
-                    new WarmParseCacheAspSolverBackend());
-            // Assert a DERIVED atom, not merely that the listener fired. The listener is invoked
-            // with an AspSolveResult on every solve tick regardless of whether anything was
-            // derived, so `!rows.isEmpty()` would pass for a backend that only echoes its inputs.
+                    new AspFactMapper(), backend);
             engine.registerQuery(q, r -> {
                 if (String.valueOf(r.getAtoms()).contains("convoy(")) {
                     derived.add(r);
@@ -396,9 +408,25 @@ public class CapabilityProbe {
             Thread.sleep(400);
             stream.pushTriple(C + "o2", foi, C + "vehicleB");   // two distinct vehicles -> convoy
             Thread.sleep(1500);
-            return !derived.isEmpty();
+            return backend.invoked && !derived.isEmpty();
         } catch (Exception e) {
             return false;
+        }
+    }
+
+    /** Records whether the backend it wraps was actually asked to solve. */
+    private static final class InvocationRecordingBackend implements AspSolverBackend {
+        private final AspSolverBackend delegate;
+        private volatile boolean invoked;
+
+        private InvocationRecordingBackend(AspSolverBackend delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public org.cqels.asp.solver.AspSolveResult solve(String program, List<String> facts, long limit) {
+            invoked = true;
+            return delegate.solve(program, facts, limit);
         }
     }
 
