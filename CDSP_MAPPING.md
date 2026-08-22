@@ -99,8 +99,15 @@ stream. For a live feed those track each other and the subsumption is sound. For
 any ingestion that batches, buffers or back-fills — they come apart: readings hours apart in
 phenomenon time can arrive inside one 3-second window and be paired, which CDSP's filter would have
 excluded. `Fleet.pushFrame` drops CDSP's timestamps and lets the engine stamp arrival, so it is a
-live-feed helper. CQELS does accept an explicit event timestamp on `push(…)`, so a replay harness
-should carry `phenomenonTime` through rather than relying on arrival order. This matters beyond
+live-feed helper.
+
+Carrying `phenomenonTime` through on `push(…)` — which CQELS does accept — is **necessary but not
+sufficient**. The query still decides which frame supplies speed with `STR(?f1) < STR(?f2)`, i.e.
+by minted-identifier order, which is arrival order. A replay that preserves timestamps but delivers
+frames out of order reads the pair backwards and reproduces the stale-speed alert; verified in
+review by pushing the later frame first. Ordering the pair by event time is what this release
+cannot express at all, so an out-of-order replay has to restore arrival order or do the pairing
+outside the query. The detection as mapped here is scoped to an **in-order feed**. This matters beyond
 tidiness: as a `FILTER` it can only be applied *after* materialising every candidate segment,
 whereas as a window it bounds the state the engine keeps in the first place.
 
