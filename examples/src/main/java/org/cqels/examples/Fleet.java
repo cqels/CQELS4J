@@ -7,6 +7,8 @@ import org.eclipse.rdf4j.model.ValueFactory;
 import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
 import org.eclipse.rdf4j.repository.RepositoryConnection;
 
+import java.time.Instant;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -51,6 +53,7 @@ public final class Fleet {
     public static final String RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
     public static final String RDFS_SUBCLASSOF = "http://www.w3.org/2000/01/rdf-schema#subClassOf";
     public static final String GEO_WKT = "http://www.opengis.net/ont/geosparql#wktLiteral";
+    public static final String XSD_DATETIME = "http://www.w3.org/2001/XMLSchema#dateTime";
 
     // ---- SOSA terms -----------------------------------------------------------------------
     public static final String OBSERVATION = SOSA + "Observation";
@@ -59,6 +62,7 @@ public final class Fleet {
     public static final String OBSERVED_PROPERTY = SOSA + "observedProperty";
     public static final String HAS_SIMPLE_RESULT = SOSA + "hasSimpleResult";
     public static final String HAS_FEATURE_OF_INTEREST = SOSA + "hasFeatureOfInterest";
+    public static final String PHENOMENON_TIME = SOSA + "phenomenonTime";
 
     // ---- VSSo ----------------------------------------------------------------------------
     public static final String VEHICLE_CLASS = VSSO_CORE + "Vehicle";
@@ -109,6 +113,30 @@ public final class Fleet {
     private Fleet() { }
 
     /**
+     * Zero-pad a minted identifier so that <strong>lexicographic order matches minting order</strong>.
+     *
+     * <p>This is not cosmetic. {@code CdspDrivingStyle} orders a pair of frames with
+     * {@code FILTER(STR(?f1) < STR(?f2))}, because CQELS-QL on this release cannot compare event
+     * times. Unpadded, {@code "frame/10" < "frame/9"} is true, so at the 9→10 rollover the
+     * comparison inverts, the query reads the speed from the EARLIER frame, and the stale-speed
+     * false alert that scenario 4 exists to prevent comes back. Found in review, with a probe that
+     * straddled the rollover deliberately.
+     *
+     * <p>Eight digits is far more than any demo emits, and the padding is a demo-scoped device: it
+     * makes identifier order a faithful proxy for arrival order <em>within one run</em>. It is not
+     * a general technique — a real deployment orders by event time, which is what this release
+     * cannot yet express.
+     *
+     * <p>Applied to {@link #pushFrame} ONLY. An earlier version padded every minted identifier,
+     * which changed {@code HelloCqels}'s printed observation IRIs from {@code obs/2} to
+     * {@code obs/00000002} and silently falsified the expected output documented for it elsewhere.
+     * Nothing but the frame pair is ordered lexically, so nothing but frames needs padding.
+     */
+    private static String seq(long n) {
+        return String.format("%08d", n);
+    }
+
+    /**
      * Push one VSS reading wrapped as a {@code sosa:Observation} (five triples sharing a fresh
      * observation IRI) — the canonical event used throughout the demos.
      */
@@ -134,6 +162,48 @@ public final class Fleet {
         stream.push(obs, VF.createIRI(OBSERVED_PROPERTY), VF.createIRI(vssSignal), timestamp);
         stream.push(obs, VF.createIRI(HAS_FEATURE_OF_INTEREST), VF.createIRI(vehicle), timestamp);
         stream.push(obs, VF.createIRI(HAS_SIMPLE_RESULT), VF.createLiteral(value), timestamp);
+    }
+
+    /**
+     * Push one telemetry <em>frame</em>: a single atomic {@code sosa:Observation} carrying TWO VSS
+     * signals at once — the shape a vehicle actually emits, where a frame samples several signals
+     * together.
+     *
+     * <p>Why this matters beyond realism: it makes the two readings <strong>co-temporal by
+     * construction</strong>. A query that correlates them needs no timestamp comparison, which
+     * CQELS-QL cannot express on this release anyway. Pushing the signals as separate observations
+     * instead lets a query pair a <em>current</em> reading of one signal with a <em>stale</em>
+     * reading of the other, anywhere in the window — see {@code CdspDrivingStyle}, where that
+     * distinction decides whether a swerve alert is correct.
+     */
+    public static void pushFrame(DataStream stream, String sensor, String vehicle,
+                                 String signalA, double valueA, String signalB, double valueB) {
+        pushFrameAt(stream, sensor, vehicle, signalA, valueA, signalB, valueB,
+                Instant.now().toString());
+    }
+
+    /**
+     * As {@link #pushFrame}, with an explicit {@code sosa:phenomenonTime} — the time the vehicle
+     * SAMPLED the frame, as opposed to the time it reaches the stream.
+     *
+     * <p>Carrying it is what lets a query order two frames by event time rather than by arrival,
+     * which matters as soon as data can be replayed, buffered or back-filled. The timestamp is a
+     * typed {@code xsd:dateTime} literal because that is the form CQELS-QL can compare: relational
+     * operators on {@code xsd:dateTime} are evaluated on this release, even though subtraction of
+     * two of them (yielding a duration) is not.
+     */
+    public static void pushFrameAt(DataStream stream, String sensor, String vehicle,
+                                   String signalA, double valueA, String signalB, double valueB,
+                                   String phenomenonTime) {
+        IRI obs = VF.createIRI(EX + "frame/" + seq(OBS_SEQ.incrementAndGet()));
+        stream.push(List.of(
+                VF.createStatement(obs, VF.createIRI(RDF_TYPE), VF.createIRI(OBSERVATION)),
+                VF.createStatement(obs, VF.createIRI(MADE_BY_SENSOR), VF.createIRI(sensor)),
+                VF.createStatement(obs, VF.createIRI(HAS_FEATURE_OF_INTEREST), VF.createIRI(vehicle)),
+                VF.createStatement(obs, VF.createIRI(PHENOMENON_TIME),
+                        VF.createLiteral(phenomenonTime, VF.createIRI(XSD_DATETIME))),
+                VF.createStatement(obs, VF.createIRI(signalA), VF.createLiteral(valueA)),
+                VF.createStatement(obs, VF.createIRI(signalB), VF.createLiteral(valueB))));
     }
 
     /** Push a driving-incident event ({@code ?event fleet:event <eventClass>}) — used by the CEP demos. */

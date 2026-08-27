@@ -72,6 +72,12 @@ mvn -q exec:java -Dexec.mainClass=org.cqels.examples.cdsp.SuddenSwerveDetector
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.cdsp.WetRoadBraking
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.cdsp.FleetRiskLeaderboard
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.cdsp.LiveEfficiencyTicker
+mvn -q exec:java -Dexec.mainClass=org.cqels.examples.cdsp.CdspDrivingStyle
+
+# S2DM concept layer (org.cqels.examples.cdsp):
+mvn -q exec:java -Dexec.mainClass=org.cqels.examples.cdsp.S2dmConceptCatalog
+mvn -q exec:java -Dexec.mainClass=org.cqels.examples.cdsp.S2dmInstanceZones
+mvn -q exec:java -Dexec.mainClass=org.cqels.examples.cdsp.SkosConceptRollup
 
 # Reasoning showcase (org.cqels.examples.reasoning):
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.reasoning.TaxonomyEntailment
@@ -130,7 +136,37 @@ visible; the ticker instead demonstrates window eviction (the run outlasts the w
 | [`SuddenSwerveDetector`](src/main/java/org/cqels/examples/cdsp/SuddenSwerveDetector.java) | Two-reading temporal self-join in one `[RANGE 3s]` window + `BIND(ABS(…))` delta + compound `FILTER` | Sudden-swerve incident: the steering wheel swings > 90° between two readings while above 50 km/h — a cruise wiggle and a hard swing at parking speed both stay silent. |
 | [`WetRoadBraking`](src/main/java/org/cqels/examples/cdsp/WetRoadBraking.java) | Context-gated self-join: the deceleration pair counts only when a rain triple accompanies the first reading | Hard braking specifically on a wet road: a > 20 km/h drop fires only when it was raining as braking began — the identical drop on a dry road stays silent. |
 | [`FleetRiskLeaderboard`](src/main/java/org/cqels/examples/cdsp/FleetRiskLeaderboard.java) | Windowed `GROUP BY` + `COUNT(*)`/`AVG` over a multi-pattern reading join, compound `OR` `FILTER`, `HAVING` floor | Rolling per-vehicle risk score: speeding / violent-steering violations per 10 s window — the hard-driven EV tops the board, a two-slip vehicle is gated out by `HAVING`, the clean one never groups. |
+| [`CdspDrivingStyle`](src/main/java/org/cqels/examples/cdsp/CdspDrivingStyle.java) | Windowed two-reading self-join + `BIND(ABS(…))` + `GROUP BY`/`AVG` | The COVESA CDSP **aggressive-driving** use case: a steering swing > 210° within 3 s while moving > 10 km/h. CDSP implements the detection as eight RDFox Datalog rules; here it is one continuous query, because the window replaces the temporal bookkeeping the rules hand-roll. Its separate output query assembles *segments*, which this does not reproduce — that needs the pair ordered in time. A parked swing and a gentle correction at speed both stay silent, as does a vehicle that slowed before swerving — including when that case is replayed out of order, because the pair is ordered by `sosa:phenomenonTime` rather than by arrival. |
 | [`LiveEfficiencyTicker`](src/main/java/org/cqels/examples/cdsp/LiveEfficiencyTicker.java) | `[SLIDE 3s STEP 1s]` sliding window + `GROUP BY` over two co-bound metrics on a per-tick reading node | Live per-vehicle efficiency ticker: trailing average battery power vs speed — the hard-driven EV draws ~3× the power of the economical one at only ~2× the speed, the depot-parked EV shows positive (V2G charging) power at 0 km/h, and early ticks demonstrably age out of the window. |
+
+### S2DM concept layer (`org.cqels.examples.cdsp`)
+
+The COVESA [S2DM](https://github.com/COVESA/s2dm) (Simplified Semantic Data Modeling) approach
+lets subject-matter experts model in **GraphQL SDL**; its tooling projects that schema into
+**SKOS** RDF (`s2dm generate skos-skeleton`), where each GraphQL type and field becomes a
+`skos:Concept` with a `skos:prefLabel`, a `skos:definition` and collection membership. Because
+that projection is ordinary RDF, it drops straight into CQELS as static context — so a
+continuous query can be written against *modelled concepts* instead of hard-coded VSS signal
+paths. [`S2dm`](src/main/java/org/cqels/examples/cdsp/S2dm.java) holds the shared vocabulary and
+seeds a catalogue in the shape the exporter emits — the typing, language-tagged labelling and
+collection structure are faithful to it; the concepts themselves are only partly drawn from the
+s2dm repository's own schemas, with a couple added to give the rollup a hierarchy.
+
+| Class | CQELS feature | Scenario |
+|-------|---------------|----------|
+| [`S2dmConceptCatalog`](src/main/java/org/cqels/examples/cdsp/S2dmConceptCatalog.java) | Stream–static join against a SKOS concept graph; `[TRIPLES 1]` over atomic multi-statement elements | Readings are presented with the label and definition the *modeller* wrote: the query joins live telemetry to `skos:prefLabel` / `skos:definition`, so renaming a concept upstream changes every consumer with no query edit. |
+| [`S2dmInstanceZones`](src/main/java/org/cqels/examples/cdsp/S2dmInstanceZones.java) | `FILTER` over instance-tag bindings + `GROUP BY` on a compound (row × side) key | S2DM **instance tags**: one `Door.isOpen` concept tagged with an `InCabinZone` (row × side) replaces VSS's exploded `…Row1.DriverSide.IsOpen` paths — "any door, any zone" binds row/side as data, a rear-passenger-side interlock filters on the tag, and a dashboard counts door-open *events* per vehicle and zone (current state would need the latest reading per zone, which this release cannot express). A third row changes the data, not the query. |
+| [`SkosConceptRollup`](src/main/java/org/cqels/examples/cdsp/SkosConceptRollup.java) | Custom RETE rules (`cqels-reasoning-rete`) over `skos:broader` | Rolling observations up the concept hierarchy: `Seat`/`Door` readings answer a query that asks only about `Cabin`, while `Powertrain` — narrower than `Vehicle` but not than `Cabin` — correctly stays out. SKOS carries no RDFS entailment, so the lift is stated as an explicit rule rather than inherited from `rdfs:subClassOf`. |
+
+> These are written against the **published** `2.0.0-alpha.18` surface. Five engine limitations
+> came up while building them, each filed with a minimal reproducer:
+> [#54](https://github.com/cqels/CQELS4J/issues/54) (static patterns do not eliminate),
+> [#55](https://github.com/cqels/CQELS4J/issues/55) (prefixed names in `FILTER`),
+> [#56](https://github.com/cqels/CQELS4J/issues/56) (property paths),
+> [#57](https://github.com/cqels/CQELS4J/issues/57) (reasoner skips atomic elements) and
+> [#58](https://github.com/cqels/CQELS4J/issues/58) (rules cannot read the background graph).
+> Each demo's Javadoc names the ones it works around rather than hiding them —
+> `SkosConceptRollup` alone hits three, which is why its list is the longest.
 
 ### Query dialects
 | Class | CQELS feature | Scenario |
