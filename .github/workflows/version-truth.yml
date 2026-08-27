@@ -1,15 +1,20 @@
 # The only CI this repository has, and deliberately so.
 #
-# This repo ships documentation about a release published elsewhere. Nothing
-# here compiles, so nothing here fails when a claim goes stale — see the header
-# of scripts/ci/version-truth-gate.sh for the three defects that were sitting in
-# the public landing page before this existed.
+# This repo ships documentation about a release published elsewhere. Its prose can
+# go stale without anything failing, which is the failure mode every job below
+# exists to catch — see the header of scripts/ci/version-truth-gate.sh for the
+# three defects that were sitting in the public landing page before this existed.
+# (The examples DO compile, and capability-truth builds and runs them; but a
+# compiling example proves nothing about whether the prose describing it is true.)
 #
-# Four jobs, split by cost and by what a red means:
+# Five jobs, split by cost and by what a red means:
 #   version-truth   offline, seconds. Red = a claim in this repo is false.
 #   links           ~6 HEAD requests. Red = a channel this repo names is gone.
 #                   Kept separate so a network red is never confused for the
 #                   offline one; exit 3 (inconclusive) is a re-run, not a defect.
+#   capability-truth builds examples/ and asserts the engine behaviour this repo
+#                   documents. Red = a caveat is no longer true (upstream fixed
+#                   it and the prose now lies), or a relied-on feature regressed.
 #   tools-reality   builds the server. Red = the docs describe a surface the
 #                   server does not have. Too slow for every PR.
 #   schedule-health independent of all three. Red = the nightly below is not
@@ -150,6 +155,32 @@ jobs:
       # Exit 3 means "could not reach the network", not "the docs are wrong".
       # It still fails the job — fail-closed — but the log says to re-run.
       - run: scripts/ci/version-truth-gate.sh --online
+
+  # Behaviour truth, as opposed to version truth. This repo documents engine limitations
+  # ("X does not work on 2.0.0-alpha.18, work around it like this") in CQELS-QL_SPEC.md,
+  # CDSP_MAPPING.md and several example Javadocs. Those claims rot in a direction the
+  # version-truth job cannot see: when upstream FIXES one, nothing here breaks -- the
+  # workarounds keep working and the build stays green while the docs quietly start lying.
+  # scripts/ci/capability-probe.sh asserts both directions and names the files to edit.
+  #
+  # Runs on PRs too, unlike tools-reality: a PR is exactly where a new caveat gets written,
+  # and a caveat that was never true should not be merged. It only builds examples/ (seconds),
+  # not the 64 MB shaded server, so it is cheap enough for that.
+  capability-truth:
+    needs: version-truth
+    if: github.event_name != 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-java@3a4f6e1af504cf6a31855fa899c6aa5355ba6c12 # v4.7.0
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+      # Exit 3 means "could not run" (toolchain or mirror unreachable), not "the docs are
+      # wrong" -- same convention as the gate's --online tier. Still fails, log says re-run.
+      - run: scripts/ci/capability-probe.sh
 
   tools-reality:
     needs: version-truth
