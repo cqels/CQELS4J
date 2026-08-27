@@ -247,6 +247,17 @@ lookup finds no match, the row is eliminated. This is what lets a static pattern
 > silent and shows up as **over-reporting** in guards. A fully-constant static pattern is evaluated
 > correctly. Until this is fixed, re-check guard conditions in the result listener.
 
+> **A second, independent hazard on the same clause.** When the STREAM side already needs its own
+> cross-element join under the window — most windowed self-joins and aggregates do — the static
+> lookup is served from a forward, subject-rooted view of the background graph rather than the
+> repository directly. A guard reached by a **reverse edge into the join key** falls outside that
+> view: `c:FieldConcepts skos:member ?field`, where `?field` is the join key and appears as the
+> *object*, contributes no assignment on this route and the row is dropped — even once the defect
+> above is fixed, and even though the pattern is satisfiable in the repository. The forward
+> equivalent from the join key (e.g. `?field skos:broader c:FieldConcepts`, if the model provides
+> that direction) works. The single-element lookup shown above is unaffected — this applies only
+> once the stream side's own join already needs more than one window element.
+
 ---
 
 ## 7. Complex Event Processing (CEP)

@@ -51,31 +51,41 @@ It is implemented as eight Datalog rules plus one output query.
 |---|---|---|
 | **2. `CurrentObservation`** | `AGGREGATE … BIND MAX(?pt)` per observed property, to find the most recent reading | **Not reproducible as a query** — see the note below. A window bounds *how old* a reading may be; it does not pick the *latest* one. Handled in the data model instead. |
 | **3. `within3s`** | Pairs observations whose timestamps differ by less than a window size read from an ontology individual (`car:hasWindowSize "PT3S"^^xsd:duration`) | **Not needed as a rule** — becomes the window itself, `[RANGE 3s]`. Window semantics are syntax the planner understands, not data to be interpreted. |
-| **4. `LargeAngleChange`** | Self-join on two angle observations in the window; `ABS(angle1 − angle2) > 210`; ordered by trimmed timestamp; `SKOLEM` mints an individual | Two angle patterns + `FILTER(STR(?f1) < STR(?f2))` + `BIND(ABS(…))` + `FILTER(?angleDiff > 210)`. No individual is minted. Note `<`, not `!=`: `!=` admits both orderings of the pair and double-counts every swing. |
+| **4. `LargeAngleChange`** | Self-join on two angle observations in the window; `ABS(angle1 − angle2) > 210`; ordered by trimmed timestamp; `SKOLEM` mints an individual | Two angle patterns carrying `sosa:phenomenonTime` + `FILTER(?t1 < ?t2)` + `BIND(ABS(…))` + `FILTER(?angleDiff > 210)`. No individual is minted. Ordering by `sosa:phenomenonTime`, not `!=`, both de-duplicates the pair (`!=` admits both orderings and double-counts every swing) and puts `?f2` in the position of the later frame — see §2.2. |
 | **5. `HighSpeedObservation`** | Current speed reading with `speed > 10`; `SKOLEM` mints an individual | One speed pattern + `FILTER(?speed > 10)`. |
 | **6. `FixPoint`** | Correlates a latitude and a longitude observation by equal trimmed timestamp | Push lat+long as **one atomic element** (`DataStream.push(List<Statement>)`), and the correlation is structural — no timestamp-equality join at all. Same technique as `CorrelatedFaultCascade`. |
 | **7. `AggressiveDriving`** | Joins rules 4 and 5 on equal trimmed timestamp | Co-occurrence in one window is a *weaker* join: it accepts any speed reading still in the window. Restored by frame co-location — see the note below. |
-| **8. `Segment`** | Assembles start/end fix points, times, angle diff, window size; mints a segment IRI via `BIND(IRI(CONCAT(…)))` | Only partly. `GROUP BY` aggregates over the window and `BIND(IRI(CONCAT(…)))` does mint an IRI (verified) — but the start/end fix points and their timestamps need the pair *ordered in time*, which this release cannot do. See §2.2. |
+| **8. `Segment`** | Assembles start/end fix points, times, angle diff, window size; mints a segment IRI via `BIND(IRI(CONCAT(…)))` | Only partly. `GROUP BY` aggregates over the window and `BIND(IRI(CONCAT(…)))` does mint an IRI (verified), and the pair can now be ordered in time (`FILTER(?t1 < ?t2)` on `sosa:phenomenonTime`) — but `CdspDrivingStyle` does not project the start/end fix points and their timestamps a full segment needs. See §2.2. |
 | **9. `avgAngleChange`** | `AGGREGATE … BIND AVG(?angle_diff)` per segment | `(AVG(?angleDiff) AS ?avgAngleChange)` with `GROUP BY`. |
 
-> **Two things a window does not give you, found in review.**
+> **Two things found in review — one still true, one since fixed.**
 >
 > **Rule 2 is not redundant.** A window says "no older than N seconds"; rule 2 says "the most
 > recent". Those differ exactly when a signal changes inside the window — a vehicle at 64 km/h that
 > slows to 4 and *then* swerves still has the 64 reading in scope, and a naive translation alerts on
-> it. CQELS-QL cannot express "the latest value of X" on `2.0.0-alpha.18`: there is no event-time
-> comparison (`xsd:dateTime` arithmetic is not evaluated — see §4) and no argmax. A second stream
-> with its own `[TRIPLES 1]` window would say it, but multi-source joins with count windows are
-> rejected: *"not yet supported … tracked as a follow-up to issue #185"*.
+> it. CQELS-QL cannot express "the latest value of X" on `2.0.0-alpha.18` as a single aggregate:
+> `MAX(?pt)` finds the latest timestamp, but there is no argmax to join it back to that reading's
+> other properties, and no `xsd:dateTime` subtraction to compute a gap either (see §4). Relational
+> comparison (`<`, `>`) between two `xsd:dateTime` values **is** evaluated — see `FILTER(?t1 < ?t2)`
+> in §3 — but that orders a pair already joined; it does not pick "the latest" out of an open-ended
+> window. A second stream with its own `[TRIPLES 1]` window would say it, but multi-source joins
+> with count windows are rejected: *"not yet supported — use a `[RANGE ...]` window or an explicit
+> `operators.temporalJoin` hint with explicit lower/upper bounds"*.
 >
 > The fix is in the **data model**, not the query. A telemetry *frame* carries angle and speed in one
 > atomic element, as a vehicle actually samples them, so the speed guard reads the speed at the
 > moment of the swing. `CdspDrivingStyle` scenario 4 is that case, and it stays silent.
 >
-> **Rule 4's ordering is only partly reproduced.** `STR(?f1) < STR(?f2)` de-duplicates the
-> unordered pair; it does not order the two readings in time. That is fine for the symmetric `ABS`
-> difference, and not fine for anything that labels a segment's *start* and *end* — which is exactly
-> what §2.2 needs.
+> **Rule 4's ordering is now fully reproduced.** An earlier version of this mapping and of
+> `CdspDrivingStyle` ordered the pair with `STR(?f1) < STR(?f2)` — minted-identifier order, i.e.
+> arrival order — which de-duplicates the unordered pair but does not order the two readings in
+> time; replayed or buffered out of order, it reads the pair backwards and reproduces the
+> stale-speed alert (verified by pushing the later frame first — scenario 5 in §3). The fix is to
+> order by `sosa:phenomenonTime` instead, `FILTER(?t1 < ?t2)`, which both de-duplicates and makes
+> `?f2` the later frame whichever one arrives first. Relational comparison on `xsd:dateTime` **is**
+> evaluated on this release; it is *subtraction* of two of them, yielding a duration, that is not
+> (§4) — conflating the two is what previously led this document to claim event-time ordering was
+> impossible here. It is not: see §2.2.
 
 ### 2.2 The output query
 
@@ -98,36 +108,42 @@ readings' own `sosa:phenomenonTime`; a CQELS window is measured on the time an e
 stream. For a live feed those track each other and the subsumption is sound. For a **replay** — or
 any ingestion that batches, buffers or back-fills — they come apart: readings hours apart in
 phenomenon time can arrive inside one 3-second window and be paired, which CDSP's filter would have
-excluded. `Fleet.pushFrame` drops CDSP's timestamps and lets the engine stamp arrival, so it is a
-live-feed helper.
+excluded. `Fleet.pushFrame` stamps `sosa:phenomenonTime` with the push-time `Instant.now()` rather
+than a caller-supplied event time, so it is still a live-feed helper — `Fleet.pushFrameAt` is the
+one to use for a replay, since it takes an explicit `phenomenonTime`.
 
-Carrying `phenomenonTime` through on `push(…)` — which CQELS does accept — is **necessary but not
-sufficient**. The query still decides which frame supplies speed with `STR(?f1) < STR(?f2)`, i.e.
-by minted-identifier order, which is arrival order. A replay that preserves timestamps but delivers
-frames out of order reads the pair backwards and reproduces the stale-speed alert; verified in
-review by pushing the later frame first. Ordering the pair by event time is what this release
-cannot express at all, so an out-of-order replay has to restore arrival order or do the pairing
-outside the query. The detection as mapped here is scoped to an **in-order feed**. This matters beyond
-tidiness: as a `FILTER` it can only be applied *after* materialising every candidate segment,
-whereas as a window it bounds the state the engine keeps in the first place.
+Carrying `phenomenonTime` through on `push(…)` — which CQELS does accept — turns out to be
+**necessary and sufficient** for ordering, once the query is written to use it. An earlier version
+of this mapping and of `CdspDrivingStyle` decided which frame supplies speed with
+`STR(?f1) < STR(?f2)` — minted-identifier order, i.e. arrival order — and a replay that preserves
+timestamps but delivers frames out of order read the pair backwards and reproduced the stale-speed
+alert; verified in review by pushing the later frame first. Ordering the pair on
+`sosa:phenomenonTime` instead, `FILTER(?t1 < ?t2)`, fixes it: `?f2` is the later frame by event
+time whichever one arrives first, so an out-of-order replay stays silent — `CdspDrivingStyle`
+scenario 5 (§3), the same reversed-push case, verified. Relational comparison on `xsd:dateTime`
+**is** evaluated on this release; only *subtraction* of two of them, yielding a duration, is not
+(§4) — conflating the two is what previously led this document to scope the detection to an
+**in-order feed**. It is not so scoped.
 
 The `REPLACE(REPLACE(?s, "^.*#", ""), "[^a-zA-Z0-9]", "")` segment-id cleanup is presentation, and
 `REPLACE` is not supported (see §4) — do it in the result listener.
 
 **What this mapping does not reproduce.** The output query projects a *segment*: an id, a start and
 end fix point with their coordinates, and start and end timestamps. The continuous query in §3
-projects per-vehicle aggregates over a window instead. Getting from one to the other needs the
-start/end **ordering** of the angle pair, and the fix points correlated to those two instants — both
-resting on the event-time comparison this release does not have. So the honest summary is: the
-*detection* collapses to one query; the *segment assembly* does not, and would need either the
-missing time comparison or a post-processing step in the listener holding the two frames.
+projects per-vehicle aggregates over a window instead. The pair ordering that stage needs is no
+longer missing — `FILTER(?t1 < ?t2)` orders it by event time, above — but `CdspDrivingStyle`'s
+frames carry only angle and speed, not location (`Vehicle.CurrentLocation.Latitude`/`.Longitude`,
+§2 above), so there is nothing to correlate into a fix point yet. So the honest summary is: the
+*detection* collapses to one query; the *segment assembly* is not attempted here, and would need
+frames extended with the location signals (rule 6, §2.1) plus a projection or listener step to
+assemble the segment from the now-orderable pair.
 
 ---
 
 ## 3. The result: one query
 
 The eight rules' **detection** collapses into a single registration — not the output query's
-segment assembly, which §2.2 explains this cannot reproduce. That detection is
+segment assembly, which §2.2 explains this does not attempt. That detection is
 [`CdspDrivingStyle`](examples/src/main/java/org/cqels/examples/cdsp/CdspDrivingStyle.java),
 which runs today:
 
@@ -140,23 +156,34 @@ FROM STREAM Telemetry [RANGE 3s]
 WHERE {
   STREAM Telemetry {
     ?f1 sosa:hasFeatureOfInterest ?vehicle .
+    ?f1 sosa:phenomenonTime ?t1 .
     ?f1 vss:Chassis.SteeringWheel.Angle ?angle1 .
     ?f2 sosa:hasFeatureOfInterest ?vehicle .
+    ?f2 sosa:phenomenonTime ?t2 .
     ?f2 vss:Chassis.SteeringWheel.Angle ?angle2 .
     ?f2 vss:Speed ?speed .
   }
-  FILTER(STR(?f1) < STR(?f2))
+  # Order by EVENT time, not arrival. This both de-duplicates the pair (with
+  # '!=' each swing matches twice, once per ordering) and makes ?f2 genuinely
+  # the later frame -- so ?f2's speed is the speed AT the swing however the
+  # frames arrived. Relational comparison on xsd:dateTime IS evaluated on this
+  # release; it is subtraction of two of them that is not.
+  FILTER(?t1 < ?t2)
   BIND(ABS(?angle1 - ?angle2) AS ?angleDiff)
   FILTER(?angleDiff > 210)
+  # ?speed comes from ?f2, the SAME frame as the second angle reading, so it is
+  # the speed AT the swing -- not any speed still sitting in the window.
   FILTER(?speed > 10)
 }
 GROUP BY ?vehicle
 ```
 
 `?f1` and `?f2` are telemetry **frames**, each carrying angle and speed together, which is what
-makes `?speed` the speed *at* the swing rather than any speed still in the window.
+makes `?speed` the speed *at* the swing rather than any speed still in the window; `?t1` and `?t2`
+are each frame's `sosa:phenomenonTime`, which is what makes `?f2` the *later* frame by event time
+rather than by arrival.
 
-Observed output, including both discriminating negatives:
+Observed output, including all four discriminating negatives:
 
 ```
 Scenario 1 — EV-7Q2 swings 20 -> 250 deg at 64 km/h (should fire):
@@ -170,9 +197,15 @@ Scenario 3 — EV-9TZ swings 30 -> 55 deg at 80 km/h (should stay quiet):
 
 Scenario 4 — EV-7Q2 was at 64, SLOWED to 4, then swings 20 -> 250 (should stay quiet):
   (no alert: the swing happened at 4 km/h, though 64 is still in the window)
+
+Scenario 5 — the same case REPLAYED out of order, later frame pushed first (should stay quiet):
+  (no alert: ?f2 is the 00:00:09 frame by event time, so the guard reads 4 km/h — not the 64 that
+  arrived later)
 ```
 
-`swings=1`, not 2: `<` admits each unordered pair once. Scenario 4 is the stale-speed case.
+`swings=1`, not 2: `?t1 < ?t2` admits each unordered pair once. Scenario 4 is the stale-speed case;
+scenario 5 is the same case replayed with the later frame arriving first — ordering by
+`sosa:phenomenonTime` rather than arrival keeps it silent too.
 
 The intermediate individuals RDFox mints — `LargeAngleChange`, `HighSpeedObservation`,
 `AggressiveDriving`, `FixPoint` — exist to carry state from one Datalog rule to the next. A
