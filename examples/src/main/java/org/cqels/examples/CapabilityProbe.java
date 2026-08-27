@@ -198,8 +198,12 @@ public class CapabilityProbe {
                 String msg = String.valueOf(e.getMessage()).toLowerCase();
                 // Only a PATH-specific rejection counts; an unrelated failure must not read as a fix.
                 // A future engine rejecting paths with some other wording reads as "still open",
-                // which fails safe: it can never report green when it should not.
-                return msg.contains("path") || msg.contains("'+'") || msg.contains("extraneous");
+                // which fails safe: it can never report green when it should not. "syntax" is the
+                // one word CqelsQueryParser's own parse-error wrapper guarantees (asserted by its
+                // own test suite), so it survives an ANTLR message-wording change that would drop
+                // "extraneous" or "'+'".
+                return msg.contains("path") || msg.contains("'+'") || msg.contains("extraneous")
+                        || msg.contains("syntax");
             }
             engine.start();
             stream.pushTriple(C + "leaf", C + "broader", C + "mid");
