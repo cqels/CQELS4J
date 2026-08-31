@@ -1,6 +1,6 @@
 # CQELS-QL Language Specification
 
-**Applies to:** CQELS `2.0.0-alpha.18` · **Based on:** SPARQL 1.1, extended with RSP-QL / C-SPARQL / LARS streaming constructs.
+**Applies to:** CQELS `2.0.0-alpha.20` · **Based on:** SPARQL 1.1, extended with RSP-QL / C-SPARQL / LARS streaming constructs.
 
 CQELS-QL (*Continuous Query Evaluation over Linked Streams — Query Language*) is **SPARQL 1.1 plus
 streaming**. If you know SPARQL, you already know most of it: `SELECT`, `FILTER`, `BIND`, `OPTIONAL`,
@@ -239,24 +239,27 @@ next matching element.
 **Elimination semantics.** A static pattern is a *required* join, exactly as in SPARQL 1.1: if the
 lookup finds no match, the row is eliminated. This is what lets a static pattern act as a **guard** —
 "only vehicles in this fleet", "only signals the model declares" — and not merely as enrichment.
+**As of `2.0.0-alpha.20` the engine enforces this**: a static pattern that fails to match eliminates
+the row rather than leaving it unbound (`OPTIONAL`-like). A fully-constant static pattern was, and
+still is, evaluated correctly either way.
 
-> **Known defect on `2.0.0-alpha.18`:** the engine does not currently enforce this. A static pattern
-> that fails to match is dropped instead of eliminating the row, so the row survives with the
-> pattern's variables unbound — `OPTIONAL` semantics where an inner join is required. Enrichment
-> (a pattern that *does* match) binds correctly, so the common case looks right; the failure is
-> silent and shows up as **over-reporting** in guards. A fully-constant static pattern is evaluated
-> correctly. Until this is fixed, re-check guard conditions in the result listener.
-
-> **A second, independent hazard on the same clause.** When the STREAM side already needs its own
-> cross-element join under the window — most windowed self-joins and aggregates do — the static
-> lookup is served from a forward, subject-rooted view of the background graph rather than the
-> repository directly. A guard reached by a **reverse edge into the join key** falls outside that
-> view: `c:FieldConcepts skos:member ?field`, where `?field` is the join key and appears as the
-> *object*, contributes no assignment on this route and the row is dropped — even once the defect
-> above is fixed, and even though the pattern is satisfiable in the repository. The forward
-> equivalent from the join key (e.g. `?field skos:broader c:FieldConcepts`, if the model provides
-> that direction) works. The single-element lookup shown above is unaffected — this applies only
-> once the stream side's own join already needs more than one window element.
+> **A hazard that survives the fix above.** Whenever the `STREAM` block itself declares **more
+> than one** triple pattern — not only for a windowed self-join or aggregate spanning several
+> window elements, but equally for a single atomic multi-statement push matched by two patterns
+> sharing one subject — the query routes through the composed windowed lookup, and on that route
+> the static side is served from a forward, subject-rooted view of the background graph, built
+> from the join key's bound value, rather than the repository directly. A guard reached by a
+> **reverse edge into the join key** falls outside that view: `c:FieldConcepts skos:member ?field`,
+> where `?field` is the join key and appears as the *object*, contributes no assignment on this
+> route for **every** value of `?field` — so the row is dropped unconditionally, even though the
+> pattern is satisfiable in the repository and even with elimination now correctly enforced above.
+> The forward equivalent from the join key — e.g. `?field a s2dm:Field`, the fix actually applied
+> in the [`S2dmConceptCatalog`](examples/src/main/java/org/cqels/examples/cdsp/S2dmConceptCatalog.java)
+> demo, or `?field skos:broader c:FieldConcepts` if the model provides that direction — works,
+> because it is an outgoing edge from the view's own root. Only a `STREAM` block with exactly
+> **one** triple pattern takes the simpler per-element lookup, which does fall back to the
+> repository directly and is unaffected by this hazard — the single-element lookup shown above is
+> that shape, and the trigger is the pattern count, not the window size or element count.
 
 ---
 
@@ -350,17 +353,16 @@ are called out.
   *Note:* aggregates are computed **per group — an explicit `GROUP BY` is required**; without it the engine
   emits the raw bindings rather than an aggregate.
 - **`FILTER(expr)`** — operators `= != < > <= >= && || !` `+ - * /`, plus built-ins; full SPARQL
-  effective-boolean-value semantics. Verified working on `2.0.0-alpha.18`: `BOUND`, `IF`, `STR`,
-  `CONCAT`, `ABS`, `SUBSTR`, `IRI`, `year(...)`.
+  effective-boolean-value semantics. Verified working on `2.0.0-alpha.20`: `BOUND`, `IF`, `STR`,
+  `CONCAT`, `ABS`, `SUBSTR`, `IRI`, `year(...)`, `sameTerm`, and a prefixed name used as a constant
+  (resolved against the query's own `PREFIX` declarations, the same as in a triple pattern).
   **Not every SPARQL 1.1 built-in is evaluated**, and an unevaluated one fails the same silent way an
   unregistered function IRI does — no registration error, `FILTER` simply never matches and `BIND`
-  leaves the variable unbound. Known gaps on `2.0.0-alpha.18`:
+  leaves the variable unbound. Known gaps on `2.0.0-alpha.20`:
 
   | Construct | SPARQL 1.1 | Status | Use instead |
   |-----------|-----------|--------|-------------|
   | `REPLACE(str, pattern, repl)` | §17.4.3.14 | **not evaluated** | post-process in the result listener |
-  | `sameTerm(a, b)` | §17.4.1.1 | **not evaluated** | `?a = <full-iri>`; or `STR(?a) = STR(?b)` **only when both are known to be IRIs** — `STR` erases the distinction between an IRI and a string literal with the same lexical form, and between a plain and a language-tagged literal, so it is strictly weaker than `sameTerm` |
-  | *prefixed name as a constant inside `FILTER`* | §4.1.1 | **not resolved** — the same prefix works in triple patterns | write the full IRI in angle brackets |
   | `xsd:dateTime` subtraction / `xsd:duration` comparison | XPath-derived, outside the SPARQL 1.1 operator table | not evaluated | express the interval as a **window** ([§3](#3-windows)) |
 
   The last row is not a conformance gap — SPARQL 1.1 does not define `-` over two `xsd:dateTime`
@@ -380,23 +382,37 @@ are called out.
   SPARQL type error**: `FILTER` drops the row, `BIND` leaves the variable unbound.
 - **`OPTIONAL { … }`** — left outer join (unmatched optional variables are unbound).
 - **`{ … } UNION { … }`** — alternative patterns merged before `FILTER`.
-- **Property paths (`/`, `^`, `+`, `*`, `?`, `|`)** — **not supported, and not currently rejected.**
-  On `2.0.0-alpha.18` a path such as `?a skos:broader+ ?b` prints a parser error to stderr
-  (`extraneous input '+'`) yet **registration still succeeds**, after which the engine evaluates a
-  *different* pattern from the one written and can return rows that look plausible. This is the one
-  unsupported construct that does not fail loud, so treat a path in a query as a defect until the
-  engine rejects it. Write the hops explicitly (`?a skos:broader ?mid . ?mid skos:broader ?b .`) for a
-  fixed depth, or use a recursive rule (see the
-  [`BoundedTransitiveClosure`](examples/) example) for unbounded closure.
+- **Property paths (`/`, `^`, `+`, `*`, `?`, `|`)** — **not supported, and (since `2.0.0-alpha.20`)
+  cleanly rejected.** A path such as `?a skos:broader+ ?b` fails registration with a parse error
+  naming the construct. Before `2.0.0-alpha.20` the same query printed a parser error to stderr
+  (`extraneous input '+'`) yet **registration still succeeded**, after which the engine evaluated a
+  *different* pattern from the one written and could return rows that looked plausible — the one
+  unsupported construct that did not fail loud. That silent-registration failure is gone; property
+  paths themselves are still not executable. Write the hops explicitly
+  (`?a skos:broader ?mid . ?mid skos:broader ?b .`) for a fixed depth, or use a recursive rule (see
+  the [`BoundedTransitiveClosure`](examples/) example) for unbounded closure.
 - **`FILTER NOT EXISTS { … }`** — anti-join (exclude rows with a match). (`MINUS` is not yet executed;
   since `2.0.0-alpha.13` registering a query containing `MINUS` **fails loud** with a hint to rewrite it
   as `FILTER NOT EXISTS` — earlier alphas parsed it but silently skipped it.)
 - **`GROUP BY ?a, ?b`** · **`HAVING(expr)`** — aggregation (required for aggregates to apply) +
   post-aggregation filter; `HAVING` references the **SELECT aliases** (e.g. `HAVING(?cnt > 1)`, not
   `HAVING(COUNT(*) > 1)`).
-- **`ORDER BY ?v [ASC|DESC]`** (default `ASC`) · **`LIMIT n`** — note that over a *streaming windowed
-  aggregate* the engine currently emits per-group rows as they update rather than a single ranked,
-  truncated result set.
+- **`ORDER BY ?v [ASC|DESC]`** (default `ASC`) · **`LIMIT n`** — on a continuous query, semantics
+  are decided by the **execution route**, not by whether the query text declares a window: a
+  declared window alone does not make a query "windowed" in the sense that matters here.
+  - A route with a real evaluation boundary — a window close, or each element's batch on a
+    windowed hash join — applies `ORDER BY` / `LIMIT` **inside each evaluation batch**, in
+    solution-modifier order (aggregation → `HAVING` → `ORDER BY` → `LIMIT`).
+  - A **legacy-windowed, single-pattern, non-aggregate** `SELECT` combining `ORDER BY` with
+    `LIMIT` has no such boundary and is **rejected at registration** rather than ranked per window.
+  - A **windowed stream–static, non-aggregate** query whose stream side needs the windowed join
+    falls through instead to a **continuous top-`k`**: the current top-`k` is re-emitted whenever
+    it changes, and that top-`k` accumulates *across* windows rather than resetting each one.
+  - A bare `ORDER BY` or a bare `LIMIT` (not paired with the other) over a route with no
+    evaluation boundary is rejected at registration — sorting or truncating an unbounded stream
+    is not well-defined without one.
+  - `[NOW]` combined with a **global** (no `GROUP BY`) aggregate is **rejected at registration**
+    as of `2.0.0-alpha.20`; earlier alphas silently leaked the raw argument binding instead.
 
 **Evaluation order:** stream patterns → static lookup join → `UNION` → `OPTIONAL` →
 `FILTER NOT EXISTS` → `FILTER` → `BIND` → `GROUP BY` + aggregates → `HAVING` → `ORDER BY` → `LIMIT`.

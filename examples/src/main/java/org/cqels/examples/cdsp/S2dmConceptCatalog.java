@@ -28,9 +28,10 @@ import org.cqels.examples.Fleet;
  * modeller renames a label or refines a definition, the next {@code skos-skeleton} run changes the
  * static graph and every consumer follows — no query is edited.
  *
- * <p>The demo also shows the reverse direction: the last query filters by collection membership
- * ({@code FieldConcepts}), which is how you ask "show me everything the model classifies as a
- * field" without enumerating the fields.
+ * <p>The demo also shows the reverse direction: the last query filters on the field concept's own
+ * {@code s2dm:Field} type, which is how you ask "show me everything the model classifies as a
+ * field" without enumerating the fields — see the note on that query for why it guards on the
+ * type rather than on {@code FieldConcepts} collection membership.
  *
  * <p>CQELS-QL features shown: stream–static join and multi-pattern stream matching, under a
  * {@code [TRIPLES 1]} window. Note that {@code [TRIPLES N]} counts stream <em>elements</em>, not
@@ -79,12 +80,18 @@ public class S2dmConceptCatalog {
             // concepts are classified as FIELDS and reports only those readings. Add a field to
             // the GraphQL schema, regenerate, and it appears here with no query change.
             //
-            // CAVEAT on 2.0.0-alpha.18: the membership line below does NOT currently filter.
-            // A static pattern that fails to match is dropped instead of eliminating the row, so
-            // an ObjectConcept reading also reaches this listener. The prefLabel join on the next
-            // line does bind correctly. Verified against a negative case; see issue #54.
-            // The query is written the way it SHOULD
-            // work -- when the engine is fixed this demo starts discriminating with no edit.
+            // Guard is `?field a s2dm:Field` -- a FORWARD edge from the join key -- not
+            // `c:FieldConcepts skos:member ?field`, a REVERSE edge INTO it. S2dm#concept asserts
+            // both facts for every concept, so either would express "is a field", but they are
+            // not interchangeable on this route. This STREAM block has two patterns (?field and
+            // ?value both come off ?obs), and CQELS-QL_SPEC.md §6 documents that a STREAM block
+            // with more than one pattern always dispatches through the composed windowed lookup --
+            // that is the dispatch rule, not the window size or element count. On that route the
+            // static side is a forward, subject-rooted view built from the join key's bound value,
+            // with no repository fallback, so a pattern needs ?field in SUBJECT position to find
+            // anything there. The reverse form matched nothing FOR ANY ?field on that view, so it
+            // did not merely fail to discriminate -- it eliminated every row, field or not. The
+            // forward form is the same fact, walked the other way, and resolves.
             String byMembership = S2dm.PREFIXES + """
                     REGISTER QUERY AnyModelledField AS
                     SELECT ?label ?value
@@ -94,7 +101,7 @@ public class S2dmConceptCatalog {
                         ?obs c:ofConcept ?field .
                         ?obs sosa:hasSimpleResult ?value .
                       }
-                      c:FieldConcepts skos:member ?field .
+                      ?field a s2dm:Field .
                       ?field skos:prefLabel ?label .
                     }
                     """;
@@ -119,13 +126,9 @@ public class S2dmConceptCatalog {
             S2dm.pushConceptSignal(telemetry, Fleet.EV3, S2dm.F_DOOR_OPEN, 1.0);
             Thread.sleep(900);
 
-            // The counter-example. c:Seat is an OBJECT concept: it is a member of ObjectConcepts,
-            // never of FieldConcepts, so the second query's membership guard should exclude it.
-            // On 2.0.0-alpha.18 it does not — the guard is a static pattern, and a static pattern
-            // that fails to match is dropped instead of eliminating the row (issue #54). So the
-            // line below is expected to appear under [FieldConcepts member] even though it is not
-            // one. That is the caveat, demonstrated rather than asserted: when #54 is fixed this
-            // push goes silent and the demo starts discriminating, with no edit here.
+            // The counter-example. c:Seat is an OBJECT concept: it is typed s2dm:ObjectType, never
+            // s2dm:Field, so the second query's type guard should exclude it -- discriminated
+            // rather than merely asserted.
             System.out.println("\npush: EV-7Q2 c:Seat = 1.0   (an OBJECT concept — the"
                     + " [FieldConcepts member] query SHOULD ignore it)");
             S2dm.pushConceptSignal(telemetry, Fleet.EV1, S2dm.C_SEAT, 1.0);
