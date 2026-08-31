@@ -3,7 +3,7 @@
 This document maps the [COVESA Central Data Service Playground](https://github.com/COVESA/cdsp)
 (CDSP) knowledge layer onto CQELS 2.0, rule by rule and query by query. It is written against
 what CDSP **actually runs today**, not a planned configuration, and every capability claim about
-CQELS below was verified by running it on `2.0.0-alpha.18`.
+CQELS below was verified by running it on `2.0.0-alpha.20`.
 
 > **Scope note.** A natural question is how S2DM-on-MongoDB use cases map here. They do not,
 > because they do not exist yet: [S2DM](https://github.com/COVESA/s2dm) has no MongoDB binding —
@@ -63,7 +63,7 @@ It is implemented as eight Datalog rules plus one output query.
 > **Rule 2 is not redundant.** A window says "no older than N seconds"; rule 2 says "the most
 > recent". Those differ exactly when a signal changes inside the window — a vehicle at 64 km/h that
 > slows to 4 and *then* swerves still has the 64 reading in scope, and a naive translation alerts on
-> it. CQELS-QL cannot express "the latest value of X" on `2.0.0-alpha.18` as a single aggregate:
+> it. CQELS-QL cannot express "the latest value of X" on `2.0.0-alpha.20` as a single aggregate:
 > `MAX(?pt)` finds the latest timestamp, but there is no argmax to join it back to that reading's
 > other properties, and no `xsd:dateTime` subtraction to compute a gap either (see §4). Relational
 > comparison (`<`, `>`) between two `xsd:dateTime` values **is** evaluated — see `FILTER(?t1 < ?t2)`
@@ -216,7 +216,7 @@ name them are needed. That is the substance of the reduction, not a syntactic tr
 
 ## 4. Function support, verified
 
-Probed on `2.0.0-alpha.18` by registering one query per function and pushing a value.
+Probed on `2.0.0-alpha.20` by registering one query per function and pushing a value.
 
 | Function | Status | Consequence for this mapping |
 |---|---|---|
@@ -227,11 +227,13 @@ Probed on `2.0.0-alpha.18` by registering one query per function and pushing a v
 | `xsd:duration` comparison | **silently unsupported** — filter never matches | Not needed, as above |
 
 None of these raises at registration, which is what makes them expensive to find: the query goes
-live and simply returns nothing for that expression. That is the same shape as
-[#54](https://github.com/cqels/CQELS4J/issues/54), [#55](https://github.com/cqels/CQELS4J/issues/55)
-and [#57](https://github.com/cqels/CQELS4J/issues/57). [#56](https://github.com/cqels/CQELS4J/issues/56)
-is the exception worth knowing: it *does* print a parser diagnostic to stderr — but registration
-succeeds anyway, so the query still runs and the diagnostic is easy to scroll past.
+live and simply returns nothing for that expression. Earlier alphas had four issues sharing this
+silent shape — [#54](https://github.com/cqels/CQELS4J/issues/54),
+[#55](https://github.com/cqels/CQELS4J/issues/55), [#56](https://github.com/cqels/CQELS4J/issues/56)
+and [#57](https://github.com/cqels/CQELS4J/issues/57) — all four now fixed (`#56`'s fix is a loud
+parse-time rejection rather than execution, so it left this shape entirely rather than joining
+`REPLACE` and `xsd:dateTime` subtraction here). `REPLACE` and `xsd:dateTime` arithmetic are what
+remain in this silent class.
 
 ---
 
@@ -239,16 +241,16 @@ succeeds anyway, so the query still runs and the diagnostic is easy to scroll pa
 
 | Need | Status | Issue |
 |---|---|---|
-| Guard on a static pattern (e.g. restrict to vehicles in a fleet, or to a modelled signal set) | **Broken** — a non-matching static pattern fails to eliminate the row, so guards over-report | [#54](https://github.com/cqels/CQELS4J/issues/54) |
-| Filter on an enumerated IRI using a prefix, e.g. a VSS/S2DM enum value | Works only with full IRIs; prefixed names silently never match | [#55](https://github.com/cqels/CQELS4J/issues/55) |
-| Transitive traversal of a vocabulary hierarchy (`skos:broader+`, `rdfs:subClassOf+`) | Property paths parse-error yet still register and evaluate something else | [#56](https://github.com/cqels/CQELS4J/issues/56) |
-| Rules over atomically pushed multi-statement observations — the natural shape for SOSA, and required by rule 6's fix-point correlation | Reasoner silently skips multi-statement elements | [#57](https://github.com/cqels/CQELS4J/issues/57) |
+| Transitive traversal of a vocabulary hierarchy (`skos:broader+`, `rdfs:subClassOf+`) | Property paths remain unsupported; the engine now rejects them cleanly at registration instead of parse-erroring yet registering anyway | — (`#56` tracked the silent-registration bug, now fixed; see `CQELS-QL_SPEC.md` §9) |
 | Rules matching a background ontology (CDSP loads `.ttl` ontologies alongside its rules) | Reasoner sees stream elements only; ontology must be pushed onto the stream | [#58](https://github.com/cqels/CQELS4J/issues/58) |
 
-The driving-style query above needs **none** of these, which is why it runs today. They bite as
-soon as the port moves past this one use case: #57 and #58 together are what stop CDSP's
-`.dlog` rules from being carried over as rules rather than rewritten as queries, and #54 is
-required before any static guard can be trusted.
+Guards on a static pattern ([#54](https://github.com/cqels/CQELS4J/issues/54)), prefixed-name
+`FILTER` constants ([#55](https://github.com/cqels/CQELS4J/issues/55)), and rules over atomically
+pushed multi-statement observations ([#57](https://github.com/cqels/CQELS4J/issues/57)) — rule 6's
+fix-point correlation needs the last of these — are no longer on this list: all three are fixed.
+`#58` is what remains between CDSP's `.dlog` rules and being carried over as rules rather than
+rewritten as queries: a reasoner still cannot join stream data against the background graph the
+s2dm catalogue would otherwise live in.
 
 Also relevant: CDSP validates with SHACL (`vehicle_shacl.ttl`, `observation_shacl.ttl`), and
 `cqels-shacl` is published, so that stage has a counterpart. There is no published GraphQL surface
@@ -262,7 +264,7 @@ want.
 CDSP already exposes the data CQELS needs, in two places:
 
 - **IoTDB.** CDSP upstreamed IoTDB support into VISSR, and CQELS has two IoTDB storage modules.
-  `cqels-storage-iotdb-tsfile` **is** published at `2.0.0-alpha.18`; `cqels-storage-iotdb-session`
+  `cqels-storage-iotdb-tsfile` **is** published at `2.0.0-alpha.20`; `cqels-storage-iotdb-session`
   is **not** (404 on the release mirror), so that half means building from the engine repository.
 - **VISS over WebSocket.** The information layer speaks VISS; the unpublished `cqels-cdsp` module
   contains a `CdspWebSocketClient` and a `VssToRdfMapper` that already do the JSON→RDF step CDSP's

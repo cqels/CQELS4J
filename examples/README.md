@@ -161,15 +161,18 @@ s2dm repository's own schemas, with a couple added to give the rollup a hierarch
 | [`S2dmInstanceZones`](src/main/java/org/cqels/examples/cdsp/S2dmInstanceZones.java) | `FILTER` over instance-tag bindings + `GROUP BY` on a compound (row × side) key | S2DM **instance tags**: one `Door.isOpen` concept tagged with an `InCabinZone` (row × side) replaces VSS's exploded `…Row1.DriverSide.IsOpen` paths — "any door, any zone" binds row/side as data, a rear-passenger-side interlock filters on the tag, and a dashboard counts door-open *events* per vehicle and zone (current state would need the latest reading per zone, which this release cannot express). A third row changes the data, not the query. |
 | [`SkosConceptRollup`](src/main/java/org/cqels/examples/cdsp/SkosConceptRollup.java) | Custom RETE rules (`cqels-reasoning-rete`) over `skos:broader` | Rolling observations up the concept hierarchy: `Seat`/`Door` readings answer a query that asks only about `Cabin`, while `Powertrain` — narrower than `Vehicle` but not than `Cabin` — correctly stays out. SKOS carries no RDFS entailment, so the lift is stated as an explicit rule rather than inherited from `rdfs:subClassOf`. |
 
-> These are written against the **published** `2.0.0-alpha.18` surface. Five engine limitations
-> came up while building them, each filed with a minimal reproducer:
+> These are written against the **published** `2.0.0-alpha.20` surface. Five engine limitations
+> came up while building an earlier version of these demos, each filed with a minimal reproducer:
 > [#54](https://github.com/cqels/CQELS4J/issues/54) (static patterns do not eliminate),
 > [#55](https://github.com/cqels/CQELS4J/issues/55) (prefixed names in `FILTER`),
-> [#56](https://github.com/cqels/CQELS4J/issues/56) (property paths),
-> [#57](https://github.com/cqels/CQELS4J/issues/57) (reasoner skips atomic elements) and
-> [#58](https://github.com/cqels/CQELS4J/issues/58) (rules cannot read the background graph).
-> Each demo's Javadoc names the ones it works around rather than hiding them —
-> `SkosConceptRollup` alone hits three, which is why its list is the longest.
+> [#56](https://github.com/cqels/CQELS4J/issues/56) (property paths registered despite a parse
+> error), [#57](https://github.com/cqels/CQELS4J/issues/57) (reasoner skips atomic elements) and
+> [#58](https://github.com/cqels/CQELS4J/issues/58) (rules cannot read the background graph). All
+> four bugs are fixed — `#56`'s fix is a loud parse-time rejection, not execution, so property
+> paths themselves remain unsupported even though the issue is closed. Only `#58` is still open as
+> a limitation. Each demo's Javadoc names what it still works around rather than hiding it —
+> `SkosConceptRollup` names two (unsupported property paths and `#58`), which is why its list is
+> the longest.
 
 ### Query dialects
 | Class | CQELS feature | Scenario |
@@ -210,7 +213,7 @@ s2dm repository's own schemas, with a couple added to give the rollup a hierarch
 > ```
 >
 > No demo ships here yet — the reason is scope, not reachability. The block above was compiled and
-> run verbatim against `2.0.0-alpha.18` (inside a `main`, with the obvious imports) and prints
+> run verbatim against `2.0.0-alpha.20` (inside a `main`, with the obvious imports) and prints
 > `convoy(...)` atoms: it registers through the facade and the solver derives. Note the rule shape — a program written over `obs(...)` registers and
 > returns result objects but derives nothing, because the mapper only ever emits `rdf/3`.
 
@@ -247,12 +250,11 @@ Each demo pairs the derivation with a case that must NOT derive, so the semantic
 
 ## Keeping the caveats honest
 
-Several demos document engine behaviour they work around
-(["issue #54"](https://github.com/cqels/CQELS4J/issues/54),
-[#55](https://github.com/cqels/CQELS4J/issues/55),
-[#57](https://github.com/cqels/CQELS4J/issues/57)). Those notes rot in a direction nothing else
-catches: when upstream **fixes** one, the workaround keeps working and the build stays green while
-the prose quietly becomes false.
+A couple of demos document engine behaviour they work around — background-graph reasoning
+([#58](https://github.com/cqels/CQELS4J/issues/58)) and unsupported property paths. Those notes rot
+in a direction nothing else catches: when upstream **fixes** one, the workaround keeps working and
+the build stays green while the prose quietly becomes false — which is exactly what happened to
+four other notes this table used to carry (`#54`, `#55`, `#56`, `#57`), all since fixed.
 
 [`CapabilityProbe`](src/main/java/org/cqels/examples/CapabilityProbe.java) is not a demo — it
 asserts both directions and fails if reality and the documentation have diverged, naming the files

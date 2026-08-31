@@ -35,7 +35,7 @@ individual command fail is not enough; the sequence has to stop.
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION=2.0.0-alpha.18
+VERSION=2.0.0-alpha.20
 BASE=https://raw.githubusercontent.com/cqels/maven/main/releases/supply-chain/$VERSION
 
 # 1. Key from THIS repository — a different origin from the artifacts.
@@ -84,7 +84,7 @@ matters.
 
 ```bash
 # path as it appears in the manifest
-REL=org/cqels/cqels-engine/2.0.0-alpha.18/cqels-engine-2.0.0-alpha.18.jar
+REL=org/cqels/cqels-engine/2.0.0-alpha.20/cqels-engine-2.0.0-alpha.20.jar
 want=$(awk -v p="$REL" '$2 == p {print $1}' SHA256SUMS)
 got=$(shasum -a 256 ~/.m2/repository/$REL | cut -d' ' -f1)
 if [ -n "$want" ] && [ "$want" = "$got" ]; then
@@ -106,7 +106,7 @@ failure flag set inside it would be discarded and the script would always succee
 
 ```bash
 #!/usr/bin/env bash
-VERSION=2.0.0-alpha.18          # the release you are verifying
+VERSION=2.0.0-alpha.20          # the release you are verifying
 cd ~/.m2/repository || exit 1
 rc=0
 checked=0
@@ -163,7 +163,7 @@ Maven repository — it is most of a release's bytes and the repository is size-
 **Since `2.0.0-alpha.16` it is attached to the GitHub release**, which needs no credentials:
 
 ```bash
-VERSION=2.0.0-alpha.18
+VERSION=2.0.0-alpha.20
 curl -fsSLO https://github.com/cqels/CQELS4J/releases/download/v$VERSION/cqels-mcp-$VERSION-shaded.jar
 ```
 
@@ -175,7 +175,7 @@ The shaded jar *is* listed in `SHA256SUMS` — which is why the bulk loop above 
 however you obtained it, verify it against its manifest entry:
 
 ```bash
-VERSION=2.0.0-alpha.18
+VERSION=2.0.0-alpha.20
 REL=org/cqels/cqels-mcp/$VERSION/cqels-mcp-$VERSION-shaded.jar
 want=$(awk -v p="$REL" '$2 == p {print $1}' SHA256SUMS)
 got=$(shasum -a 256 cqels-mcp-$VERSION-shaded.jar | cut -d' ' -f1)

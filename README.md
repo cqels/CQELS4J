@@ -5,7 +5,7 @@ continuous querying and reasoning over high-throughput RDF / graph streams. This
 the next generation of the [CQELS engine prototyped in 2013](https://github.com/cqels/CQELS-1.x),
 rebuilt for edge-to-cloud deployments — code name **COSMO**.
 
-> **Latest release:** [`2.0.0-alpha.18`](https://github.com/cqels/CQELS4J/releases/tag/v2.0.0-alpha.18) · **License:** MIT · **Requires:** JDK 17+
+> **Latest release:** [`2.0.0-alpha.20`](https://github.com/cqels/CQELS4J/releases/tag/v2.0.0-alpha.20) · **License:** MIT · **Requires:** JDK 17+
 >
 > **New here? → [GETTING_STARTED.md](GETTING_STARTED.md)** &nbsp;·&nbsp; **Runnable demos → [examples/](examples/)**
 
@@ -96,7 +96,7 @@ try (CQELSEngine engine = CQELSEngine.builder().withMemoryStore().build()) {
   <dependency>
     <groupId>org.cqels</groupId>
     <artifactId>cqels-engine</artifactId>
-    <version>2.0.0-alpha.18</version>
+    <version>2.0.0-alpha.20</version>
   </dependency>
 </dependencies>
 ```

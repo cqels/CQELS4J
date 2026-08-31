@@ -45,22 +45,26 @@ import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
  * {@code Cabin}, and it correctly stays out of the cabin query — the rollup follows the modelled
  * hierarchy rather than lifting everything everywhere.
  *
- * <p><strong>Known limits on 2.0.0-alpha.18</strong>, each verified here rather than assumed:
+ * <p><strong>Known limits on 2.0.0-alpha.20</strong>, each verified here rather than assumed:
  * <ul>
  *   <li>R2 is registered and {@code enableRecursiveInference(true)} is set, but the two-hop
  *       rollup ({@code Seat -> Cabin -> Vehicle}) does not produce a {@code Vehicle}-level match,
  *       so this demo asserts only the one-hop claim it can actually demonstrate.</li>
  *   <li>The hierarchy must be pushed into the stream: the reasoner reads stream elements only,
  *       never the background graph — even though that is exactly where an s2dm catalogue lives.</li>
- *   <li>Observations must be pushed one statement at a time
- *       ({@link S2dm#pushConceptSignalUnbatched}); multi-statement atomic elements are skipped by
- *       the rule network entirely.</li>
  * </ul>
- * Filed as #57 (multi-statement), #58 (background graph) and #56 (property paths), each with a
- * minimal reproducer. #56 is listed although no query here contains a path expression: the
- * natural way to write this rollup is {@code ?narrow skos:broader+ ?broad} in the query itself,
- * and the reason it is a pair of RETE rules instead is that property paths do not execute. The
- * rules are the workaround for #56.
+ * Filed as #58 (background graph) and #56 (property paths), each with a minimal reproducer. #56
+ * is listed although no query here contains a path expression: the natural way to write this
+ * rollup is {@code ?narrow skos:broader+ ?broad} in the query itself, and the reason it is a pair
+ * of RETE rules instead is that property paths still do not execute — the engine now rejects one
+ * cleanly at registration rather than silently mis-evaluating it, but it remains unsupported. The
+ * rules are the workaround for that.
+ *
+ * <p>Observations are pushed as one atomic multi-statement element
+ * ({@link S2dm#pushConceptSignal}), the same call every other demo uses: the reasoner used to skip
+ * multi-statement elements entirely, which is why an earlier version of this demo pushed one
+ * statement at a time instead — that workaround is gone now that the rule network sees every
+ * statement of an atomic push (issue #57, fixed).
  *
  * <p>This is the streaming counterpart of what a SKOS-aware catalogue browser does offline, and it
  * is the piece that makes an s2dm model useful at query time rather than only at design time: the
@@ -168,11 +172,11 @@ public class SkosConceptRollup {
             Thread.sleep(800);
 
             System.out.println("\npush: EV-7Q2 ofConcept c:Seat  (narrow — no query mentions Seat)");
-            S2dm.pushConceptSignalUnbatched(cabin, Fleet.EV1, S2dm.C_SEAT, 1.0);
+            S2dm.pushConceptSignal(cabin, Fleet.EV1, S2dm.C_SEAT, 1.0);
             Thread.sleep(900);
 
             System.out.println("\npush: EV-3K8 ofConcept c:Door  (narrow)");
-            S2dm.pushConceptSignalUnbatched(cabin, Fleet.EV2, S2dm.C_DOOR, 1.0);
+            S2dm.pushConceptSignal(cabin, Fleet.EV2, S2dm.C_DOOR, 1.0);
             Thread.sleep(900);
 
             // Negative case: Powertrain is narrower than Vehicle but NOT than Cabin, so it must
@@ -180,7 +184,7 @@ public class SkosConceptRollup {
             // rollup follows the modelled hierarchy rather than lifting everything everywhere.
             System.out.println("\npush: EV-9TZ ofConcept c:Powertrain"
                     + "  (broader=Vehicle only -> must NOT appear under Cabin)");
-            S2dm.pushConceptSignalUnbatched(cabin, Fleet.EV3, S2dm.C_POWERTRAIN, 1.0);
+            S2dm.pushConceptSignal(cabin, Fleet.EV3, S2dm.C_POWERTRAIN, 1.0);
             Thread.sleep(1200);
 
             System.out.println("\ncascade rounds cut short by the depth cap: "

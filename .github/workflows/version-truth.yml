@@ -157,7 +157,7 @@ jobs:
       - run: scripts/ci/version-truth-gate.sh --online
 
   # Behaviour truth, as opposed to version truth. This repo documents engine limitations
-  # ("X does not work on 2.0.0-alpha.18, work around it like this") in CQELS-QL_SPEC.md,
+  # ("X does not work on 2.0.0-alpha.20, work around it like this") in CQELS-QL_SPEC.md,
   # CDSP_MAPPING.md and several example Javadocs. Those claims rot in a direction the
   # version-truth job cannot see: when upstream FIXES one, nothing here breaks -- the
   # workarounds keep working and the build stays green while the docs quietly start lying.

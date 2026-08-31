@@ -256,28 +256,6 @@ public final class S2dm {
                 VF.createStatement(obs, VF.createIRI(Fleet.HAS_SIMPLE_RESULT), VF.createLiteral(value))));
     }
 
-    /**
-     * Push the same observation as {@link #pushConceptSignal}, but as <em>separate single-statement
-     * elements</em> rather than one atomic element.
-     *
-     * <p>This exists solely to work around a reasoner limitation on 2.0.0-alpha.18:
-     * {@code ReactiveReteAdapter} processes single-statement stream elements and silently skips
-     * multi-statement (atomic graph push) ones, so an observation pushed atomically never reaches
-     * the rule network. Verified with a two-case probe — see issue #57.
-     *
-     * <p>The cost of the workaround is real: the statements are no longer atomic, so a query
-     * joining them must use a window wide enough to hold the whole group, and concurrent producers
-     * can interleave. {@link #pushConceptSignal} remains the right call everywhere reasoning is
-     * not involved.
-     */
-    public static void pushConceptSignalUnbatched(DataStream stream, String vehicle,
-                                                  String concept, double value) {
-        String obs = Fleet.EX + "s2dm-obs/" + OBS_SEQ.incrementAndGet();
-        stream.pushTriple(obs, OF_CONCEPT, concept);
-        stream.pushTriple(obs, Fleet.HAS_FEATURE_OF_INTEREST, vehicle);
-        stream.push(obs, Fleet.HAS_SIMPLE_RESULT, value);
-    }
-
     /** Short display form for a concept IRI ({@code https://example.org/vss#Door.isOpen} -> {@code Door.isOpen}). */
     public static String shortConcept(String iri) {
         return iri.startsWith(CONCEPT) ? iri.substring(CONCEPT.length()) : iri;

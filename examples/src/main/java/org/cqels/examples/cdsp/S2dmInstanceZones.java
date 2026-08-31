@@ -90,12 +90,12 @@ public class S2dmInstanceZones {
                         ?obs sosa:hasSimpleResult ?open .
                       }
                       FILTER(?open > 0)
-                      # NOTE: full IRIs, not the c: prefix. A prefixed name inside a FILTER
-                      # is not resolved by this engine build (2.0.0-alpha.18) and the filter
-                      # silently never matches — see issue #55. The same
-                      # prefix works fine in the triple patterns above.
-                      FILTER(?row  = <https://example.org/vss#REAR>)
-                      FILTER(?side = <https://example.org/vss#PASSENGER_SIDE>)
+                      # A prefixed name as a FILTER constant, resolved against the query's own
+                      # PREFIX declarations — the same as it always was in the triple patterns
+                      # above. An earlier engine build silently failed to resolve a prefixed name
+                      # in this position (issue #55, fixed); this used to need the full IRI.
+                      FILTER(?row  = c:REAR)
+                      FILTER(?side = c:PASSENGER_SIDE)
                     }
                     """;
             engine.registerCqelsQuery(rearPassenger, row ->

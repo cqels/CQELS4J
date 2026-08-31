@@ -4,7 +4,7 @@ This guide takes you from zero to a running continuous query in a few minutes:
 install the prerequisites, pull the engine anonymously, run the bundled
 examples, then wire CQELS into your own project.
 
-> **Current release:** `2.0.0-alpha.18` — coordinates `org.cqels:cqels-*`, entry point `cqels-engine`.
+> **Current release:** `2.0.0-alpha.20` — coordinates `org.cqels:cqels-*`, entry point `cqels-engine`.
 
 ---
 
@@ -116,7 +116,7 @@ Add the repository and the engine dependency to your `pom.xml`:
   <dependency>
     <groupId>org.cqels</groupId>
     <artifactId>cqels-engine</artifactId>
-    <version>2.0.0-alpha.18</version>
+    <version>2.0.0-alpha.20</version>
   </dependency>
 </dependencies>
 ```
@@ -190,31 +190,24 @@ public class FirstQuery {
 
 CQELS 2.0 is an alpha, and a handful of constructs do not yet behave as SPARQL 1.1 specifies.
 They are grouped here because they share one signature that makes them expensive to discover
-alone: **nothing is rejected at registration.** The query goes live and simply returns wrong rows,
-or none. Only the property-path case prints anything at all — a parser diagnostic on stderr, which
-is easy to miss because registration succeeds anyway and the query then runs. If a query is
-inexplicably quiet, or a guard reports more than it should, check this list before assuming your
-data is at fault.
+alone: **nothing here is rejected at registration.** The query goes live and simply returns wrong
+rows, or none. If a query is inexplicably quiet, check this list before assuming your data is at
+fault.
 
 | What | Symptom | Do this instead |
 |------|---------|-----------------|
-| A static (non-`STREAM`) pattern that finds no match ([#54](https://github.com/cqels/CQELS4J/issues/54)) | The row survives instead of being eliminated, so patterns used as **guards** over-report | Re-check the guard condition in your result listener |
-| A prefixed name inside `FILTER` ([#55](https://github.com/cqels/CQELS4J/issues/55)) | `FILTER(?x = ex:Thing)` never matches, though the same prefix works in triple patterns | Write the full IRI: `FILTER(?x = <http://.../Thing>)` |
-| Property paths — `+`, `*`, `/`, `^` ([#56](https://github.com/cqels/CQELS4J/issues/56)) | A parser error is printed to **stderr**, but registration succeeds anyway and a *different* pattern is evaluated | Write the hops explicitly, or use a recursive rule |
-| `REPLACE()` and `sameTerm()` | The variable is left unbound / the filter never matches | `?a = <full-iri>`; `STR(?a) = STR(?b)` **only if both are IRIs** — `STR` cannot tell an IRI from a string literal with the same text. `REPLACE` moves to the listener |
-| Rules over atomically pushed multi-statement elements ([#57](https://github.com/cqels/CQELS4J/issues/57)) | The reasoner skips them entirely, so no inference fires | Push those statements one at a time |
+| `REPLACE()` | The variable is left unbound | Move the string manipulation to the result listener |
 | Rules matching the background graph ([#58](https://github.com/cqels/CQELS4J/issues/58)) | The reasoner reads stream elements only, so an ontology in the store is invisible to rules | Push the ontology onto the stream at start-up |
 
-The demos in [`examples/`](examples/) are all verified to run against this release, working around
-the rows above where they must.
+Property paths (`+`, `*`, `/`, `^`, `?`, `|`) are also unsupported, but they no longer belong in
+the table above: registration now rejects a query containing one with a clear parse error, instead
+of printing a diagnostic to stderr and running anyway. Write the hops explicitly, or use a
+recursive rule — see `CQELS-QL_SPEC.md` §9.
 
-Two caveats about this table itself, both temporary and both worth knowing while they last.
-`CQELS-QL_SPEC.md` §9 currently still describes the standard SPARQL surface as supported as-is,
-without the `REPLACE` / `sameTerm` exceptions listed here; that is corrected in a separate change,
-and until it lands the two documents disagree about those two functions. And nothing in this
-repository re-checks these rows automatically yet, so if one is fixed upstream the table will
-quietly go out of date. A CI probe that asserts each row — including the two reasoner rows — is in
-review separately; this page will point at it once it lands.
+The demos in [`examples/`](examples/) are all verified to run against this release, working around
+the rows above where they must. This table is kept honest by `scripts/ci/capability-probe.sh` (see
+`RELEASING.md`), which asserts each row automatically — including the property-path rejection and
+the reasoner rows — and fails the moment one of them stops being true.
 
 ---
 
@@ -231,6 +224,6 @@ review separately; this page will point at it once it lands.
   `FILTER NOT EXISTS`; `FROM NAMED WINDOW` parses but is not yet executed in this alpha — see the spec.)
 - **Cypher & CEP:** `engine.registerCypherQuery(...)` for property-graph patterns and
   `engine.registerCepQuery(...)` for event sequences.
-- **Release verification:** [2.0.0-alpha.18](https://raw.githubusercontent.com/cqels/maven/main/releases/supply-chain/2.0.0-alpha.18/VERIFY.md)
+- **Release verification:** [2.0.0-alpha.20](https://raw.githubusercontent.com/cqels/maven/main/releases/supply-chain/2.0.0-alpha.20/VERIFY.md)
 
 Questions or issues? Open one at https://github.com/cqels/CQELS4J/issues.

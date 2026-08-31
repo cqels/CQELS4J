@@ -31,7 +31,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * <p><strong>Why this exists.</strong> `scripts/ci/version-truth-gate.sh` was written because a claim
  * in the prose can go stale without anything failing to compile. Capability claims are the same
  * hazard one category over. The examples, `examples/README.md`, `CQELS-QL_SPEC.md` §6/§9 and
- * `CDSP_MAPPING.md` all carry statements of the form "X does not work on 2.0.0-alpha.18, work around
+ * `CDSP_MAPPING.md` all carry statements of the form "X does not work on 2.0.0-alpha.20, work around
  * it like this". Every one of those becomes <em>false</em> the day the engine is fixed, and nothing
  * would notice: the workarounds keep working, so the build stays green while the documentation
  * quietly starts lying — and readers keep applying workarounds they no longer need.
@@ -75,24 +75,9 @@ public class CapabilityProbe {
         System.out.println("Capability probe — does the engine still behave as this repo documents?\n");
 
         System.out.println("-- caveats (documented as BROKEN; a pass here means the docs are stale) --");
-        caveat("#54 static pattern fails to eliminate a non-matching row",
-                staticPatternEliminates(),
-                "CQELS-QL_SPEC.md §6 'Known defect', S2dmConceptCatalog.java, CDSP_MAPPING.md §5");
-        caveat("#55 prefixed name inside FILTER is not resolved",
-                pnameInFilterResolves(),
-                "CQELS-QL_SPEC.md §9 gap table, S2dmInstanceZones.java, CDSP_MAPPING.md §5");
-        caveat("#56 property path registers despite a parse error",
-                propertyPathRejected(),
-                "CQELS-QL_SPEC.md §9 'Property paths', CDSP_MAPPING.md §5");
         caveat("     REPLACE() is not evaluated",
                 replaceEvaluates(),
                 "CQELS-QL_SPEC.md §9 gap table, CDSP_MAPPING.md §4");
-        caveat("     sameTerm() is not evaluated",
-                sameTermEvaluates(),
-                "CQELS-QL_SPEC.md §9 gap table (no issue of its own; recorded on #55)");
-        caveat("#57 reasoner skips multi-statement (atomic) elements",
-                reasonerSeesAtomicElements(),
-                "S2dm.pushConceptSignalUnbatched, SkosConceptRollup.java, GETTING_STARTED.md table");
         caveat("#58 reasoner cannot match the background graph",
                 reasonerSeesBackgroundGraph(),
                 "SkosConceptRollup.java, CDSP_MAPPING.md §5, GETTING_STARTED.md limitations table");
@@ -101,6 +86,16 @@ public class CapabilityProbe {
                 "examples/README.md note under 'Reasoning & validation'");
 
         System.out.println("\n-- capabilities (documented as WORKING; the examples depend on these) --");
+        capability("#54 static pattern eliminates a non-matching row (fixed)",
+                staticPatternEliminates());
+        capability("#55 prefixed name inside FILTER resolves (fixed)",
+                pnameInFilterResolves());
+        capability("#56 property path is rejected at registration, not silently mis-evaluated (fixed)",
+                propertyPathRejected());
+        capability("#65 sameTerm() evaluates (fixed)",
+                sameTermEvaluates());
+        capability("#57 reasoner sees multi-statement (atomic) elements (fixed)",
+                reasonerSeesAtomicElements());
         capability("stream-static enrichment binds static variables", staticEnrichmentBinds());
         capability("FILTER/BIND builtins: ABS, CONCAT, IRI, SUBSTR, IF", builtinsWork());
         capability("atomic multi-statement element joins in a query", atomicElementJoins());
@@ -144,7 +139,7 @@ public class CapabilityProbe {
 
     // ---- caveat probes -------------------------------------------------------------------
 
-    /** #54: a static pattern with no matching data must eliminate the row. Today it does not. */
+    /** #54 (fixed): a static pattern with no matching data must eliminate the row. */
     private static boolean staticPatternEliminates() throws Exception {
         List<Object> rows = run(engine -> {
             try (RepositoryConnection conn = engine.getRepository().getConnection()) {
@@ -159,7 +154,7 @@ public class CapabilityProbe {
         return rows.isEmpty();   // eliminated == fixed
     }
 
-    /** #55: a prefixed name as a FILTER constant must resolve. Today it does not. */
+    /** #55 (fixed): a prefixed name as a FILTER constant must resolve. */
     private static boolean pnameInFilterResolves() throws Exception {
         List<Object> rows = run(null, """
             PREFIX p: <%s>
@@ -171,16 +166,20 @@ public class CapabilityProbe {
     }
 
     /**
-     * #56: a property path must either be REJECTED at registration or EXECUTED correctly.
+     * #56 (fixed): a property path must either be REJECTED at registration or EXECUTED correctly.
+     * Confirmed fixed via the REJECTED branch — strict parsing now throws at registration; paths
+     * remain unsupported syntax, just no longer silently mis-evaluated.
      *
      * <p>The oracle lives entirely INSIDE the stream block, which matters. An earlier version put
-     * both path patterns in the static graph; #54 makes a non-matching static pattern survive, so
-     * the "bogus target matched nothing" half was contaminated and the check could not have
-     * distinguished a real path fix (codex, round 2). Stream patterns are not affected by #54.
+     * both path patterns in the static graph; #54, also fixed, used to make a non-matching static
+     * pattern survive, so the "bogus target matched nothing" half was contaminated and the check
+     * could not have distinguished a real path fix (codex, round 2). Stream patterns were never
+     * affected by #54.
      *
-     * <p>The hierarchy is {@code leaf -> mid -> root}. With working paths, {@code ?x broader+ root}
-     * binds BOTH {@code leaf} (two hops) and {@code mid} (one). Today the {@code +} is dropped and
-     * only {@code mid} matches, which is precisely the discrimination this needs.
+     * <p>The hierarchy is {@code leaf -> mid -> root}. Had the engine instead started EXECUTING
+     * paths rather than rejecting them, correct semantics would bind BOTH {@code leaf} (two hops)
+     * and {@code mid} (one) for {@code ?x broader+ root} — the old, silently-wrong behavior bound
+     * only {@code mid}. Either outcome is a fix; only the old silent-registration behavior is not.
      */
     private static boolean propertyPathRejected() throws Exception {
         try (CQELSEngine engine = CQELSEngine.builder().id("probe-path").withMemoryStore().build()) {
@@ -257,14 +256,16 @@ public class CapabilityProbe {
     }
 
     /**
-     * #57: the rule network must see statements pushed as ONE atomic multi-statement element, the
-     * same way it sees single-statement pushes.
+     * #57 (fixed): the rule network must see statements pushed as ONE atomic multi-statement
+     * element, the same way it sees single-statement pushes.
      *
      * <p>The previous version of this probe leaned on {@code atomicElementJoins()} — an ordinary
      * query over an atomic element, with no reasoner attached at all. That result is independent of
-     * #57, so an upstream fix would have left {@code S2dm.pushConceptSignalUnbatched} and its
-     * Javadocs stale while this job stayed green (codex, review of #62). This attaches a reasoner
-     * and pushes through it, which is the comparison that actually matters.
+     * #57, so an upstream fix would have left the demos' single-statement workaround (and its
+     * Javadocs) stale while this job stayed green (codex, review of #62). This attaches a reasoner
+     * and pushes through it, which is the comparison that actually matters. Now that #57 is fixed,
+     * {@code SkosConceptRollup} pushes atomically like every other demo — see
+     * {@code S2dm.pushConceptSignal}.
      */
     private static boolean reasonerSeesAtomicElements() throws Exception {
         IRI of = VF.createIRI(C + "of");
@@ -297,7 +298,7 @@ public class CapabilityProbe {
             stream.pushTriple(C + "leaf", C + "broader", C + "mid");   // the hierarchy edge
             Thread.sleep(300);
             // The observation, pushed ATOMICALLY. If the reasoner sees it, the lift rule derives
-            // "<o1> of <mid>" and the query above fires. Today it does not.
+            // "<o1> of <mid>" and the query above fires — which is what #57 being fixed means.
             IRI o1 = VF.createIRI(C + "o1");
             stream.push(List.of(
                     VF.createStatement(o1, of, VF.createIRI(C + "leaf")),
@@ -328,9 +329,9 @@ public class CapabilityProbe {
             // list is filtered on the o1 subject, so the later o2 push cannot contaminate it.
             boolean atomicSeen = !inferred.isEmpty();
             if (!unbatchedSeen) {
-                DIVERGENCES.add("REGRESSED — the #57 workaround itself (single-statement pushes no "
-                        + "longer reach the rule network)\n      S2dm.pushConceptSignalUnbatched is "
-                        + "now broken too; #57's verdict below is not meaningful");
+                DIVERGENCES.add("REGRESSED — single-statement pushes no longer reach the rule "
+                        + "network either\n      (the pre-#57-fix workaround); #57's verdict below "
+                        + "is not meaningful");
             }
             return atomicSeen;
         }
