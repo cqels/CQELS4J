@@ -313,6 +313,20 @@ d=$(newfix)
 printf '\n**Tested before version** — `2.0.0-alpha.13` on JDK 17 and 21.\n' >> "$d/README.md"
 check 1 "...and the em-dash spelling, which needs no colon" "$d"
 
+# Defined HERE, above its first use, and not further down beside the second
+# cluster of calls. It used to sit after them: the three calls below ran while
+# `prov_md` was still undefined, so the shell printed "prov_md: command not
+# found" three times, those three cases never executed, and the harness still
+# reported "201 passed, 0 failed" and exited 0. A self-test that silently skips
+# is the green tick with nothing behind it that this whole gate exists to
+# prevent — and the cases it skipped were the provenance-classification ones,
+# which are exactly what catches a doc claiming a version the repo does not pin.
+prov_md() { # prov_md <name> <line>
+  local d; d=$(newfix)
+  printf '%s\n' "$2" >> "$d/README.md"
+  check 0 "$1" "$d"
+}
+
 # ...and the same word must not poison the OPENER, exactly as "release" must
 # not: these are true history and the walk has to reach the marker through it.
 prov_md "'Before version \`X\`, <old behaviour>' is provenance" \
@@ -328,11 +342,6 @@ prov_md "...and 'since version \`X\`' stays untouched (since never consults the 
 # \"before \`X\`\"") was to delete the word "release" — with no hint that the noun
 # was what broke it (round 3). The repo's own sentence is
 # DriverAttentionWatchdog.java:132, "Before CQELS 2.0.0-alpha.13, …".
-prov_md() { # prov_md <name> <line>
-  local d; d=$(newfix)
-  printf '%s\n' "$2" >> "$d/README.md"
-  check 0 "$1" "$d"
-}
 prov_md "'Before CQELS release \`X\`, <old behaviour>' is provenance" \
   'Before CQELS release `2.0.0-alpha.13`, cross-event FILTER guards on negated steps were ignored.'
 prov_md "'Before release \`X\`, …' — the noun alone must not poison the opener" \
