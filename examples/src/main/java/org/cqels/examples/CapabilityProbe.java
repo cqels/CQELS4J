@@ -75,7 +75,7 @@ public class CapabilityProbe {
         System.out.println("Capability probe — does the engine still behave as this repo documents?\n");
 
         System.out.println("-- caveats (documented as BROKEN; a pass here means the docs are stale) --");
-        caveat("     single-pattern [RANGE] + aggregate emits nothing",
+        caveat("#70 single-pattern [RANGE] + aggregate emits nothing",
                 singlePatternRangeAggregateEmits(),
                 "CQELS-QL_SPEC.md §9 aggregates note, WindowedAggregation.java header");
         caveat("#67 reverse-edge guard eliminates valid rows (2+ patterns)",
@@ -488,7 +488,7 @@ public class CapabilityProbe {
     }
 
     /**
-     * A <strong>single-pattern</strong> {@code STREAM} block over {@code [RANGE]} combined with any
+     * #70: a <strong>single-pattern</strong> {@code STREAM} block over {@code [RANGE]} combined with any
      * aggregate registers cleanly and then emits nothing at all — with or without {@code GROUP BY},
      * however long the window runs. Adding a second pattern to the block, or switching to
      * {@code [TRIPLES n]} / {@code [SLIDE W STEP S]}, aggregates correctly — so it is the
