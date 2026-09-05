@@ -363,7 +363,7 @@ are called out.
   | Shape | Behaviour |
   |-------|-----------|
   | `[NOW]` + global aggregate | **rejected at registration**, with a message naming the windows to use instead (see the `ORDER BY` / `LIMIT` route notes below) |
-  | **single-pattern** `STREAM` block + `[RANGE]` + any aggregate | registers, then **emits nothing at all** — with or without `GROUP BY`, however long the window is left to run |
+  | **single-pattern** `STREAM` block + `[RANGE]` + any aggregate ([#70](https://github.com/cqels/CQELS4J/issues/70)) | registers, then **emits nothing at all** — with or without `GROUP BY`, however long the window is left to run |
 
   The second is specific to that exact combination, and the reason is not established here — only
   the behaviour. Across all four window forms at both pattern counts it is the one silent cell:
