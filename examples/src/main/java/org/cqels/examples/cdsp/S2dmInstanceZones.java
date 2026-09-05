@@ -107,9 +107,13 @@ public class S2dmInstanceZones {
             //        a door open on one vehicle and another on a second would merge into one
             //        count for "REAR/PASSENGER_SIDE", which no depot dashboard wants.
             //      - not current door STATE. A door that opened and closed inside the window
-            //        still contributed an event; deriving state would need the latest reading
-            //        per (vehicle, zone), which this release cannot express (no event-time
-            //        comparison, no argmax). The name says events, so the query is honest.
+            //        still contributed an event; deriving state would need the LATEST reading
+            //        per (vehicle, zone) -- an argmax over event time, which CQELS-QL has no
+            //        form for. Note it is argmax specifically that is missing, not time
+            //        comparison: relational operators on xsd:dateTime ARE evaluated (see
+            //        CdspDrivingStyle, which orders a frame pair with FILTER(?t1 < ?t2)).
+            //        Ordering two bound rows is expressible; selecting the maximum row of an
+            //        unbounded group is not. The name says events, so the query is honest.
             String perZone = S2dm.PREFIXES + """
                     REGISTER QUERY DoorOpenEventsPerZone AS
                     SELECT ?vehicle ?row ?side (COUNT(*) AS ?openEvents)
