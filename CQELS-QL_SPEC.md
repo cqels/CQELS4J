@@ -253,13 +253,17 @@ still is, evaluated correctly either way.
 > where `?field` is the join key and appears as the *object*, contributes no assignment on this
 > route for **every** value of `?field` — so the row is dropped unconditionally, even though the
 > pattern is satisfiable in the repository and even with elimination now correctly enforced above.
-> The forward equivalent from the join key — e.g. `?field a s2dm:Field`, the fix actually applied
-> in the [`S2dmConceptCatalog`](examples/src/main/java/org/cqels/examples/cdsp/S2dmConceptCatalog.java)
-> demo, or `?field skos:broader c:FieldConcepts` if the model provides that direction — works,
-> because it is an outgoing edge from the view's own root. Only a `STREAM` block with exactly
-> **one** triple pattern takes the simpler per-element lookup, which does fall back to the
-> repository directly and is unaffected by this hazard — the single-element lookup shown above is
-> that shape, and the trigger is the pattern count, not the window size or element count.
+> A guard that is an **outgoing** edge from the join key works, because it leaves from the view's
+> own root — e.g. `?field a s2dm:Field`, the fix actually applied in the
+> [`S2dmConceptCatalog`](examples/src/main/java/org/cqels/examples/cdsp/S2dmConceptCatalog.java)
+> demo. Note what that fix relies on: `?field a s2dm:Field` is a **separate triple** the s2dm
+> exporter co-emits alongside the collection edge, not the same edge traversed the other way. It is
+> available as a substitute only because the model asserts both. A model that publishes membership
+> and nothing else offers no forward guard to switch to, and the workaround does not exist. Only a
+> `STREAM` block with exactly **one** triple pattern takes the simpler per-element lookup, which
+> does fall back to the repository directly and is unaffected by this hazard — the single-element
+> lookup shown above is that shape, and the trigger is the pattern count, not the window size or
+> element count.
 
 ---
 
@@ -350,8 +354,26 @@ are called out.
 
 - **`SELECT` / `SELECT DISTINCT`**, projection, and `(expr AS ?v)` expressions.
 - **Aggregates:** `COUNT(*)` / `COUNT(?v)`, `SUM`, `AVG`, `MIN`, `MAX`, `GROUP_CONCAT(?v; SEPARATOR=", ")`.
-  *Note:* aggregates are computed **per group — an explicit `GROUP BY` is required**; without it the engine
-  emits the raw bindings rather than an aggregate.
+  *Note:* `GROUP BY` selects **per-group** results rather than global ones; it is **not** required
+  for an aggregate to apply. Measured on `2.0.0-alpha.20`, a global (no `GROUP BY`) aggregate
+  accumulates correctly over every window that accumulates — `[RANGE]`, `[TRIPLES]`, `[SLIDE]` —
+  re-emitting a running result as elements arrive. Two shapes are exceptions, and both are
+  properties of the **execution route** rather than of `GROUP BY`:
+
+  | Shape | Behaviour |
+  |-------|-----------|
+  | `[NOW]` + global aggregate | **rejected at registration**, with a message naming the windows to use instead (see the `ORDER BY` / `LIMIT` route notes below) |
+  | **single-pattern** `STREAM` block + `[RANGE]` + any aggregate ([#70](https://github.com/cqels/CQELS4J/issues/70)) | registers, then **emits nothing at all** — with or without `GROUP BY`, however long the window is left to run |
+
+  The second is specific to that exact combination, and the reason is not established here — only
+  the behaviour. Across all four window forms at both pattern counts it is the one silent cell:
+  the same query with a second pattern in the `STREAM` block aggregates, and so does the same
+  single-pattern query under `[TRIPLES n]` or `[SLIDE W STEP S]`. So it is neither a `[RANGE]`
+  limitation nor a single-pattern-route limitation on its own — the single-pattern route
+  aggregates perfectly well under the other windows. Every aggregating example here
+  (`WindowedAggregation`, `FleetRiskLeaderboard`, `VehicleSignalsCdsp`) has a multi-pattern block
+  and is unaffected. Note that it fails silently, unlike the `[NOW]` case.
+
 - **`FILTER(expr)`** — operators `= != < > <= >= && || !` `+ - * /`, plus built-ins; full SPARQL
   effective-boolean-value semantics. Verified working on `2.0.0-alpha.20`: `BOUND`, `IF`, `STR`,
   `CONCAT`, `ABS`, `SUBSTR`, `IRI`, `year(...)`, `sameTerm`, and a prefixed name used as a constant
@@ -363,7 +385,7 @@ are called out.
   | Construct | SPARQL 1.1 | Status | Use instead |
   |-----------|-----------|--------|-------------|
   | `REPLACE(str, pattern, repl)` | §17.4.3.14 | **not evaluated** | post-process in the result listener |
-  | `xsd:dateTime` subtraction / `xsd:duration` comparison | XPath-derived, outside the SPARQL 1.1 operator table | not evaluated | express the interval as a **window** ([§3](#3-windows)) |
+  | `xsd:dateTime` subtraction / `xsd:duration` comparison | XPath-derived, outside the SPARQL 1.1 operator table | not evaluated | express the interval as a **window** ([§3](#3-window-specifications)) |
 
   The last row is not a conformance gap — SPARQL 1.1 does not define `-` over two `xsd:dateTime`
   values — but it is worth stating, because porting rule engines that do (RDFox, for one) will reach
@@ -394,9 +416,9 @@ are called out.
 - **`FILTER NOT EXISTS { … }`** — anti-join (exclude rows with a match). (`MINUS` is not yet executed;
   since `2.0.0-alpha.13` registering a query containing `MINUS` **fails loud** with a hint to rewrite it
   as `FILTER NOT EXISTS` — earlier alphas parsed it but silently skipped it.)
-- **`GROUP BY ?a, ?b`** · **`HAVING(expr)`** — aggregation (required for aggregates to apply) +
-  post-aggregation filter; `HAVING` references the **SELECT aliases** (e.g. `HAVING(?cnt > 1)`, not
-  `HAVING(COUNT(*) > 1)`).
+- **`GROUP BY ?a, ?b`** · **`HAVING(expr)`** — per-group aggregation (**not** required for an
+  aggregate to apply — see the aggregates note above) + post-aggregation filter; `HAVING` references
+  the **SELECT aliases** (e.g. `HAVING(?cnt > 1)`, not `HAVING(COUNT(*) > 1)`).
 - **`ORDER BY ?v [ASC|DESC]`** (default `ASC`) · **`LIMIT n`** — on a continuous query, semantics
   are decided by the **execution route**, not by whether the query text declares a window: a
   declared window alone does not make a query "windowed" in the sense that matters here.
