@@ -91,8 +91,11 @@ public class S2dmConceptCatalog {
             // with no repository fallback, so a pattern needs ?field in SUBJECT position to find
             // anything there. The reverse form matched nothing FOR ANY ?field on that view, so it
             // did not merely fail to discriminate -- it eliminated every row, field or not. The
-            // forward form is the same fact, walked the other way, and resolves.
-            String byMembership = S2dm.PREFIXES + """
+            // forward form is a DIFFERENT fact that happens to say the same thing -- `?field a
+            // s2dm:Field` and `c:FieldConcepts skos:member ?field` are two triples the exporter
+            // co-emits, not one edge traversed in either direction -- and it resolves. Where a
+            // model emits only the collection edge, there is no forward form to switch to.
+            String byFieldType = S2dm.PREFIXES + """
                     REGISTER QUERY AnyModelledField AS
                     SELECT ?label ?value
                     FROM STREAM Telemetry [TRIPLES 1]
@@ -105,8 +108,8 @@ public class S2dmConceptCatalog {
                       ?field skos:prefLabel ?label .
                     }
                     """;
-            engine.registerCqelsQuery(byMembership, row ->
-                    System.out.println("    [FieldConcepts member] " + row));
+            engine.registerCqelsQuery(byFieldType, row ->
+                    System.out.println("    [modelled field] " + row));
 
             engine.start();
             System.out.println("""
@@ -130,7 +133,7 @@ public class S2dmConceptCatalog {
             // s2dm:Field, so the second query's type guard should exclude it -- discriminated
             // rather than merely asserted.
             System.out.println("\npush: EV-7Q2 c:Seat = 1.0   (an OBJECT concept — the"
-                    + " [FieldConcepts member] query SHOULD ignore it)");
+                    + " [modelled field] query SHOULD ignore it)");
             S2dm.pushConceptSignal(telemetry, Fleet.EV1, S2dm.C_SEAT, 1.0);
             Thread.sleep(900);
         }
