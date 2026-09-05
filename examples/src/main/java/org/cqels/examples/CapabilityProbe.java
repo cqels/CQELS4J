@@ -75,6 +75,12 @@ public class CapabilityProbe {
         System.out.println("Capability probe — does the engine still behave as this repo documents?\n");
 
         System.out.println("-- caveats (documented as BROKEN; a pass here means the docs are stale) --");
+        caveat("     single-pattern [RANGE] + aggregate emits nothing",
+                singlePatternRangeAggregateEmits(),
+                "CQELS-QL_SPEC.md §9 aggregates note, WindowedAggregation.java header");
+        caveat("#67 reverse-edge guard eliminates valid rows (2+ patterns)",
+                reverseEdgeGuardAdmits(),
+                "CQELS-QL_SPEC.md §6, S2dmConceptCatalog.java guard + counter-example");
         caveat("     REPLACE() is not evaluated",
                 replaceEvaluates(),
                 "CQELS-QL_SPEC.md §9 gap table, CDSP_MAPPING.md §4");
@@ -204,14 +210,31 @@ public class CapabilityProbe {
                 return msg.contains("path") || msg.contains("'+'") || msg.contains("extraneous")
                         || msg.contains("syntax");
             }
+            // Registration SUCCEEDED. On alpha.20 that is already a divergence: §9 says paths are
+            // "not supported, and (since 2.0.0-alpha.20) cleanly rejected", so anything that gets
+            // this far contradicts the documentation and must fail the check.
+            //
+            // Accepting correct execution here would be wrong even though it sounds generous. If
+            // issue #46 lands and paths are genuinely implemented, §9's "not supported" becomes
+            // false — and that is exactly the staleness this probe exists to catch. Treating
+            // execution as success would keep the check green through it (codex, review of #66).
+            // So the run below only distinguishes WHICH way the docs are now wrong, for the
+            // failure message; either way the answer is false.
             engine.start();
             stream.pushTriple(C + "leaf", C + "broader", C + "mid");
             Thread.sleep(200);
             stream.pushTriple(C + "mid", C + "broader", C + "root");
             Thread.sleep(1500);
-            boolean twoHopWorks = toRoot.toString().contains(C + "leaf");
-            boolean bogusClean = toBogus.isEmpty();
-            return twoHopWorks && bogusClean;
+            if (toRoot.toString().contains(C + "leaf") && toBogus.isEmpty()) {
+                DIVERGENCES.add("NOW IMPLEMENTED — property paths execute correctly (two-hop "
+                        + "resolved, bogus target matched nothing)\n      CQELS-QL_SPEC.md §9 still "
+                        + "says 'not supported ... cleanly rejected'; issue #46 can close");
+            } else {
+                DIVERGENCES.add("MIS-EVALUATED — a property path registered but did not execute "
+                        + "correctly\n      neither §9's 'cleanly rejected' nor working support; "
+                        + "re-open the silent-mangling case from #56");
+            }
+            return false;
         }
     }
 
@@ -227,12 +250,37 @@ public class CapabilityProbe {
 
     /** sameTerm (SPARQL 1.1 §17.4.1.1) must evaluate, even over one variable with itself. */
     private static boolean sameTermEvaluates() throws Exception {
-        List<Object> rows = run(null, """
+        // A positive alone is a tautology: FILTER(sameTerm(?x, ?x)) also passes on an engine that
+        // treats an unknown function as "true", or ignores the filter entirely (codex, review of
+        // #66). What this guards is SPARQL *term identity*, so it needs the two distinctions that
+        // separate sameTerm from a loose comparison — a different IRI, and an IRI versus a string
+        // literal with the same lexical form. Both verified against alpha.20 before being asserted.
+        List<Object> same = run(null, """
             SELECT ?x FROM STREAM S [TRIPLES 1]
             WHERE { STREAM S { ?o <%sof> ?x . } FILTER(sameTerm(?x, ?x)) }
             """.formatted(C),
                 s -> s.pushTriple(C + "o1", C + "of", C + "a"));
-        return !rows.isEmpty();
+
+        List<Object> otherIri = run(null, """
+            SELECT ?x FROM STREAM S [TRIPLES 1]
+            WHERE { STREAM S { ?o <%sof> ?x . } FILTER(sameTerm(?x, <%szzz>)) }
+            """.formatted(C, C),
+                s -> s.pushTriple(C + "o1", C + "of", C + "a"));
+
+        // ?x is the IRI <...#a>; ?lit is the plain string "...#a". STR() cannot tell them apart;
+        // sameTerm must.
+        List<Object> iriVsLiteral = run(null, """
+            SELECT ?x FROM STREAM S [TRIPLES 1]
+            WHERE { STREAM S { ?o <%sof> ?x . ?o <%slit> ?lit . } FILTER(sameTerm(?x, ?lit)) }
+            """.formatted(C, C),
+                s -> {
+                    IRI o = VF.createIRI(C + "o1");
+                    s.push(List.of(
+                            VF.createStatement(o, VF.createIRI(C + "of"), VF.createIRI(C + "a")),
+                            VF.createStatement(o, VF.createIRI(C + "lit"), VF.createLiteral(C + "a"))));
+                });
+
+        return !same.isEmpty() && otherIri.isEmpty() && iriVsLiteral.isEmpty();
     }
 
     /**
@@ -299,10 +347,16 @@ public class CapabilityProbe {
             Thread.sleep(300);
             // The observation, pushed ATOMICALLY. If the reasoner sees it, the lift rule derives
             // "<o1> of <mid>" and the query above fires — which is what #57 being fixed means.
+            // The rule-relevant statement is deliberately NOT first. With it in position 1, an
+            // engine that only ever processed an element's opening statement would pass this check
+            // while still skipping the rest (codex, review of #66). Verified on alpha.20 that the
+            // reasoner derives from either position, so asserting the harder one costs nothing and
+            // encodes the evidence.
             IRI o1 = VF.createIRI(C + "o1");
             stream.push(List.of(
-                    VF.createStatement(o1, of, VF.createIRI(C + "leaf")),
-                    VF.createStatement(o1, VF.createIRI(C + "note"), VF.createLiteral("frame"))));
+                    VF.createStatement(o1, VF.createIRI(C + "note"), VF.createLiteral("frame")),
+                    VF.createStatement(o1, VF.createIRI(C + "note2"), VF.createLiteral("filler")),
+                    VF.createStatement(o1, of, VF.createIRI(C + "leaf"))));
             Thread.sleep(1200);
 
             // Positive control. The documented workaround is to push one statement at a time; if
@@ -379,6 +433,104 @@ public class CapabilityProbe {
             stream.pushTriple(C + "o1", C + "of", C + "leaf");   // hierarchy is in the STORE only
             Thread.sleep(1200);
             return !inferred.isEmpty();
+        }
+    }
+
+    /**
+     * #67: a static guard that walks a REVERSE edge into the join key eliminates every row when the
+     * {@code STREAM} block has more than one pattern, even where the guard's own triple is in the
+     * store. The forward-typed equivalent admits correctly, and with a single-pattern block both
+     * forms admit — so this is specific to the composed windowed lookup route.
+     *
+     * <p>Documented in {@code CQELS-QL_SPEC.md} §6 and worked around in {@code S2dmConceptCatalog},
+     * which guards on {@code ?field a s2dm:Field} rather than on collection membership. Note the two
+     * are separate co-emitted facts, not one fact traversed in either direction — a forward
+     * equivalent only exists because {@code S2dm#concept} happens to assert both.
+     *
+     * <p>Returns true when the reverse form ADMITS, i.e. when the caveat has been fixed and both
+     * the spec note and that workaround need removing.
+     */
+    private static boolean reverseEdgeGuardAdmits() throws Exception {
+        try (CQELSEngine engine = CQELSEngine.builder().id("probe-67").withMemoryStore().build()) {
+            try (RepositoryConnection conn = engine.getRepository().getConnection()) {
+                // Both directions asserted, exactly as the s2dm exporter emits them.
+                conn.add(VF.createIRI(C + "a"), VF.createIRI(Fleet.RDF_TYPE), VF.createIRI(C + "Field"));
+                conn.add(VF.createIRI(C + "coll"), VF.createIRI(C + "member"), VF.createIRI(C + "a"));
+            }
+            DataStream stream = engine.createStream("S");
+            List<Object> reverse = new CopyOnWriteArrayList<>();
+            List<Object> forward = new CopyOnWriteArrayList<>();
+            // Two patterns in the STREAM block — the shape that triggers it. Each query projects
+            // exactly what its own BGP binds; getting that wrong is how a shape difference gets
+            // mistaken for a guard difference.
+            String block = "?o <" + C + "of> ?f . ?o <" + C + "v> ?val .";
+            engine.registerCqelsQuery(withRegister("SELECT ?f ?val FROM STREAM S [TRIPLES 1]\n"
+                    + "WHERE { STREAM S { " + block + " } <" + C + "coll> <" + C + "member> ?f . }\n"),
+                    reverse::add);
+            engine.registerCqelsQuery(withRegister("SELECT ?f ?val FROM STREAM S [TRIPLES 1]\n"
+                    + "WHERE { STREAM S { " + block + " } ?f <" + Fleet.RDF_TYPE + "> <" + C + "Field> . }\n"),
+                    forward::add);
+            engine.start();
+            IRI o = VF.createIRI(C + "o1");
+            stream.push(List.of(
+                    VF.createStatement(o, VF.createIRI(C + "of"), VF.createIRI(C + "a")),
+                    VF.createStatement(o, VF.createIRI(C + "v"), VF.createLiteral(1.0))));
+            Thread.sleep(1200);
+            // The forward guard is the control: if IT stops admitting, the asymmetry claim is not
+            // what failed and the verdict below would be meaningless.
+            if (forward.isEmpty()) {
+                DIVERGENCES.add("REGRESSED — the forward-typed guard no longer admits either\\n"
+                        + "      the #67 comparison is meaningless in this run; investigate before "
+                        + "trusting its verdict");
+            }
+            return !reverse.isEmpty();
+        }
+    }
+
+    /**
+     * A <strong>single-pattern</strong> {@code STREAM} block over {@code [RANGE]} combined with any
+     * aggregate registers cleanly and then emits nothing at all — with or without {@code GROUP BY},
+     * however long the window runs. Adding a second pattern to the block, or switching to
+     * {@code [TRIPLES n]} / {@code [SLIDE W STEP S]}, aggregates correctly — so it is the
+     * combination that is broken, not either half. The single-pattern route aggregates fine under
+     * the other windows, and {@code [RANGE]} aggregates fine with a second pattern. Why the pair
+     * fails is not established here; that it does is.
+     *
+     * <p>Documented in {@code CQELS-QL_SPEC.md} §9 (aggregates note) and in
+     * {@code WindowedAggregation}'s header, which is safe only because its block has three patterns.
+     * Unlike the {@code [NOW]} case this fails silently, which is why it is worth a probe.
+     *
+     * <p>Returns true when the single-pattern form starts emitting, i.e. the caveat is fixed.
+     */
+    private static boolean singlePatternRangeAggregateEmits() throws Exception {
+        try (CQELSEngine engine = CQELSEngine.builder().id("probe-range-agg").withMemoryStore().build()) {
+            DataStream stream = engine.createStream("S");
+            List<Object> one = new CopyOnWriteArrayList<>();
+            List<Object> two = new CopyOnWriteArrayList<>();
+            engine.registerCqelsQuery(withRegister(
+                    "SELECT (COUNT(?val) AS ?n) FROM STREAM S [RANGE 10s]\n"
+                    + "WHERE { STREAM S { ?o <" + C + "v> ?val . } }\n"), one::add);
+            // Control: identical but for the second pattern in the block. If THIS stops emitting,
+            // the engine is not aggregating over [RANGE] at all and the verdict below means nothing.
+            engine.registerCqelsQuery(withRegister(
+                    "SELECT (COUNT(?val) AS ?n) FROM STREAM S [RANGE 10s]\n"
+                    + "WHERE { STREAM S { ?o <" + C + "v> ?val . ?o <" + C + "tag> ?tag . } }\n"), two::add);
+            engine.start();
+            for (int i = 1; i <= 3; i++) {
+                stream.push(List.of(
+                        VF.createStatement(VF.createIRI(C + "o" + i), VF.createIRI(C + "v"),
+                                VF.createLiteral((double) i)),
+                        VF.createStatement(VF.createIRI(C + "o" + i), VF.createIRI(C + "tag"),
+                                VF.createLiteral("t"))));
+                Thread.sleep(150);
+            }
+            Thread.sleep(1500);
+            if (two.isEmpty()) {
+                DIVERGENCES.add("REGRESSED — [RANGE] no longer aggregates even with a multi-pattern block\n"
+                        + "      WindowedAggregation, FleetRiskLeaderboard and VehicleSignalsCdsp all rely on"
+                        + " that; investigate before trusting the single-pattern verdict");
+            }
+            return !one.isEmpty();
         }
     }
 
