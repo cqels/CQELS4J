@@ -418,7 +418,7 @@ are called out.
 
   | Query shape | Result |
   |---|---|
-  | one simple aggregate (`COUNT`, `SUM`, `AVG`, `MIN`, `MAX`) | **tumbling** — `{n=2}`, the closed bucket `[0, 3000)` |
+  | one simple aggregate (`COUNT`, `SUM`, `AVG`, `MIN`, `MAX`) | **tumbling** — the closed bucket `[0, 3000)`; for `COUNT` that is `{n=2}` |
   | …plus `FILTER` or `BIND` | tumbling |
   | …plus `GROUP BY` | tumbling — one row per group in the closed bucket |
   | …plus `HAVING`, a static join, or `OPTIONAL` | **rolling** — running `{n=1}`, `{n=2}`, `{n=3}` |
