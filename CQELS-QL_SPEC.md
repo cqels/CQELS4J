@@ -243,10 +243,11 @@ lookup finds no match, the row is eliminated. This is what lets a static pattern
 the row rather than leaving it unbound (`OPTIONAL`-like). A fully-constant static pattern was, and
 still is, evaluated correctly either way.
 
-> **A hazard that survives the fix above.** Whenever the `STREAM` block itself declares **more
-> than one** triple pattern — not only for a windowed self-join or aggregate spanning several
-> window elements, but equally for a single atomic multi-statement push matched by two patterns
-> sharing one subject — the query routes through the composed windowed lookup, and on that route
+> **A hazard that survives the fix above.** A `STREAM` block declaring **more than one** triple
+> pattern — not only for a windowed self-join or aggregate spanning several window elements, but
+> equally for a single atomic multi-statement push matched by two patterns sharing one subject —
+> commonly routes through the composed windowed lookup. (Commonly, not always: under `[NOW]` a
+> two-pattern block behaves differently, as the measurements below show.) On that route
 > the static side is served from a forward, subject-rooted view of the background graph, built
 > from the join key's bound value, rather than the repository directly. A guard reached by a
 > **reverse edge into the join key** falls outside that view: `c:FieldConcepts skos:member ?field`,
@@ -266,20 +267,23 @@ still is, evaluated correctly either way.
 > FieldConcepts". A `STREAM` block with exactly **one** triple pattern can take a simpler
 > per-element lookup that falls back to the repository directly. That does **not** make it safe.
 > Probing each shape with a matching push and then a deliberately non-matching one on
-> `2.0.0-alpha.20`, **no tested shape behaves correctly**. Under `[NOW]`, with one pattern or two,
-> the reverse guard **fabricates**: with `ex:coll ex:member ex:allowed` in the store and a guard
+> `2.0.0-alpha.20` — 30 combinations across `[NOW]`, `[TRIPLES 1]`, `[TRIPLES 5]`, `[RANGE 3s]` and
+> `[SLIDE 3s STEP 1s]` — **almost every shape is unsound, in one of two opposite ways**. A
+> one-pattern block *fabricates*: with `ex:coll ex:member ex:allowed` in the store and a guard
 > `ex:coll ex:member ?f`, pushing an unrelated triple that cannot match the stream pattern at all
-> still emits `{f=ex:allowed}`, a binding no stream element justifies. A one-pattern block under
-> `[TRIPLES 1]` fabricates the same way. A two-pattern block under `[TRIPLES 1]` instead
-> **eliminates**, dropping a row that does match — as does a one-pattern query once an aggregate is
-> added. The forward-typed control is correct throughout: it emits on the matching push and stays
-> silent on the non-matching one. So the guard is unsound in both directions at once —
-> over-restrictive on the composed windowed route, over-permissive on the per-element one — and
-> neither pattern count nor window shape identifies a safe case. An earlier revision of this section
-> recorded `[NOW]` as *admitting* both guards; that came of only ever pushing matching elements, and
-> what looked like correct admission was the fabrication above. The rule is therefore unconditional:
-> **do not guard on a reverse edge into the join key**. Where the model offers a forward edge, use
-> it; where it does not, filter in the result listener instead.
+> still emits `{f=ex:allowed}`, a binding no stream element justifies. A two-pattern block, or a
+> one-pattern block with an aggregate, instead *eliminates*, dropping rows that do match. The
+> forward-typed control is correct in all of those. **One measured shape is correct**, and it is
+> worth knowing because the usual advice inverts there. A single pattern with a **variable
+> predicate**, filtered — `STREAM S { ?o ?p ?f . }` with `FILTER(?p = ex:of)` — under `[NOW]`, fed
+> **single-triple pushes**, admits the member, rejects a non-member, and rejects a matching object
+> reached by the wrong predicate. On that shape the forward `rdf:type` guard is the broken one: it
+> drops the valid row. Even this exception is position-sensitive — push the same data as an atomic
+> multi-statement element whose relevant statement is not first, and the match is lost. So no
+> structural property — pattern count, window, projection — predicts which behaviour you get. Prefer
+> a forward edge where the model offers one, but **verify the specific query with both a matching
+> and a non-matching push** rather than trusting either direction, and filter in the result listener
+> when you cannot.
 
 ---
 
