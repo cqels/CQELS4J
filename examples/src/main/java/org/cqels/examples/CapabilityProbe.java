@@ -457,8 +457,8 @@ public class CapabilityProbe {
      * <p>So a reverse-edge guard is not merely over-restrictive; in the one-pattern shape it can
      * invent rows that no stream element justifies.
      *
-     * <p><strong>No tested shape behaves correctly.</strong> Probing each with a matching push and
-     * then a deliberately non-matching one, on alpha.20:
+     * <p>Probing each shape with a matching push and then a deliberately non-matching one, on
+     * alpha.20:
      *
      * <pre>
      *   [NOW]       1 and 2 patterns   FABRICATES  (emits on the non-matching push)
@@ -471,12 +471,13 @@ public class CapabilityProbe {
      * as "admitting both guards" — that reading came from only ever pushing matching elements, and
      * what looked like correct admission was the fabrication above.
      *
-     * <p>A sweep of 30 combinations found exactly ONE correct shape: a single pattern with a
-     * VARIABLE predicate, filtered ({@code ?o ?p ?f} plus {@code FILTER(?p = ex:of)}), under
-     * {@code [NOW]}, fed single-triple pushes. There the forward {@code rdf:type} guard is the
-     * broken one, dropping the valid row — so the usual advice inverts. It is also position
-     * sensitive: the same data pushed as an atomic element whose relevant statement is not first
-     * loses the match. §6 carries the detail; the practical guidance is to verify the specific
+     * <p>A sweep of 30 <em>fixed-predicate</em> combinations across five window forms found no
+     * correct case. One shape outside that sweep IS correct, and every one of its conditions is
+     * load-bearing: a single pattern with a VARIABLE predicate ({@code ?o ?p ?f}), a
+     * {@code FILTER(?p = ex:of)}, the {@code [NOW]} window, single-triple pushes, AND {@code ?p} in
+     * the projection. {@code SELECT ?p ?f} is correct; {@code SELECT ?f} drops the valid row. There
+     * the forward {@code rdf:type} guard is the broken one in every projection tested — so the
+     * usual advice inverts. §6 carries the detail; the practical guidance is to verify the specific
      * query with a matching AND a non-matching push rather than to trust a structural rule.
      *
      * <p>This check pins the {@code [TRIPLES 1]} two-pattern elimination case.

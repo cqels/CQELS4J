@@ -267,23 +267,29 @@ still is, evaluated correctly either way.
 > FieldConcepts". A `STREAM` block with exactly **one** triple pattern can take a simpler
 > per-element lookup that falls back to the repository directly. That does **not** make it safe.
 > Probing each shape with a matching push and then a deliberately non-matching one on
-> `2.0.0-alpha.20` — 30 combinations across `[NOW]`, `[TRIPLES 1]`, `[TRIPLES 5]`, `[RANGE 3s]` and
-> `[SLIDE 3s STEP 1s]` — **almost every shape is unsound, in one of two opposite ways**. A
-> one-pattern block *fabricates*: with `ex:coll ex:member ex:allowed` in the store and a guard
+> `2.0.0-alpha.20`, a reverse guard is unsound in almost every shape, in one of two opposite ways. A
+> one-pattern block **fabricates**: with `ex:coll ex:member ex:allowed` in the store and a guard
 > `ex:coll ex:member ?f`, pushing an unrelated triple that cannot match the stream pattern at all
-> still emits `{f=ex:allowed}`, a binding no stream element justifies. A two-pattern block, or a
-> one-pattern block with an aggregate, instead *eliminates*, dropping rows that do match. The
-> forward-typed control is correct in all of those. **One measured shape is correct**, and it is
-> worth knowing because the usual advice inverts there. A single pattern with a **variable
-> predicate**, filtered — `STREAM S { ?o ?p ?f . }` with `FILTER(?p = ex:of)` — under `[NOW]`, fed
-> **single-triple pushes**, admits the member, rejects a non-member, and rejects a matching object
-> reached by the wrong predicate. On that shape the forward `rdf:type` guard is the broken one: it
-> drops the valid row. Even this exception is position-sensitive — push the same data as an atomic
-> multi-statement element whose relevant statement is not first, and the match is lost. So no
-> structural property — pattern count, window, projection — predicts which behaviour you get. Prefer
-> a forward edge where the model offers one, but **verify the specific query with both a matching
-> and a non-matching push** rather than trusting either direction, and filter in the result listener
-> when you cannot.
+> still emits `{f=ex:allowed}`, a binding no stream element justifies. Under the accumulating
+> windows — `[TRIPLES]`, `[RANGE]`, `[SLIDE]`, `[PAST]` — a two-pattern block, or a one-pattern
+> block with an aggregate, instead **eliminates**, dropping rows that do match. Under `[NOW]` a
+> two-pattern block fabricates rather than eliminating, and a global aggregate is rejected at
+> registration outright. A sweep of 30 fixed-predicate combinations across five window forms found
+> no correct case at all. **One shape is correct**, and its conditions are narrow enough to be worth
+> stating in full, because the usual advice inverts there. All of the following are required: a
+> single stream pattern with a **variable predicate** (`STREAM S { ?o ?p ?f . }`), a `FILTER(?p =
+> ex:of)` constraining it, the `[NOW]` window, **single-triple pushes**, and **`?p` in the
+> projection**. `SELECT ?p ?f` and `SELECT ?o ?p ?f` admit the member, reject a non-member and
+> reject a matching object reached by the wrong predicate; drop `?p` from the projection — `SELECT
+> ?f`, `SELECT ?o ?f` — and the valid row is lost. Change the window and it eliminates; push the
+> same data as an atomic multi-statement element whose relevant statement is not first and the match
+> is lost; add a second stream pattern and it fabricates a partial row when the second statement is
+> absent. On this shape the forward `rdf:type` guard is the broken one, dropping the valid row in
+> every projection tested. No structural property — pattern count, window, projection, predicate
+> form — predicts the behaviour on its own, and the one correct case depends on all five at once.
+> Prefer a forward edge where the model offers one, but **verify the specific query with both a
+> matching and a non-matching push** rather than trusting either direction, and filter in the result
+> listener when you cannot.
 
 ---
 
