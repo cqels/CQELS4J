@@ -263,12 +263,17 @@ still is, evaluated correctly either way.
 > also makes every **enum value** a `skos:member` of `FieldConcepts` while typing it
 > `s2dm:EnumValue`, so the type guard selects a strict **subset** of the collection. It is the right
 > guard for "things the model classifies as fields"; it is not a drop-in for "everything in
-> FieldConcepts". Only a `STREAM` block with exactly **one** triple pattern takes the simpler
-> per-element lookup, which does fall back to the repository directly and is unaffected by this
-> hazard — the single-element lookup shown above is that shape. Pattern count is not the only input
-> to the routing decision, though: measured on `2.0.0-alpha.20` the same two-pattern block admits
-> both guards under `[NOW]`, while eliminating the reverse one under `[TRIPLES 1]`, `[TRIPLES 5]`
-> and `[RANGE 10s]`. Treat a multi-pattern block over an accumulating window as the shape at risk.
+> FieldConcepts". A `STREAM` block with exactly **one** triple pattern can take a simpler
+> per-element lookup that falls back to the repository directly and is unaffected by this hazard —
+> the single-element lookup shown above is that shape. Do not read that as single-pattern immunity,
+> though: pattern count is one input to the routing decision among several. Measured on
+> `2.0.0-alpha.20`, a one-pattern block that is a plain non-aggregate `SELECT` admits both guards,
+> but adding an aggregate to the same one-pattern query (`SELECT (COUNT(?f) AS ?n)`) eliminates the
+> reverse guard while the forward control still emits. Window shape matters too: a two-pattern block
+> admits both guards under `[NOW]`, and eliminates the reverse one under `[TRIPLES 1]`, `[TRIPLES
+> 5]` and `[RANGE 10s]`. The reliable summary is behavioural rather than structural — **a
+> reverse-edge guard is unsafe unless you have checked that specific query**; the shape known to be
+> safe is a single fixed-predicate pattern with no aggregate.
 
 ---
 
@@ -365,18 +370,26 @@ are called out.
   One shape is rejected: `[NOW]` with a global aggregate **fails at registration**, with a message
   naming the windows to use instead (`[NOW]` is zero-length, so there is nothing to accumulate).
 
-  What does vary is **when** results are emitted, and it is worth knowing before you write a test:
+  Beyond that, **which elements an aggregate covers — and when it reports — depend on the query's
+  shape**, and the difference is not only one of cadence. Measured on `2.0.0-alpha.20` with
+  `[RANGE 3s]`:
 
-  | Route | Emission |
-  |-------|----------|
-  | multi-pattern `STREAM` block | a running result on **every arrival** |
-  | single-pattern `STREAM` block + `[RANGE]` | the closed window's aggregate, emitted when the **next element arrives after the window has rolled** |
+  | Query shape | Elements aggregated | Reports |
+  |---|---|---|
+  | one stream pattern **and** one simple aggregate | epoch-aligned **tumbling bucket** | when the closed bucket is triggered (see below) |
+  | anything else — a second aggregate, `GROUP_CONCAT`, or a second stream pattern | **rolling window** relative to the arriving element | on **every arrival** |
 
-  Both are correct aggregates; only the cadence differs. The practical consequence is that a short
-  test which pushes a handful of elements into a `[RANGE 10s]` window and then inspects results a
-  second later sees **nothing** from the single-pattern form — not because the aggregate is broken,
-  but because the window has not closed and nothing has arrived to trigger it. Give it an element
-  after the window rolls.
+  The two populations really do differ. With elements timestamped 2800, 2900 and 3100 ms, the first
+  form reports `{n=2}` — the closed bucket `[0, 3000)` — while the second reports a running `{n=1}`,
+  `{n=2}`, `{n=3}`, because all three are still inside its rolling window. Neither is wrong; they
+  are answering different questions, so the shape of the query decides which one you get.
+
+  A tumbling bucket is closed by an element whose **event time** falls past the boundary — it need
+  not match the query's own pattern — or by `DataStream.complete()`. Elapsed wall-clock time alone
+  closes nothing, which is the trap: a test that pushes a handful of elements and then sleeps inside
+  the window sees nothing at all from the first form, and that silence is not a defect.
+
+  *Why* the number of aggregates changes the route is not established here; only that it does.
 
 - **`FILTER(expr)`** — operators `= != < > <= >= && || !` `+ - * /`, plus built-ins; full SPARQL
   effective-boolean-value semantics. Verified working on `2.0.0-alpha.20`: `BOUND`, `IF`, `STR`,
