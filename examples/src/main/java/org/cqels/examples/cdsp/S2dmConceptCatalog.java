@@ -84,9 +84,10 @@ public class S2dmConceptCatalog {
             // `c:FieldConcepts skos:member ?field`, a REVERSE edge INTO it. S2dm#concept asserts
             // both facts for every concept, so either would express "is a field", but they are
             // not interchangeable on this route. This STREAM block has two patterns (?field and
-            // ?value both come off ?obs), and CQELS-QL_SPEC.md §6 documents that a STREAM block
-            // with more than one pattern always dispatches through the composed windowed lookup --
-            // that is the dispatch rule, not the window size or element count. On that route the
+            // ?value both come off ?obs), which under this window dispatches through the composed
+            // windowed lookup -- see CQELS-QL_SPEC.md §6, and note that pattern count alone does
+            // not decide it: the window and the projection matter too, so the rule of thumb is to
+            // check the specific query rather than to count patterns. On that route the
             // static side is a forward, subject-rooted view built from the join key's bound value,
             // with no repository fallback, so a pattern needs ?field in SUBJECT position to find
             // anything there. The reverse form matched nothing FOR ANY ?field on that view, so it

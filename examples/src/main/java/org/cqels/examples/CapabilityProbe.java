@@ -440,13 +440,15 @@ public class CapabilityProbe {
     /**
      * #67: a static guard that walks a REVERSE edge into the join key eliminates every row when the
      * {@code STREAM} block has more than one pattern, even where the guard's own triple is in the
-     * store. The forward-typed equivalent admits correctly, and with a single-pattern block both
-     * forms admit — so this is specific to the composed windowed lookup route.
+     * store. The forward-typed equivalent admits correctly.
      *
-     * <p>Pattern count is not the whole story: measured on alpha.20 the same two-pattern block
-     * admits BOTH guards under {@code [NOW]}, and eliminates the reverse one under
-     * {@code [TRIPLES 1]}, {@code [TRIPLES 5]} and {@code [RANGE 10s]}. So the window shape
-     * participates in the routing decision too; this check pins the {@code [TRIPLES 1]} case.
+     * <p>Pattern count alone does not predict this. Measured on alpha.20: the same two-pattern block
+     * admits BOTH guards under {@code [NOW]} while eliminating the reverse one under
+     * {@code [TRIPLES 1]}, {@code [TRIPLES 5]} and {@code [RANGE 10s]}; and a ONE-pattern query,
+     * which admits both guards as a plain {@code SELECT}, also eliminates the reverse one once an
+     * aggregate is added ({@code SELECT (COUNT(?f) AS ?n)}). Window shape and projection both
+     * participate. The shape known to be safe is a single fixed-predicate pattern with no
+     * aggregate; this check pins the {@code [TRIPLES 1]} two-pattern case.
      *
      * <p>Documented in {@code CQELS-QL_SPEC.md} §6 and worked around in {@code S2dmConceptCatalog},
      * which guards on {@code ?field a s2dm:Field} rather than on collection membership. Note the two
@@ -494,19 +496,28 @@ public class CapabilityProbe {
     }
 
     /**
-     * A <strong>single-pattern</strong> {@code STREAM} block over {@code [RANGE]} aggregates at the
-     * <em>window boundary</em>, not per arrival: the aggregate over a closed window is emitted when
-     * the next element arrives after the window has rolled. A multi-pattern block over the same
-     * window instead emits a running result on every arrival.
+     * A {@code STREAM} block with <strong>one</strong> pattern and <strong>one</strong> simple
+     * aggregate over {@code [RANGE]} reports on epoch-aligned <em>tumbling buckets</em>: the closed
+     * bucket's aggregate is emitted when an element arrives whose event time falls past the
+     * boundary. {@code DataStream.complete()} flushes it too, so a subsequent arrival is not the
+     * only trigger; wall-clock time alone is not one at all.
      *
-     * <p>This check exists because that timing difference is easy to mis-measure. An earlier version
-     * of this probe pushed three elements into a {@code [RANGE 10s]} window, waited 1.5 s, saw
-     * nothing, and concluded the combination "emits nothing at all" — a claim that reached
-     * {@code CQELS-QL_SPEC.md} §9 and an upstream issue before a reviewer refuted it by adding one
-     * late push. The window had simply not rolled yet. Hence the deliberate wait and the trailing
-     * element below: without them this check asserts nothing.
+     * <p>That shape is narrow, and the neighbouring shapes differ in <em>which elements are
+     * aggregated</em>, not merely in when results appear — see {@code CQELS-QL_SPEC.md} §9. This
+     * check pins the deferred one.
      *
-     * <p>Documented in {@code CQELS-QL_SPEC.md} §9 (aggregates note).
+     * <p>Two earlier versions of this check were wrong, which is why it looks the way it does:
+     * <ul>
+     *   <li>The first pushed three elements into a {@code [RANGE 10s]} window, waited 1.5 s, saw
+     *       nothing and reported the combination BROKEN — a claim that reached §9 and an upstream
+     *       issue before a reviewer refuted it with one late push. The window had not closed.</li>
+     *   <li>The second pushed on wall-clock timing and asserted the exact count. Three pushes take
+     *       ~11 ms, but if they straddle a bucket boundary the engine correctly emits mid-burst and
+     *       the check fails for a reason unrelated to the engine. It failed 2 runs in 10 under
+     *       probe load while passing 8/8 in isolation.</li>
+     * </ul>
+     * Hence <strong>timestamped</strong> pushes: event time, not the scheduler, decides which
+     * bucket each element lands in, so the expected count is exact and the result deterministic.
      */
     private static boolean singlePatternRangeAggregatesAtWindowClose() throws Exception {
         try (CQELSEngine engine = CQELSEngine.builder().id("probe-range-agg").withMemoryStore().build()) {
@@ -516,30 +527,25 @@ public class CapabilityProbe {
                     "SELECT (COUNT(?val) AS ?n) FROM STREAM S [RANGE 3s]\n"
                     + "WHERE { STREAM S { ?o <" + C + "v> ?val . } }\n"), rows::add);
             engine.start();
-            // Pushed as a tight burst, deliberately with no pause between them. Spacing them out
-            // lets a loaded machine stretch the gaps until a 3s window boundary falls BETWEEN two
-            // pushes, which changes what the closed window contains. That made an earlier version
-            // of this check, which asserted the exact count, fail about twice in every ten probe
-            // runs while passing every time in isolation.
+            // All three inside the bucket [0, 3000).
             for (int i = 1; i <= 3; i++) {
                 stream.push(List.of(VF.createStatement(VF.createIRI(C + "o" + i),
-                        VF.createIRI(C + "v"), VF.createLiteral((double) i))));
+                        VF.createIRI(C + "v"), VF.createLiteral((double) i))), 100L * i);
+                Thread.sleep(60);
             }
-            Thread.sleep(500);
-            // Nothing may have been emitted yet: this route reports at window boundaries, not per
-            // arrival. This half is what discriminates the two routes — a per-arrival aggregate
-            // would already have produced rows here.
-            boolean quietBeforeClose = rows.isEmpty();
-            Thread.sleep(4000);                        // let the 3s window roll past all three
+            // Checked immediately before the trigger, leaving no unobserved gap in which an
+            // autonomous emission could occur and be mistaken for a triggered one. A per-arrival
+            // route would already have produced rows here.
+            boolean quietBeforeTrigger = rows.isEmpty();
             stream.push(List.of(VF.createStatement(VF.createIRI(C + "o4"),
-                    VF.createIRI(C + "v"), VF.createLiteral(4.0))));
-            // Poll rather than sleep a fixed span, so a slow box costs time instead of a red build.
+                    VF.createIRI(C + "v"), VF.createLiteral(4.0))), 3100L);
             for (int i = 0; i < 40 && rows.isEmpty(); i++) {
-                Thread.sleep(200);
+                Thread.sleep(100);
             }
-            // The count itself is not asserted: which of the three elements the closed window holds
-            // depends on where the boundary happens to fall. The claim under test is the CADENCE.
-            return quietBeforeClose && !rows.isEmpty();
+            // n=3 exactly: the closed bucket holds the three timestamped elements and not the
+            // trigger. Asserting the value, not just non-emptiness, rejects a raw or mis-scoped
+            // result that happens to arrive at the right moment.
+            return quietBeforeTrigger && rows.stream().anyMatch(r -> String.valueOf(r).contains("n=3"));
         }
     }
 
