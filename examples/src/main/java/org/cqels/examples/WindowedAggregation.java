@@ -16,12 +16,11 @@ import java.util.Random;
  * <p>Note: {@code GROUP BY} is what makes this aggregate per-vehicle rather than fleet-wide; it is
  * not what makes the aggregate apply at all — a global aggregate works too.
  *
- * <p>This query reports a running result on every arrival, over a rolling window. That is the
- * common case, and it holds here twice over: the {@code STREAM} block has three patterns AND the
- * projection has three aggregates. Only the narrow shape of <em>one</em> pattern with
- * <em>one</em> aggregate behaves differently — reporting epoch-aligned tumbling buckets instead —
- * so do not read this demo as showing what {@code [RANGE]} does in general. See
- * {@code CQELS-QL_SPEC.md} §9.
+ * <p>This query reports a running result on every arrival, over a rolling window. Do not read that
+ * as what {@code [RANGE]} does in general: other query shapes instead report epoch-aligned tumbling
+ * buckets, covering a different set of elements rather than merely reporting at a different time.
+ * Which shape does which is not predictable from pattern or aggregate counts —
+ * {@code CQELS-QL_SPEC.md} §9 carries the measured cases.
  *
  * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.examples.WindowedAggregation}
  */

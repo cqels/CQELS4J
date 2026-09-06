@@ -455,13 +455,22 @@ public class CapabilityProbe {
      * <p>So a reverse-edge guard is not merely over-restrictive; in the one-pattern shape it can
      * invent rows that no stream element justifies.
      *
-     * <p>Pattern count alone does not predict this. Measured on alpha.20: the same two-pattern block
-     * admits BOTH guards under {@code [NOW]} while eliminating the reverse one under
-     * {@code [TRIPLES 1]}, {@code [TRIPLES 5]} and {@code [RANGE 10s]}; and a ONE-pattern query,
-     * which admits both guards as a plain {@code SELECT}, also eliminates the reverse one once an
-     * aggregate is added ({@code SELECT (COUNT(?f) AS ?n)}). Window shape and projection both
-     * participate. The shape known to be safe is a single fixed-predicate pattern with no
-     * aggregate; this check pins the {@code [TRIPLES 1]} two-pattern case.
+     * <p><strong>No tested shape behaves correctly.</strong> Probing each with a matching push and
+     * then a deliberately non-matching one, on alpha.20:
+     *
+     * <pre>
+     *   [NOW]       1 and 2 patterns   FABRICATES  (emits on the non-matching push)
+     *   [TRIPLES 1] 1 pattern          FABRICATES
+     *   [TRIPLES 1] 2 patterns         ELIMINATES  (drops the matching row)
+     * </pre>
+     *
+     * The forward-typed control is correct in every one of those: it emits on the matching push and
+     * stays silent on the non-matching one. An earlier version of this note recorded {@code [NOW]}
+     * as "admitting both guards" — that reading came from only ever pushing matching elements, and
+     * what looked like correct admission was the fabrication above. There is no known-safe shape to
+     * recommend; the guidance in §6 is simply not to guard on a reverse edge.
+     *
+     * <p>This check pins the {@code [TRIPLES 1]} two-pattern elimination case.
      *
      * <p>Documented in {@code CQELS-QL_SPEC.md} §6 and worked around in {@code S2dmConceptCatalog},
      * which guards on {@code ?field a s2dm:Field} rather than on collection membership. Note the two
@@ -509,15 +518,19 @@ public class CapabilityProbe {
     }
 
     /**
-     * A {@code STREAM} block with <strong>one</strong> pattern and <strong>one</strong> simple
-     * aggregate over {@code [RANGE]} reports on epoch-aligned <em>tumbling buckets</em>: the closed
-     * bucket's aggregate is emitted when an element arrives whose event time falls past the
-     * boundary. {@code DataStream.complete()} flushes it too, so a subsequent arrival is not the
-     * only trigger; wall-clock time alone is not one at all.
+     * The <em>exact</em> shape probed below — one stream pattern, one {@code COUNT}, no
+     * {@code FILTER}, {@code HAVING}, static join or {@code OPTIONAL}, over {@code [RANGE 3s]} —
+     * reports on epoch-aligned <em>tumbling buckets</em>: the closed bucket's aggregate is emitted
+     * when an element arrives whose event time falls past the boundary.
+     * {@code DataStream.complete()} flushes it too, so a subsequent arrival is not the only
+     * trigger; wall-clock time alone is not one at all.
      *
-     * <p>That shape is narrow, and the neighbouring shapes differ in <em>which elements are
-     * aggregated</em>, not merely in when results appear — see {@code CQELS-QL_SPEC.md} §9. This
-     * check pins the deferred one.
+     * <p>Deliberately stated as one measured shape rather than a rule. Neighbouring shapes differ in
+     * <em>which elements are aggregated</em>, not merely in when results appear, and the boundary
+     * between them is not derivable from pattern and aggregate counts: adding {@code HAVING}, a
+     * static join or {@code OPTIONAL} switches this same query to a rolling window, while
+     * {@code FILTER} and {@code GROUP BY} do not. {@code CQELS-QL_SPEC.md} §9 carries the measured
+     * table; this check pins one row of it.
      *
      * <p>Two earlier versions of this check were wrong, which is why it looks the way it does:
      * <ul>
@@ -532,11 +545,18 @@ public class CapabilityProbe {
      * Hence <strong>timestamped</strong> pushes: event time, not the scheduler, decides which
      * bucket each element lands in, so the expected count is exact and the result deterministic.
      */
-    /** True when the row binds {@code ?n} to exactly 3 — parsed, not substring-matched. */
+    /**
+     * True when the row binds {@code ?n} to exactly 3.
+     *
+     * <p>Parsed rather than substring-matched: {@code contains("n=3")} also accepts {@code n=30},
+     * which a reviewer demonstrated by mutating the delivered count. The value is required to run to
+     * a delimiter, so {@code 3.5} and {@code 3E1} are rejected as well — {@code COUNT} returns an
+     * integral value today, and this should start failing rather than quietly passing if that
+     * changes.
+     */
     private static boolean countIsThree(Object row) {
-        java.util.regex.Matcher m =
-                java.util.regex.Pattern.compile("\\bn=(-?\\d+)").matcher(String.valueOf(row));
-        return m.find() && "3".equals(m.group(1));
+        return java.util.regex.Pattern.compile("\\bn=3(?![\\d.eE+-])")
+                .matcher(String.valueOf(row)).find();
     }
 
     private static boolean singlePatternRangeAggregatesAtWindowClose() throws Exception {
