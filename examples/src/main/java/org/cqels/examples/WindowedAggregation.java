@@ -14,9 +14,10 @@ import java.util.Random;
  * {@code hasSimpleResult} ( = km/h), and {@code GROUP BY} aggregates per vehicle.
  *
  * <p>Note: {@code GROUP BY} is what makes this aggregate per-vehicle rather than fleet-wide; it is
- * not what makes the aggregate apply at all — a global aggregate works too. What this query does
- * depend on is the three-pattern {@code STREAM} block: on a single-pattern block, {@code [RANGE]}
- * plus an aggregate registers and then emits nothing. See {@code CQELS-QL_SPEC.md} §9.
+ * not what makes the aggregate apply at all — a global aggregate works too. The three-pattern
+ * {@code STREAM} block does set the cadence: this query emits a running result on every arrival,
+ * where a single-pattern block over {@code [RANGE]} emits each closed window's aggregate once the
+ * next element arrives. See {@code CQELS-QL_SPEC.md} §9.
  *
  * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.examples.WindowedAggregation}
  */
