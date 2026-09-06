@@ -91,10 +91,15 @@ public class S2dmConceptCatalog {
             // with no repository fallback, so a pattern needs ?field in SUBJECT position to find
             // anything there. The reverse form matched nothing FOR ANY ?field on that view, so it
             // did not merely fail to discriminate -- it eliminated every row, field or not. The
-            // forward form is a DIFFERENT fact that happens to say the same thing -- `?field a
-            // s2dm:Field` and `c:FieldConcepts skos:member ?field` are two triples the exporter
-            // co-emits, not one edge traversed in either direction -- and it resolves. Where a
-            // model emits only the collection edge, there is no forward form to switch to.
+            // forward form is a DIFFERENT triple -- `?field a s2dm:Field` and `c:FieldConcepts
+            // skos:member ?field` are two facts the exporter co-emits, not one edge traversed in
+            // either direction -- and it resolves. Two caveats on treating it as a substitute:
+            // a model that emits only the collection edge has no forward form to switch to, and
+            // even in real s2dm output the two are not co-extensive -- the exporter makes every
+            // ENUM VALUE a skos:member of FieldConcepts while typing it s2dm:EnumValue, so this
+            // guard selects a strict subset. That is exactly what this query wants ("things the
+            // model classifies as fields"), but it is not a drop-in for collection membership.
+            // The seeded graph here has no enum values, so the two coincide in this demo.
             String byFieldType = S2dm.PREFIXES + """
                     REGISTER QUERY AnyModelledField AS
                     SELECT ?label ?value

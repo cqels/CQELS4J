@@ -75,9 +75,6 @@ public class CapabilityProbe {
         System.out.println("Capability probe — does the engine still behave as this repo documents?\n");
 
         System.out.println("-- caveats (documented as BROKEN; a pass here means the docs are stale) --");
-        caveat("#70 single-pattern [RANGE] + aggregate emits nothing",
-                singlePatternRangeAggregateEmits(),
-                "CQELS-QL_SPEC.md §9 aggregates note, WindowedAggregation.java header");
         caveat("#67 reverse-edge guard eliminates valid rows (2+ patterns)",
                 reverseEdgeGuardAdmits(),
                 "CQELS-QL_SPEC.md §6, S2dmConceptCatalog.java guard + counter-example");
@@ -106,6 +103,8 @@ public class CapabilityProbe {
         capability("FILTER/BIND builtins: ABS, CONCAT, IRI, SUBSTR, IF", builtinsWork());
         capability("atomic multi-statement element joins in a query", atomicElementJoins());
         capability("GROUP BY with aggregates", groupByWorks());
+        capability("single-pattern [RANGE] aggregates at window close",
+                singlePatternRangeAggregatesAtWindowClose());
         capability("warm parse-cache ASP backend reachable via registerQuery", warmBackendReachable());
 
         System.out.println("\n" + "-".repeat(72));
@@ -226,9 +225,11 @@ public class CapabilityProbe {
             stream.pushTriple(C + "mid", C + "broader", C + "root");
             Thread.sleep(1500);
             if (toRoot.toString().contains(C + "leaf") && toBogus.isEmpty()) {
-                DIVERGENCES.add("NOW IMPLEMENTED — property paths execute correctly (two-hop "
-                        + "resolved, bogus target matched nothing)\n      CQELS-QL_SPEC.md §9 still "
-                        + "says 'not supported ... cleanly rejected'; issue #46 can close");
+                DIVERGENCES.add("NOW EXECUTING — a two-hop '+' path over the stream resolved, and "
+                        + "a bogus target matched nothing\n      CQELS-QL_SPEC.md §9 still says "
+                        + "'not supported ... cleanly rejected', so that is already wrong. This "
+                        + "probes ONE operator on ONE shape: re-assess #46 against its acceptance "
+                        + "criteria before claiming paths are implemented");
             } else {
                 DIVERGENCES.add("MIS-EVALUATED — a property path registered but did not execute "
                         + "correctly\n      neither §9's 'cleanly rejected' nor working support; "
@@ -442,6 +443,11 @@ public class CapabilityProbe {
      * store. The forward-typed equivalent admits correctly, and with a single-pattern block both
      * forms admit — so this is specific to the composed windowed lookup route.
      *
+     * <p>Pattern count is not the whole story: measured on alpha.20 the same two-pattern block
+     * admits BOTH guards under {@code [NOW]}, and eliminates the reverse one under
+     * {@code [TRIPLES 1]}, {@code [TRIPLES 5]} and {@code [RANGE 10s]}. So the window shape
+     * participates in the routing decision too; this check pins the {@code [TRIPLES 1]} case.
+     *
      * <p>Documented in {@code CQELS-QL_SPEC.md} §6 and worked around in {@code S2dmConceptCatalog},
      * which guards on {@code ?field a s2dm:Field} rather than on collection membership. Note the two
      * are separate co-emitted facts, not one fact traversed in either direction — a forward
@@ -479,7 +485,7 @@ public class CapabilityProbe {
             // The forward guard is the control: if IT stops admitting, the asymmetry claim is not
             // what failed and the verdict below would be meaningless.
             if (forward.isEmpty()) {
-                DIVERGENCES.add("REGRESSED — the forward-typed guard no longer admits either\\n"
+                DIVERGENCES.add("REGRESSED — the forward-typed guard no longer admits either\n"
                         + "      the #67 comparison is meaningless in this run; investigate before "
                         + "trusting its verdict");
             }
@@ -488,51 +494,55 @@ public class CapabilityProbe {
     }
 
     /**
-     * #70: a <strong>single-pattern</strong> {@code STREAM} block over {@code [RANGE]} combined with any
-     * aggregate registers cleanly and then emits nothing at all — with or without {@code GROUP BY},
-     * however long the window runs. Adding a second pattern to the block, or switching to
-     * {@code [TRIPLES n]} / {@code [SLIDE W STEP S]}, aggregates correctly — so it is the
-     * combination that is broken, not either half. The single-pattern route aggregates fine under
-     * the other windows, and {@code [RANGE]} aggregates fine with a second pattern. Why the pair
-     * fails is not established here; that it does is.
+     * A <strong>single-pattern</strong> {@code STREAM} block over {@code [RANGE]} aggregates at the
+     * <em>window boundary</em>, not per arrival: the aggregate over a closed window is emitted when
+     * the next element arrives after the window has rolled. A multi-pattern block over the same
+     * window instead emits a running result on every arrival.
      *
-     * <p>Documented in {@code CQELS-QL_SPEC.md} §9 (aggregates note) and in
-     * {@code WindowedAggregation}'s header, which is safe only because its block has three patterns.
-     * Unlike the {@code [NOW]} case this fails silently, which is why it is worth a probe.
+     * <p>This check exists because that timing difference is easy to mis-measure. An earlier version
+     * of this probe pushed three elements into a {@code [RANGE 10s]} window, waited 1.5 s, saw
+     * nothing, and concluded the combination "emits nothing at all" — a claim that reached
+     * {@code CQELS-QL_SPEC.md} §9 and an upstream issue before a reviewer refuted it by adding one
+     * late push. The window had simply not rolled yet. Hence the deliberate wait and the trailing
+     * element below: without them this check asserts nothing.
      *
-     * <p>Returns true when the single-pattern form starts emitting, i.e. the caveat is fixed.
+     * <p>Documented in {@code CQELS-QL_SPEC.md} §9 (aggregates note).
      */
-    private static boolean singlePatternRangeAggregateEmits() throws Exception {
+    private static boolean singlePatternRangeAggregatesAtWindowClose() throws Exception {
         try (CQELSEngine engine = CQELSEngine.builder().id("probe-range-agg").withMemoryStore().build()) {
             DataStream stream = engine.createStream("S");
-            List<Object> one = new CopyOnWriteArrayList<>();
-            List<Object> two = new CopyOnWriteArrayList<>();
+            List<Object> rows = new CopyOnWriteArrayList<>();
             engine.registerCqelsQuery(withRegister(
-                    "SELECT (COUNT(?val) AS ?n) FROM STREAM S [RANGE 10s]\n"
-                    + "WHERE { STREAM S { ?o <" + C + "v> ?val . } }\n"), one::add);
-            // Control: identical but for the second pattern in the block. If THIS stops emitting,
-            // the engine is not aggregating over [RANGE] at all and the verdict below means nothing.
-            engine.registerCqelsQuery(withRegister(
-                    "SELECT (COUNT(?val) AS ?n) FROM STREAM S [RANGE 10s]\n"
-                    + "WHERE { STREAM S { ?o <" + C + "v> ?val . ?o <" + C + "tag> ?tag . } }\n"), two::add);
+                    "SELECT (COUNT(?val) AS ?n) FROM STREAM S [RANGE 3s]\n"
+                    + "WHERE { STREAM S { ?o <" + C + "v> ?val . } }\n"), rows::add);
             engine.start();
+            // Pushed as a tight burst, deliberately with no pause between them. Spacing them out
+            // lets a loaded machine stretch the gaps until a 3s window boundary falls BETWEEN two
+            // pushes, which changes what the closed window contains. That made an earlier version
+            // of this check, which asserted the exact count, fail about twice in every ten probe
+            // runs while passing every time in isolation.
             for (int i = 1; i <= 3; i++) {
-                stream.push(List.of(
-                        VF.createStatement(VF.createIRI(C + "o" + i), VF.createIRI(C + "v"),
-                                VF.createLiteral((double) i)),
-                        VF.createStatement(VF.createIRI(C + "o" + i), VF.createIRI(C + "tag"),
-                                VF.createLiteral("t"))));
-                Thread.sleep(150);
+                stream.push(List.of(VF.createStatement(VF.createIRI(C + "o" + i),
+                        VF.createIRI(C + "v"), VF.createLiteral((double) i))));
             }
-            Thread.sleep(1500);
-            if (two.isEmpty()) {
-                DIVERGENCES.add("REGRESSED — [RANGE] no longer aggregates even with a multi-pattern block\n"
-                        + "      WindowedAggregation, FleetRiskLeaderboard and VehicleSignalsCdsp all rely on"
-                        + " that; investigate before trusting the single-pattern verdict");
+            Thread.sleep(500);
+            // Nothing may have been emitted yet: this route reports at window boundaries, not per
+            // arrival. This half is what discriminates the two routes — a per-arrival aggregate
+            // would already have produced rows here.
+            boolean quietBeforeClose = rows.isEmpty();
+            Thread.sleep(4000);                        // let the 3s window roll past all three
+            stream.push(List.of(VF.createStatement(VF.createIRI(C + "o4"),
+                    VF.createIRI(C + "v"), VF.createLiteral(4.0))));
+            // Poll rather than sleep a fixed span, so a slow box costs time instead of a red build.
+            for (int i = 0; i < 40 && rows.isEmpty(); i++) {
+                Thread.sleep(200);
             }
-            return !one.isEmpty();
+            // The count itself is not asserted: which of the three elements the closed window holds
+            // depends on where the boundary happens to fall. The claim under test is the CADENCE.
+            return quietBeforeClose && !rows.isEmpty();
         }
     }
+
 
     // ---- capability probes ---------------------------------------------------------------
 

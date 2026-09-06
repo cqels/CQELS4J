@@ -256,14 +256,19 @@ still is, evaluated correctly either way.
 > A guard that is an **outgoing** edge from the join key works, because it leaves from the view's
 > own root — e.g. `?field a s2dm:Field`, the fix actually applied in the
 > [`S2dmConceptCatalog`](examples/src/main/java/org/cqels/examples/cdsp/S2dmConceptCatalog.java)
-> demo. Note what that fix relies on: `?field a s2dm:Field` is a **separate triple** the s2dm
-> exporter co-emits alongside the collection edge, not the same edge traversed the other way. It is
-> available as a substitute only because the model asserts both. A model that publishes membership
-> and nothing else offers no forward guard to switch to, and the workaround does not exist. Only a
-> `STREAM` block with exactly **one** triple pattern takes the simpler per-element lookup, which
-> does fall back to the repository directly and is unaffected by this hazard — the single-element
-> lookup shown above is that shape, and the trigger is the pattern count, not the window size or
-> element count.
+> demo. Note what that substitution does and does not buy you. `?field a s2dm:Field` is a **separate
+> triple** the s2dm exporter co-emits alongside the collection edge, not the same edge traversed the
+> other way, so it is available only because the model asserts both — a model publishing membership
+> alone offers no forward guard at all. And where both exist they are not co-extensive: the exporter
+> also makes every **enum value** a `skos:member` of `FieldConcepts` while typing it
+> `s2dm:EnumValue`, so the type guard selects a strict **subset** of the collection. It is the right
+> guard for "things the model classifies as fields"; it is not a drop-in for "everything in
+> FieldConcepts". Only a `STREAM` block with exactly **one** triple pattern takes the simpler
+> per-element lookup, which does fall back to the repository directly and is unaffected by this
+> hazard — the single-element lookup shown above is that shape. Pattern count is not the only input
+> to the routing decision, though: measured on `2.0.0-alpha.20` the same two-pattern block admits
+> both guards under `[NOW]`, while eliminating the reverse one under `[TRIPLES 1]`, `[TRIPLES 5]`
+> and `[RANGE 10s]`. Treat a multi-pattern block over an accumulating window as the shape at risk.
 
 ---
 
@@ -356,23 +361,22 @@ are called out.
 - **Aggregates:** `COUNT(*)` / `COUNT(?v)`, `SUM`, `AVG`, `MIN`, `MAX`, `GROUP_CONCAT(?v; SEPARATOR=", ")`.
   *Note:* `GROUP BY` selects **per-group** results rather than global ones; it is **not** required
   for an aggregate to apply. Measured on `2.0.0-alpha.20`, a global (no `GROUP BY`) aggregate
-  accumulates correctly over every window that accumulates — `[RANGE]`, `[TRIPLES]`, `[SLIDE]` —
-  re-emitting a running result as elements arrive. Two shapes are exceptions, and both are
-  properties of the **execution route** rather than of `GROUP BY`:
+  accumulates correctly over every window that accumulates — `[RANGE]`, `[TRIPLES]`, `[SLIDE]`.
+  One shape is rejected: `[NOW]` with a global aggregate **fails at registration**, with a message
+  naming the windows to use instead (`[NOW]` is zero-length, so there is nothing to accumulate).
 
-  | Shape | Behaviour |
-  |-------|-----------|
-  | `[NOW]` + global aggregate | **rejected at registration**, with a message naming the windows to use instead (see the `ORDER BY` / `LIMIT` route notes below) |
-  | **single-pattern** `STREAM` block + `[RANGE]` + any aggregate ([#70](https://github.com/cqels/CQELS4J/issues/70)) | registers, then **emits nothing at all** — with or without `GROUP BY`, however long the window is left to run |
+  What does vary is **when** results are emitted, and it is worth knowing before you write a test:
 
-  The second is specific to that exact combination, and the reason is not established here — only
-  the behaviour. Across all four window forms at both pattern counts it is the one silent cell:
-  the same query with a second pattern in the `STREAM` block aggregates, and so does the same
-  single-pattern query under `[TRIPLES n]` or `[SLIDE W STEP S]`. So it is neither a `[RANGE]`
-  limitation nor a single-pattern-route limitation on its own — the single-pattern route
-  aggregates perfectly well under the other windows. Every aggregating example here
-  (`WindowedAggregation`, `FleetRiskLeaderboard`, `VehicleSignalsCdsp`) has a multi-pattern block
-  and is unaffected. Note that it fails silently, unlike the `[NOW]` case.
+  | Route | Emission |
+  |-------|----------|
+  | multi-pattern `STREAM` block | a running result on **every arrival** |
+  | single-pattern `STREAM` block + `[RANGE]` | the closed window's aggregate, emitted when the **next element arrives after the window has rolled** |
+
+  Both are correct aggregates; only the cadence differs. The practical consequence is that a short
+  test which pushes a handful of elements into a `[RANGE 10s]` window and then inspects results a
+  second later sees **nothing** from the single-pattern form — not because the aggregate is broken,
+  but because the window has not closed and nothing has arrived to trigger it. Give it an element
+  after the window rolls.
 
 - **`FILTER(expr)`** — operators `= != < > <= >= && || !` `+ - * /`, plus built-ins; full SPARQL
   effective-boolean-value semantics. Verified working on `2.0.0-alpha.20`: `BOUND`, `IF`, `STR`,
