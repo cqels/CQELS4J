@@ -442,9 +442,11 @@ public class CapabilityProbe {
      * directions, and which one you get depends on the query shape. This check pins the first.
      *
      * <ul>
-     *   <li><strong>Elimination.</strong> With more than one pattern in the {@code STREAM} block it
-     *       drops every row, even where the guard's own triple is in the store. The forward-typed
-     *       equivalent admits correctly.</li>
+     *   <li><strong>Elimination.</strong> With more than one pattern in the {@code STREAM} block —
+     *       under the accumulating windows, not {@code [NOW]}, where the same block fabricates
+     *       instead — it drops every row, even where the guard's own triple is in the store. The
+     *       forward-typed equivalent admits correctly. A one-pattern query with an aggregate
+     *       eliminates the same way.</li>
      *   <li><strong>Fabrication.</strong> Worse, and measured on alpha.20 under {@code [TRIPLES 1]},
      *       {@code [NOW]} and {@code [RANGE 3s]} alike: a ONE-pattern query with a reverse guard
      *       emits a row built from the static data even when the pushed element <em>cannot match
@@ -467,8 +469,15 @@ public class CapabilityProbe {
      * The forward-typed control is correct in every one of those: it emits on the matching push and
      * stays silent on the non-matching one. An earlier version of this note recorded {@code [NOW]}
      * as "admitting both guards" — that reading came from only ever pushing matching elements, and
-     * what looked like correct admission was the fabrication above. There is no known-safe shape to
-     * recommend; the guidance in §6 is simply not to guard on a reverse edge.
+     * what looked like correct admission was the fabrication above.
+     *
+     * <p>A sweep of 30 combinations found exactly ONE correct shape: a single pattern with a
+     * VARIABLE predicate, filtered ({@code ?o ?p ?f} plus {@code FILTER(?p = ex:of)}), under
+     * {@code [NOW]}, fed single-triple pushes. There the forward {@code rdf:type} guard is the
+     * broken one, dropping the valid row — so the usual advice inverts. It is also position
+     * sensitive: the same data pushed as an atomic element whose relevant statement is not first
+     * loses the match. §6 carries the detail; the practical guidance is to verify the specific
+     * query with a matching AND a non-matching push rather than to trust a structural rule.
      *
      * <p>This check pins the {@code [TRIPLES 1]} two-pattern elimination case.
      *
