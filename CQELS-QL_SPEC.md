@@ -265,19 +265,21 @@ still is, evaluated correctly either way.
 > guard for "things the model classifies as fields"; it is not a drop-in for "everything in
 > FieldConcepts". A `STREAM` block with exactly **one** triple pattern can take a simpler
 > per-element lookup that falls back to the repository directly. That does **not** make it safe.
-> Measured on `2.0.0-alpha.20`, the one-pattern shape fails in the opposite direction: it
-> **fabricates** rows. With `ex:coll ex:member ex:allowed` in the store and a guard `ex:coll
-> ex:member ?f`, pushing an element that cannot match the stream pattern at all — an unrelated
-> triple — still emits `{f=ex:allowed}`, a binding no stream element justifies. The forward-typed
-> guard correctly stays silent. This reproduces under `[TRIPLES 1]`, `[NOW]` and `[RANGE 3s]`.
-> Adding an aggregate to the same one-pattern query instead eliminates the reverse guard's rows, as
-> the multi-pattern case does. So a reverse-edge static guard is **unsound in both directions** —
-> over-restrictive on the composed windowed route, and over-permissive on the per-element one — and
-> pattern count predicts neither. Window shape participates too: a two-pattern block admits both
-> guards under `[NOW]`, and eliminates the reverse one under `[TRIPLES 1]`, `[TRIPLES 5]` and
-> `[RANGE 10s]`. The practical rule is simply **do not guard on a reverse edge into the join key**.
-> Where the model offers a forward edge, use it; where it does not, filter in the result listener
-> instead.
+> Probing each shape with a matching push and then a deliberately non-matching one on
+> `2.0.0-alpha.20`, **no tested shape behaves correctly**. Under `[NOW]`, with one pattern or two,
+> the reverse guard **fabricates**: with `ex:coll ex:member ex:allowed` in the store and a guard
+> `ex:coll ex:member ?f`, pushing an unrelated triple that cannot match the stream pattern at all
+> still emits `{f=ex:allowed}`, a binding no stream element justifies. A one-pattern block under
+> `[TRIPLES 1]` fabricates the same way. A two-pattern block under `[TRIPLES 1]` instead
+> **eliminates**, dropping a row that does match — as does a one-pattern query once an aggregate is
+> added. The forward-typed control is correct throughout: it emits on the matching push and stays
+> silent on the non-matching one. So the guard is unsound in both directions at once —
+> over-restrictive on the composed windowed route, over-permissive on the per-element one — and
+> neither pattern count nor window shape identifies a safe case. An earlier revision of this section
+> recorded `[NOW]` as *admitting* both guards; that came of only ever pushing matching elements, and
+> what looked like correct admission was the fabrication above. The rule is therefore unconditional:
+> **do not guard on a reverse edge into the join key**. Where the model offers a forward edge, use
+> it; where it does not, filter in the result listener instead.
 
 ---
 
