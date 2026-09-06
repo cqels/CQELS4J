@@ -438,9 +438,22 @@ public class CapabilityProbe {
     }
 
     /**
-     * #67: a static guard that walks a REVERSE edge into the join key eliminates every row when the
-     * {@code STREAM} block has more than one pattern, even where the guard's own triple is in the
-     * store. The forward-typed equivalent admits correctly.
+     * #67: a static guard that walks a REVERSE edge into the join key misbehaves in TWO opposite
+     * directions, and which one you get depends on the query shape. This check pins the first.
+     *
+     * <ul>
+     *   <li><strong>Elimination.</strong> With more than one pattern in the {@code STREAM} block it
+     *       drops every row, even where the guard's own triple is in the store. The forward-typed
+     *       equivalent admits correctly.</li>
+     *   <li><strong>Fabrication.</strong> Worse, and measured on alpha.20 under {@code [TRIPLES 1]},
+     *       {@code [NOW]} and {@code [RANGE 3s]} alike: a ONE-pattern query with a reverse guard
+     *       emits a row built from the static data even when the pushed element <em>cannot match
+     *       the stream pattern at all</em>. Pushing an unrelated triple yields a binding for the
+     *       collection's member. The forward guard correctly stays silent.</li>
+     * </ul>
+     *
+     * <p>So a reverse-edge guard is not merely over-restrictive; in the one-pattern shape it can
+     * invent rows that no stream element justifies.
      *
      * <p>Pattern count alone does not predict this. Measured on alpha.20: the same two-pattern block
      * admits BOTH guards under {@code [NOW]} while eliminating the reverse one under
@@ -519,6 +532,13 @@ public class CapabilityProbe {
      * Hence <strong>timestamped</strong> pushes: event time, not the scheduler, decides which
      * bucket each element lands in, so the expected count is exact and the result deterministic.
      */
+    /** True when the row binds {@code ?n} to exactly 3 — parsed, not substring-matched. */
+    private static boolean countIsThree(Object row) {
+        java.util.regex.Matcher m =
+                java.util.regex.Pattern.compile("\\bn=(-?\\d+)").matcher(String.valueOf(row));
+        return m.find() && "3".equals(m.group(1));
+    }
+
     private static boolean singlePatternRangeAggregatesAtWindowClose() throws Exception {
         try (CQELSEngine engine = CQELSEngine.builder().id("probe-range-agg").withMemoryStore().build()) {
             DataStream stream = engine.createStream("S");
@@ -544,8 +564,9 @@ public class CapabilityProbe {
             }
             // n=3 exactly: the closed bucket holds the three timestamped elements and not the
             // trigger. Asserting the value, not just non-emptiness, rejects a raw or mis-scoped
-            // result that happens to arrive at the right moment.
-            return quietBeforeTrigger && rows.stream().anyMatch(r -> String.valueOf(r).contains("n=3"));
+            // result that happens to arrive at the right moment. Matched as a NUMBER: an earlier
+            // version used String.contains("n=3"), which a reviewer showed also accepts n=30.
+            return quietBeforeTrigger && rows.stream().anyMatch(CapabilityProbe::countIsThree);
         }
     }
 

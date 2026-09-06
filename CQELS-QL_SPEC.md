@@ -264,16 +264,20 @@ still is, evaluated correctly either way.
 > `s2dm:EnumValue`, so the type guard selects a strict **subset** of the collection. It is the right
 > guard for "things the model classifies as fields"; it is not a drop-in for "everything in
 > FieldConcepts". A `STREAM` block with exactly **one** triple pattern can take a simpler
-> per-element lookup that falls back to the repository directly and is unaffected by this hazard —
-> the single-element lookup shown above is that shape. Do not read that as single-pattern immunity,
-> though: pattern count is one input to the routing decision among several. Measured on
-> `2.0.0-alpha.20`, a one-pattern block that is a plain non-aggregate `SELECT` admits both guards,
-> but adding an aggregate to the same one-pattern query (`SELECT (COUNT(?f) AS ?n)`) eliminates the
-> reverse guard while the forward control still emits. Window shape matters too: a two-pattern block
-> admits both guards under `[NOW]`, and eliminates the reverse one under `[TRIPLES 1]`, `[TRIPLES
-> 5]` and `[RANGE 10s]`. The reliable summary is behavioural rather than structural — **a
-> reverse-edge guard is unsafe unless you have checked that specific query**; the shape known to be
-> safe is a single fixed-predicate pattern with no aggregate.
+> per-element lookup that falls back to the repository directly. That does **not** make it safe.
+> Measured on `2.0.0-alpha.20`, the one-pattern shape fails in the opposite direction: it
+> **fabricates** rows. With `ex:coll ex:member ex:allowed` in the store and a guard `ex:coll
+> ex:member ?f`, pushing an element that cannot match the stream pattern at all — an unrelated
+> triple — still emits `{f=ex:allowed}`, a binding no stream element justifies. The forward-typed
+> guard correctly stays silent. This reproduces under `[TRIPLES 1]`, `[NOW]` and `[RANGE 3s]`.
+> Adding an aggregate to the same one-pattern query instead eliminates the reverse guard's rows, as
+> the multi-pattern case does. So a reverse-edge static guard is **unsound in both directions** —
+> over-restrictive on the composed windowed route, and over-permissive on the per-element one — and
+> pattern count predicts neither. Window shape participates too: a two-pattern block admits both
+> guards under `[NOW]`, and eliminates the reverse one under `[TRIPLES 1]`, `[TRIPLES 5]` and
+> `[RANGE 10s]`. The practical rule is simply **do not guard on a reverse edge into the join key**.
+> Where the model offers a forward edge, use it; where it does not, filter in the result listener
+> instead.
 
 ---
 
@@ -371,25 +375,34 @@ are called out.
   naming the windows to use instead (`[NOW]` is zero-length, so there is nothing to accumulate).
 
   Beyond that, **which elements an aggregate covers — and when it reports — depend on the query's
-  shape**, and the difference is not only one of cadence. Measured on `2.0.0-alpha.20` with
-  `[RANGE 3s]`:
+  shape**, and the difference is not only one of cadence. Two populations exist: an epoch-aligned
+  **tumbling bucket**, reported once the bucket closes, and a **rolling window** relative to the
+  arriving element, reported on every arrival.
 
-  | Query shape | Elements aggregated | Reports |
-  |---|---|---|
-  | one stream pattern **and** one simple aggregate | epoch-aligned **tumbling bucket** | when the closed bucket is triggered (see below) |
-  | anything else — a second aggregate, `GROUP_CONCAT`, or a second stream pattern | **rolling window** relative to the arriving element | on **every arrival** |
+  The table below is a list of **measured cases**, not a rule — the boundary between the two is not
+  something this document can derive, and shapes outside the list have not been tested. All measured
+  on `2.0.0-alpha.20` with one stream pattern and `[RANGE 3s]`, using elements timestamped 2800,
+  2900 and 3100 ms:
 
-  The two populations really do differ. With elements timestamped 2800, 2900 and 3100 ms, the first
-  form reports `{n=2}` — the closed bucket `[0, 3000)` — while the second reports a running `{n=1}`,
-  `{n=2}`, `{n=3}`, because all three are still inside its rolling window. Neither is wrong; they
-  are answering different questions, so the shape of the query decides which one you get.
+  | Query shape | Result |
+  |---|---|
+  | one simple aggregate (`COUNT`, `SUM`, `AVG`, `MIN`, `MAX`) | **tumbling** — `{n=2}`, the closed bucket `[0, 3000)` |
+  | …plus `FILTER` or `BIND` | tumbling |
+  | …plus `GROUP BY` | tumbling — one row per group in the closed bucket |
+  | …plus `HAVING`, a static join, or `OPTIONAL` | **rolling** — running `{n=1}`, `{n=2}`, `{n=3}` |
+  | two aggregates, or `GROUP_CONCAT` | rolling |
+  | two stream patterns | rolling |
+
+  Some shapes do not register at all: `COUNT(DISTINCT ?v)` fails to **parse**, and `SELECT DISTINCT`
+  over the simple-aggregate form is **rejected at registration**. Other window forms —
+  `[TRIPLES n]`, `[SLIDE W STEP S]` and `[RANGE W STEP S]` — reported per arrival in every shape
+  tested.
 
   A tumbling bucket is closed by an element whose **event time** falls past the boundary — it need
   not match the query's own pattern — or by `DataStream.complete()`. Elapsed wall-clock time alone
   closes nothing, which is the trap: a test that pushes a handful of elements and then sleeps inside
-  the window sees nothing at all from the first form, and that silence is not a defect.
+  the window sees nothing at all from the tumbling form, and that silence is not a defect.
 
-  *Why* the number of aggregates changes the route is not established here; only that it does.
 
 - **`FILTER(expr)`** — operators `= != < > <= >= && || !` `+ - * /`, plus built-ins; full SPARQL
   effective-boolean-value semantics. Verified working on `2.0.0-alpha.20`: `BOUND`, `IF`, `STR`,
