@@ -280,6 +280,7 @@ still is, evaluated correctly either way.
 > ex:allowed`:
 >
 > ```sparql
+> PREFIX ex: <https://example.org/probe#>
 > SELECT ?p ?f FROM STREAM S [NOW]
 > WHERE {
 >   STREAM S { ?o ?p ?f . }
@@ -289,7 +290,11 @@ still is, evaluated correctly either way.
 > ```
 >
 > It admits the member, rejects a non-member, and rejects a matching object reached by the wrong
-> predicate. **Do not generalise from it.** Each of the following changes — several of which look
+> predicate. The `PREFIX` line is part of the measurement: drop it and the query still
+> **registers**, then matches nothing at all — the same silent failure this section is about,
+> arriving by a different route.
+>
+> **Do not generalise from it.** Each of the following changes — several of which look
 > irrelevant — changes the result, and the list is offered as evidence that the behaviour does not
 > decompose into conditions, not as a set of rules to satisfy: projecting `SELECT ?f` or `SELECT ?o
 > ?f` instead drops the valid row; adding the **satisfied** static pattern `?f a ex:Field .`
