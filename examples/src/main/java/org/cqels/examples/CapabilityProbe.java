@@ -472,13 +472,16 @@ public class CapabilityProbe {
      * what looked like correct admission was the fabrication above.
      *
      * <p>A sweep of 30 <em>fixed-predicate</em> combinations across five window forms found no
-     * correct case. One shape outside that sweep IS correct, and every one of its conditions is
-     * load-bearing: a single pattern with a VARIABLE predicate ({@code ?o ?p ?f}), a
-     * {@code FILTER(?p = ex:of)}, the {@code [NOW]} window, single-triple pushes, AND {@code ?p} in
-     * the projection. {@code SELECT ?p ?f} is correct; {@code SELECT ?f} drops the valid row. There
-     * the forward {@code rdf:type} guard is the broken one in every projection tested — so the
-     * usual advice inverts. §6 carries the detail; the practical guidance is to verify the specific
-     * query with a matching AND a non-matching push rather than to trust a structural rule.
+     * correct case. Some queries outside that sweep are correct — §6 gives one verbatim — but they
+     * resist being reduced to a condition list, and four attempts to write one were each refuted by
+     * the next measurement. Changing the projection, or adding a static pattern that is
+     * <em>satisfied</em> in the store, is enough to turn the correct query into one that drops the
+     * valid row; removing its {@code FILTER} makes a different projection start working. On that
+     * same query the forward {@code rdf:type} guard — the workaround recommended everywhere else —
+     * is itself the broken one.
+     *
+     * <p>So the guidance is deliberately not structural: verify the specific query with a matching
+     * AND a non-matching push. A guard that works is a measurement, not a deduction.
      *
      * <p>This check pins the {@code [TRIPLES 1]} two-pattern elimination case.
      *
