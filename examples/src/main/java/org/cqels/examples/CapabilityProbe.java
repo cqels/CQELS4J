@@ -75,7 +75,7 @@ public class CapabilityProbe {
         System.out.println("Capability probe — does the engine still behave as this repo documents?\n");
 
         System.out.println("-- caveats (documented as BROKEN; a pass here means the docs are stale) --");
-        caveat("#67 reverse-edge guard eliminates valid rows (2+ patterns)",
+        caveat("#67 reverse-edge guard is unsound (checks the elimination half)",
                 reverseEdgeGuardAdmits(),
                 "CQELS-QL_SPEC.md §6, S2dmConceptCatalog.java guard + counter-example");
         caveat("     REPLACE() is not evaluated",
