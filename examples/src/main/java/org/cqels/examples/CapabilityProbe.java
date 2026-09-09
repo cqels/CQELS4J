@@ -75,7 +75,7 @@ public class CapabilityProbe {
         System.out.println("Capability probe — does the engine still behave as this repo documents?\n");
 
         System.out.println("-- caveats (documented as BROKEN; a pass here means the docs are stale) --");
-        caveat("#67 reverse-edge guard is unsound (checks the elimination half)",
+        caveat("#67 reverse-edge guard is unsound (elimination + fabrication)",
                 reverseEdgeGuardAdmits(),
                 "CQELS-QL_SPEC.md §6, S2dmConceptCatalog.java guard + counter-example");
         caveat("     REPLACE() is not evaluated",
@@ -494,6 +494,25 @@ public class CapabilityProbe {
      * the spec note and that workaround need removing.
      */
     private static boolean reverseEdgeGuardAdmits() throws Exception {
+        // Phase 1 — a MATCHING element. A fixed engine emits the row here.
+        boolean admitsMatch = !reverseGuardRun(true).isEmpty();
+        // Phase 2 — an element that CANNOT match the stream block. A fixed engine emits nothing;
+        // this engine fabricates a row from the static data alone (issue #67 §A). Without this
+        // phase the check could not tell "fixed" from "got worse": the old version returned
+        // !reverse.isEmpty(), so a fabricated row would have been reported as NOW FIXED and the
+        // caveat removed from the docs — precisely backwards.
+        boolean fabricates = !reverseGuardRun(false).isEmpty();
+        return admitsMatch && !fabricates;
+    }
+
+    /**
+     * One run of the #67 comparison. Pushes either a matching two-statement element or one that
+     * cannot match the stream block at all, and returns what the reverse-guarded query emitted.
+     * The forward-typed guard runs alongside as a control: on the matching push it must admit, and
+     * on the non-matching push it must stay silent. If either fails, the reverse verdict is not
+     * measuring what it claims to and a divergence says so.
+     */
+    private static List<Object> reverseGuardRun(boolean matching) throws Exception {
         try (CQELSEngine engine = CQELSEngine.builder().id("probe-67").withMemoryStore().build()) {
             try (RepositoryConnection conn = engine.getRepository().getConnection()) {
                 // Both directions asserted, exactly as the s2dm exporter emits them.
@@ -515,18 +534,24 @@ public class CapabilityProbe {
                     forward::add);
             engine.start();
             IRI o = VF.createIRI(C + "o1");
-            stream.push(List.of(
-                    VF.createStatement(o, VF.createIRI(C + "of"), VF.createIRI(C + "a")),
-                    VF.createStatement(o, VF.createIRI(C + "v"), VF.createLiteral(1.0))));
+            if (matching) {
+                stream.push(List.of(
+                        VF.createStatement(o, VF.createIRI(C + "of"), VF.createIRI(C + "a")),
+                        VF.createStatement(o, VF.createIRI(C + "v"), VF.createLiteral(1.0))));
+            } else {
+                stream.push(VF.createStatement(o, VF.createIRI(C + "unrelated"), VF.createIRI(C + "x")));
+            }
             Thread.sleep(1200);
-            // The forward guard is the control: if IT stops admitting, the asymmetry claim is not
-            // what failed and the verdict below would be meaningless.
-            if (forward.isEmpty()) {
-                DIVERGENCES.add("REGRESSED — the forward-typed guard no longer admits either\n"
+            if (matching && forward.isEmpty()) {
+                DIVERGENCES.add("REGRESSED — the forward-typed guard no longer admits a matching element\n"
                         + "      the #67 comparison is meaningless in this run; investigate before "
                         + "trusting its verdict");
+            } else if (!matching && !forward.isEmpty()) {
+                DIVERGENCES.add("REGRESSED — the forward-typed guard now fabricates too\n"
+                        + "      it emitted for an element that cannot match the stream block; the "
+                        + "#67 control is no longer sound");
             }
-            return !reverse.isEmpty();
+            return reverse;
         }
     }
 
