@@ -31,7 +31,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * <p><strong>Why this exists.</strong> `scripts/ci/version-truth-gate.sh` was written because a claim
  * in the prose can go stale without anything failing to compile. Capability claims are the same
  * hazard one category over. The examples, `examples/README.md`, `CQELS-QL_SPEC.md` §6/§9 and
- * `CDSP_MAPPING.md` all carry statements of the form "X does not work on 2.0.0-alpha.20, work around
+ * `CDSP_MAPPING.md` all carry statements of the form "X does not work on 2.0.0-alpha.21, work around
  * it like this". Every one of those becomes <em>false</em> the day the engine is fixed, and nothing
  * would notice: the workarounds keep working, so the build stays green while the documentation
  * quietly starts lying — and readers keep applying workarounds they no longer need.
@@ -75,9 +75,9 @@ public class CapabilityProbe {
         System.out.println("Capability probe — does the engine still behave as this repo documents?\n");
 
         System.out.println("-- caveats (documented as BROKEN; a pass here means the docs are stale) --");
-        caveat("#67 reverse-edge guard is unsound (elimination + fabrication)",
-                reverseEdgeGuardAdmits(),
-                "CQELS-QL_SPEC.md §6, S2dmConceptCatalog.java guard + counter-example");
+        caveat("     xsd:duration is compared as text (PT10S > PT9S is false)",
+                durationOrderIsNotLexical(),
+                "CQELS-QL_SPEC.md §9 gap table, CDSP_MAPPING.md §4");
         caveat("     REPLACE() is not evaluated",
                 replaceEvaluates(),
                 "CQELS-QL_SPEC.md §9 gap table, CDSP_MAPPING.md §4");
@@ -99,6 +99,10 @@ public class CapabilityProbe {
                 sameTermEvaluates());
         capability("#57 reasoner sees multi-statement (atomic) elements (fixed)",
                 reasonerSeesAtomicElements());
+        capability("#67 reverse-edge guard admits a match, rejects an unmatchable element (fixed)",
+                reverseEdgeGuardAdmits());
+        capability("#67 [NOW] static pattern does not admit a missing stream conjunct (fixed)",
+                nowStaticPatternEnforcesConjunction());
         capability("stream-static enrichment binds static variables", staticEnrichmentBinds());
         capability("FILTER/BIND builtins: ABS, CONCAT, IRI, SUBSTR, IF", builtinsWork());
         capability("atomic multi-statement element joins in a query", atomicElementJoins());
@@ -438,60 +442,29 @@ public class CapabilityProbe {
     }
 
     /**
-     * #67: a static guard that walks a REVERSE edge into the join key misbehaves in TWO opposite
-     * directions, and which one you get depends on the query shape. This check pins the first.
+     * #67, fixed in 2.0.0-alpha.21: a static guard that reaches the join key by a REVERSE edge —
+     * {@code ex:coll ex:member ?f}, with {@code ?f} bound by the stream in object position — must
+     * admit a matching element and must not admit one that cannot match the stream block.
      *
-     * <ul>
-     *   <li><strong>Elimination.</strong> With more than one pattern in the {@code STREAM} block —
-     *       under the accumulating windows, not {@code [NOW]}, where the same block fabricates
-     *       instead — it drops every row, even where the guard's own triple is in the store. The
-     *       forward-typed equivalent admits correctly. A one-pattern query with an aggregate
-     *       eliminates the same way.</li>
-     *   <li><strong>Fabrication.</strong> Worse, and measured on alpha.20 under {@code [TRIPLES 1]},
-     *       {@code [NOW]} and {@code [RANGE 3s]} alike: a ONE-pattern query with a reverse guard
-     *       emits a row built from the static data even when the pushed element <em>cannot match
-     *       the stream pattern at all</em>. Pushing an unrelated triple yields a binding for the
-     *       collection's member. The forward guard correctly stays silent.</li>
-     * </ul>
+     * <p>Before 2.0.0-alpha.21 it did neither reliably, in two opposite ways depending on shape: it
+     * <em>eliminated</em> rows that fully matched (this exact {@code [TRIPLES 1]} two-pattern shape),
+     * and elsewhere it <em>fabricated</em> rows from the static data alone when the pushed element
+     * matched no stream pattern at all. Issue #67 has the history.
      *
-     * <p>So a reverse-edge guard is not merely over-restrictive; in the one-pattern shape it can
-     * invent rows that no stream element justifies.
+     * <p>This was a caveat until the alpha.21 bump, and the body below is unchanged from that
+     * version: the same two phases that reported "still open" on alpha.20 report correct behaviour
+     * on alpha.21. That is the point of flipping a caveat rather than rewriting it — the assertion
+     * that changed its verdict is the evidence.
      *
-     * <p>Probing each shape with a matching push and then a deliberately non-matching one, on
-     * alpha.20:
+     * <p>Two phases are required, not one. An earlier version returned {@code !rows.isEmpty()},
+     * which would have read a FABRICATED row as the bug being fixed. A fixed engine must emit on the
+     * matching element ({@code admitsMatch}) and stay silent on the unmatchable one
+     * ({@code fabricates}). The forward-typed guard runs alongside as a control in both phases.
      *
-     * <pre>
-     *   [NOW]       1 and 2 patterns   FABRICATES  (emits on the non-matching push)
-     *   [TRIPLES 1] 1 pattern          FABRICATES
-     *   [TRIPLES 1] 2 patterns         ELIMINATES  (drops the matching row)
-     * </pre>
-     *
-     * The forward-typed control is correct in every one of those: it emits on the matching push and
-     * stays silent on the non-matching one. An earlier version of this note recorded {@code [NOW]}
-     * as "admitting both guards" — that reading came from only ever pushing matching elements, and
-     * what looked like correct admission was the fabrication above.
-     *
-     * <p>A sweep of 30 <em>fixed-predicate</em> combinations across five window forms found no
-     * correct case. Some queries outside that sweep are correct — §6 gives one verbatim — but they
-     * resist being reduced to a condition list, and four attempts to write one were each refuted by
-     * the next measurement. Changing the projection, or adding a static pattern that is
-     * <em>satisfied</em> in the store, is enough to turn the correct query into one that drops the
-     * valid row; removing its {@code FILTER} makes a different projection start working. On that
-     * same query the forward {@code rdf:type} guard — the workaround recommended everywhere else —
-     * is itself the broken one.
-     *
-     * <p>So the guidance is deliberately not structural: verify the specific query with a matching
-     * AND a non-matching push. A guard that works is a measurement, not a deduction.
-     *
-     * <p>This check pins the {@code [TRIPLES 1]} two-pattern elimination case.
-     *
-     * <p>Documented in {@code CQELS-QL_SPEC.md} §6 and worked around in {@code S2dmConceptCatalog},
-     * which guards on {@code ?field a s2dm:Field} rather than on collection membership. Note the two
-     * are separate co-emitted facts, not one fact traversed in either direction — a forward
-     * equivalent only exists because {@code S2dm#concept} happens to assert both.
-     *
-     * <p>Returns true when the reverse form ADMITS, i.e. when the caveat has been fixed and both
-     * the spec note and that workaround need removing.
+     * <p>A 162-case sweep over six windows, both guard directions, four push kinds, six static
+     * shapes and four projections was correct on alpha.21 and wrong in 24 cases on alpha.20 —
+     * see {@code CQELS-QL_SPEC.md} §6. This check pins one cell of it; the next check pins the
+     * {@code [NOW]} half, which was the more serious.
      */
     private static boolean reverseEdgeGuardAdmits() throws Exception {
         // Phase 1 — a MATCHING element. A fixed engine emits the row here.
@@ -628,6 +601,82 @@ public class CapabilityProbe {
         }
     }
 
+
+    /**
+     * #67's {@code [NOW]} half, fixed in 2.0.0-alpha.21. Two stream patterns plus a <em>satisfied</em>
+     * static pattern, and an element carrying only the FIRST stream statement: the second stream
+     * pattern has no match, so the correct answer is no row.
+     *
+     * <p>Before 2.0.0-alpha.21 the engine emitted one anyway, with the unmatched variable simply
+     * absent from the binding. It did not depend on the guard's direction — any satisfied static
+     * pattern with a determinable subject triggered it — and removing the static pattern made the
+     * same query correct. Of the two #67 failures this one was the worse: a consumer cannot tell a
+     * fabricated row from a real one.
+     *
+     * <p>The full element is the control. If it stops being admitted, the static pattern has started
+     * eliminating instead, and "no row on the partial element" would no longer mean what it claims.
+     */
+    private static boolean nowStaticPatternEnforcesConjunction() throws Exception {
+        Seeder seeded = engine -> {
+            try (RepositoryConnection conn = engine.getRepository().getConnection()) {
+                conn.add(VF.createIRI(C + "allowed"), VF.createIRI(Fleet.RDF_TYPE), VF.createIRI(C + "Field"));
+            }
+        };
+        String query = """
+            SELECT ?f ?val FROM STREAM S [NOW]
+            WHERE { STREAM S { ?o <%1$sof> ?f . ?o <%1$sv> ?val . } ?f <%2$s> <%1$sField> . }
+            """.formatted(C, Fleet.RDF_TYPE);
+        IRI o = VF.createIRI(C + "o1");
+        List<Object> full = run(seeded, query, s -> s.push(List.of(
+                VF.createStatement(o, VF.createIRI(C + "of"), VF.createIRI(C + "allowed")),
+                VF.createStatement(o, VF.createIRI(C + "v"), VF.createLiteral(1.0)))));
+        List<Object> partial = run(seeded, query,
+                s -> s.push(VF.createStatement(o, VF.createIRI(C + "of"), VF.createIRI(C + "allowed"))));
+        if (full.isEmpty()) {
+            DIVERGENCES.add("REGRESSED — a complete element under [NOW] plus a satisfied static pattern "
+                    + "no longer matches\n      the #67 [NOW] check's control failed; its verdict on the "
+                    + "partial element is meaningless until that is understood");
+        }
+        return !full.isEmpty() && partial.isEmpty();
+    }
+
+    /**
+     * {@code xsd:duration} comparison is evaluated, but not as durations. Measured on 2.0.0-alpha.21,
+     * and unchanged from the release before it:
+     *
+     * <pre>
+     *   "PT2S"  &gt; "PT1S"    matches        (true as durations, true as text)
+     *   "PT10S" &gt; "PT9S"    does NOT match (true as durations, false as text)
+     *   "PT60S" = "PT1M"    does NOT match (equal durations, different text)
+     * </pre>
+     *
+     * <p>Every result is consistent with comparing the literals' text. The docs used to call this
+     * "silently unsupported — filter never matches", which was wrong in the more dangerous direction:
+     * it does match, sometimes, and the sometimes is decided by how the digits happen to sort.
+     *
+     * <p>Returns true when ANY of the three stops behaving as documented. That covers both ways
+     * upstream might change it — real duration ordering (the second and third start matching) or a
+     * type error per the SPARQL 1.1 operator table (the first stops matching) — and either one means
+     * {@code CQELS-QL_SPEC.md} §9 and {@code CDSP_MAPPING.md} §4 need editing.
+     */
+    private static boolean durationOrderIsNotLexical() throws Exception {
+        boolean twoGtOne = durationFilterMatches("\"PT2S\"^^<%1$sduration> > \"PT1S\"^^<%1$sduration>");
+        boolean tenGtNine = durationFilterMatches("\"PT10S\"^^<%1$sduration> > \"PT9S\"^^<%1$sduration>");
+        boolean sixtyEqMin = durationFilterMatches("\"PT60S\"^^<%1$sduration> = \"PT1M\"^^<%1$sduration>");
+        boolean asDocumented = twoGtOne && !tenGtNine && !sixtyEqMin;
+        return !asDocumented;
+    }
+
+    private static boolean durationFilterMatches(String filter) throws Exception {
+        String xsd = "http://www.w3.org/2001/XMLSchema#";
+        List<Object> rows = run(null, """
+            SELECT ?o FROM STREAM S [NOW]
+            WHERE { STREAM S { ?o <%sv> ?x . } FILTER(%s) }
+            """.formatted(C, filter.formatted(xsd)),
+                s -> s.push(VF.createStatement(VF.createIRI(C + "o1"), VF.createIRI(C + "v"),
+                        VF.createLiteral(1.0))));
+        return !rows.isEmpty();
+    }
 
     // ---- capability probes ---------------------------------------------------------------
 

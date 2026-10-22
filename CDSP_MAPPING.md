@@ -3,7 +3,7 @@
 This document maps the [COVESA Central Data Service Playground](https://github.com/COVESA/cdsp)
 (CDSP) knowledge layer onto CQELS 2.0, rule by rule and query by query. It is written against
 what CDSP **actually runs today**, not a planned configuration, and every capability claim about
-CQELS below was verified by running it on `2.0.0-alpha.20`.
+CQELS below was verified by running it on `2.0.0-alpha.21`.
 
 > **Scope note.** A natural question is how S2DM-on-MongoDB use cases map here. They do not,
 > because they do not exist yet: [S2DM](https://github.com/COVESA/s2dm) has no MongoDB binding —
@@ -63,7 +63,7 @@ It is implemented as eight Datalog rules plus one output query.
 > **Rule 2 is not redundant.** A window says "no older than N seconds"; rule 2 says "the most
 > recent". Those differ exactly when a signal changes inside the window — a vehicle at 64 km/h that
 > slows to 4 and *then* swerves still has the 64 reading in scope, and a naive translation alerts on
-> it. CQELS-QL cannot express "the latest value of X" on `2.0.0-alpha.20` as a single aggregate:
+> it. CQELS-QL cannot express "the latest value of X" on `2.0.0-alpha.21` as a single aggregate:
 > `MAX(?pt)` finds the latest timestamp, but there is no argmax to join it back to that reading's
 > other properties, and no `xsd:dateTime` subtraction to compute a gap either (see §4). Relational
 > comparison (`<`, `>`) between two `xsd:dateTime` values **is** evaluated — see `FILTER(?t1 < ?t2)`
@@ -216,7 +216,7 @@ name them are needed. That is the substance of the reduction, not a syntactic tr
 
 ## 4. Function support, verified
 
-Probed on `2.0.0-alpha.20` by registering one query per function and pushing a value.
+Probed on `2.0.0-alpha.21` by registering one query per function and pushing a value.
 
 | Function | Status | Consequence for this mapping |
 |---|---|---|
@@ -224,16 +224,19 @@ Probed on `2.0.0-alpha.20` by registering one query per function and pushing a v
 | `SELECT DISTINCT`, `GROUP BY`, `AVG`/`MAX`/`COUNT`, `HAVING` | works | Rules 8, 9 and the output projection port directly |
 | `REPLACE` | **silently unsupported** — the row is emitted with the variable unbound | Cosmetic segment-id cleanup moves to the listener |
 | `xsd:dateTime` subtraction | **silently unsupported** — variable unbound | Not needed: the window replaces duration arithmetic |
-| `xsd:duration` comparison | **silently unsupported** — filter never matches | Not needed, as above |
+| `xsd:duration` comparison | **evaluated wrongly** — `PT2S > PT1S` matches, but `PT10S > PT9S` and `PT60S = PT1M` do not | Not needed, as above — and not to be relied on where it appears to work |
 
 None of these raises at registration, which is what makes them expensive to find: the query goes
-live and simply returns nothing for that expression. Earlier alphas had four issues sharing this
-silent shape — [#54](https://github.com/cqels/CQELS4J/issues/54),
-[#55](https://github.com/cqels/CQELS4J/issues/55), [#56](https://github.com/cqels/CQELS4J/issues/56)
-and [#57](https://github.com/cqels/CQELS4J/issues/57) — all four now fixed (`#56`'s fix is a loud
+live and either returns nothing for that expression or — for duration comparison — returns an
+answer that is right only when the lexical order of the two literals happens to agree. Earlier
+alphas had four issues sharing this silent shape —
+[#54](https://github.com/cqels/CQELS4J/issues/54),
+[#55](https://github.com/cqels/CQELS4J/issues/55),
+[#56](https://github.com/cqels/CQELS4J/issues/56) and
+[#57](https://github.com/cqels/CQELS4J/issues/57) — all four now fixed (`#56`'s fix is a loud
 parse-time rejection rather than execution, so it left this shape entirely rather than joining
-`REPLACE` and `xsd:dateTime` subtraction here). `REPLACE` and `xsd:dateTime` arithmetic are what
-remain in this silent class.
+`REPLACE` and `xsd:dateTime` subtraction here). `REPLACE`, `xsd:dateTime` subtraction and
+`xsd:duration` comparison are what remain in this silent class.
 
 ---
 
@@ -264,7 +267,7 @@ want.
 CDSP already exposes the data CQELS needs, in two places:
 
 - **IoTDB.** CDSP upstreamed IoTDB support into VISSR, and CQELS has two IoTDB storage modules.
-  `cqels-storage-iotdb-tsfile` **is** published at `2.0.0-alpha.20`; `cqels-storage-iotdb-session`
+  `cqels-storage-iotdb-tsfile` **is** published at `2.0.0-alpha.21`; `cqels-storage-iotdb-session`
   is **not** (404 on the release mirror), so that half means building from the engine repository.
 - **VISS over WebSocket.** The information layer speaks VISS; the unpublished `cqels-cdsp` module
   contains a `CdspWebSocketClient` and a `VssToRdfMapper` that already do the JSON→RDF step CDSP's
