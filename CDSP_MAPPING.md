@@ -224,7 +224,7 @@ Probed on `2.0.0-alpha.21` by registering one query per function and pushing a v
 | `SELECT DISTINCT`, `GROUP BY`, `AVG`/`MAX`/`COUNT`, `HAVING` | works | Rules 8, 9 and the output projection port directly |
 | `REPLACE` | **silently unsupported** — the row is emitted with the variable unbound | Cosmetic segment-id cleanup moves to the listener |
 | `xsd:dateTime` subtraction | **silently unsupported** — variable unbound | Not needed: the window replaces duration arithmetic |
-| `xsd:duration` comparison | **evaluated wrongly** — `PT2S > PT1S` matches, but `PT10S > PT9S` and `PT60S = PT1M` do not | Not needed, as above — and not to be relied on where it appears to work |
+| `xsd:duration` comparison ([#82](https://github.com/cqels/CQELS4J/issues/82)) | **evaluated wrongly** — `PT2S > PT1S` matches, but `PT10S > PT9S` and `PT60S = PT1M` do not | Not needed, as above — and not to be relied on where it appears to work |
 
 None of these raises at registration, which is what makes them expensive to find: the query goes
 live and either returns nothing for that expression or — for duration comparison — returns an

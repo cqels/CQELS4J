@@ -405,7 +405,7 @@ are called out.
   |-----------|-----------|--------|-------------|
   | `REPLACE(str, pattern, repl)` | §17.4.3.14 | **not evaluated** | post-process in the result listener |
   | `xsd:dateTime` subtraction | XPath-derived, outside the SPARQL 1.1 operator table | **not evaluated** — the variable is left unbound | express the interval as a **window** ([§3](#3-window-specifications)) |
-  | `xsd:duration` comparison | XPath-derived, outside the SPARQL 1.1 operator table | **evaluated, wrongly** — `PT2S > PT1S` matches, but `PT10S > PT9S` and `PT60S = PT1M` do not | express the interval as a **window**; do not rely on a comparison that appears to work |
+  | `xsd:duration` comparison ([#82](https://github.com/cqels/CQELS4J/issues/82)) | XPath-derived, outside the SPARQL 1.1 operator table | **evaluated, wrongly** — `PT2S > PT1S` matches, but `PT10S > PT9S` and `PT60S = PT1M` do not | express the interval as a **window**; do not rely on a comparison that appears to work |
 
   The last two rows are not conformance gaps — SPARQL 1.1's operator table defines neither `-` over
   two `xsd:dateTime` values nor ordering over `xsd:duration` — but they are worth stating, because
