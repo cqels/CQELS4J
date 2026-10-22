@@ -75,7 +75,7 @@ public class CapabilityProbe {
         System.out.println("Capability probe — does the engine still behave as this repo documents?\n");
 
         System.out.println("-- caveats (documented as BROKEN; a pass here means the docs are stale) --");
-        caveat("     xsd:duration is compared as text (PT10S > PT9S is false)",
+        caveat("#82 xsd:duration is compared as text (PT10S > PT9S is false)",
                 durationOrderIsNotLexical(),
                 "CQELS-QL_SPEC.md §9 gap table, CDSP_MAPPING.md §4");
         caveat("     REPLACE() is not evaluated",
@@ -641,7 +641,7 @@ public class CapabilityProbe {
     }
 
     /**
-     * {@code xsd:duration} comparison is evaluated, but not as durations. Measured on 2.0.0-alpha.21,
+     * #82: {@code xsd:duration} comparison is evaluated, but not as durations. Measured on 2.0.0-alpha.21,
      * and unchanged from the release before it:
      *
      * <pre>
