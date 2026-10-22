@@ -161,7 +161,7 @@ s2dm repository's own schemas, with a couple added to give the rollup a hierarch
 | [`S2dmInstanceZones`](src/main/java/org/cqels/examples/cdsp/S2dmInstanceZones.java) | `FILTER` over instance-tag bindings + `GROUP BY` on a compound (row × side) key | S2DM **instance tags**: one `Door.isOpen` concept tagged with an `InCabinZone` (row × side) replaces VSS's exploded `…Row1.DriverSide.IsOpen` paths — "any door, any zone" binds row/side as data, a rear-passenger-side interlock filters on the tag, and a dashboard counts door-open *events* per vehicle and zone (current state would need the latest reading per zone, which this release cannot express). A third row changes the data, not the query. |
 | [`SkosConceptRollup`](src/main/java/org/cqels/examples/cdsp/SkosConceptRollup.java) | Custom RETE rules (`cqels-reasoning-rete`) over `skos:broader` | Rolling observations up the concept hierarchy: `Seat`/`Door` readings answer a query that asks only about `Cabin`, while `Powertrain` — narrower than `Vehicle` but not than `Cabin` — correctly stays out. SKOS carries no RDFS entailment, so the lift is stated as an explicit rule rather than inherited from `rdfs:subClassOf`. |
 
-> These are written against the **published** `2.0.0-alpha.20` surface. Five engine limitations
+> These are written against the **published** `2.0.0-alpha.21` surface. Five engine limitations
 > came up while building an earlier version of these demos, each filed with a minimal reproducer:
 > [#54](https://github.com/cqels/CQELS4J/issues/54) (static patterns do not eliminate),
 > [#55](https://github.com/cqels/CQELS4J/issues/55) (prefixed names in `FILTER`),
@@ -213,7 +213,7 @@ s2dm repository's own schemas, with a couple added to give the rollup a hierarch
 > ```
 >
 > No demo ships here yet — the reason is scope, not reachability. The block above was compiled and
-> run verbatim against `2.0.0-alpha.20` (inside a `main`, with the obvious imports) and prints
+> run verbatim against `2.0.0-alpha.21` (inside a `main`, with the obvious imports) and prints
 > `convoy(...)` atoms: it registers through the facade and the solver derives. Note the rule shape — a program written over `obs(...)` registers and
 > returns result objects but derives nothing, because the mapper only ever emits `rdf/3`.
 

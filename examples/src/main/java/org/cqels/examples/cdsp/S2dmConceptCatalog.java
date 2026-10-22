@@ -80,27 +80,20 @@ public class S2dmConceptCatalog {
             // concepts are classified as FIELDS and reports only those readings. Add a field to
             // the GraphQL schema, regenerate, and it appears here with no query change.
             //
-            // Guard is `?field a s2dm:Field` -- a FORWARD edge from the join key -- not
-            // `c:FieldConcepts skos:member ?field`, a REVERSE edge INTO it. S2dm#concept asserts
-            // both facts for every concept, so either would express "is a field", but they are
-            // not interchangeable on this route. This STREAM block has two patterns (?field and
-            // ?value both come off ?obs), which under this window dispatches through the composed
-            // windowed lookup -- see CQELS-QL_SPEC.md §6, and note that pattern count alone does
-            // not decide it: the window and the projection matter too, so the rule of thumb is to
-            // check the specific query rather than to count patterns. On that route the
-            // static side is a forward, subject-rooted view built from the join key's bound value,
-            // with no repository fallback, so a pattern needs ?field in SUBJECT position to find
-            // anything there. The reverse form matched nothing FOR ANY ?field on that view, so it
-            // did not merely fail to discriminate -- it eliminated every row, field or not. The
-            // forward form is a DIFFERENT triple -- `?field a s2dm:Field` and `c:FieldConcepts
-            // skos:member ?field` are two facts the exporter co-emits, not one edge traversed in
-            // either direction -- and it resolves. Two caveats on treating it as a substitute:
-            // a model that emits only the collection edge has no forward form to switch to, and
-            // even in real s2dm output the two are not co-extensive -- the exporter makes every
-            // ENUM VALUE a skos:member of FieldConcepts while typing it s2dm:EnumValue, so this
-            // guard selects a strict subset. That is exactly what this query wants ("things the
-            // model classifies as fields"), but it is not a drop-in for collection membership.
-            // The seeded graph here has no enum values, so the two coincide in this demo.
+            // Guard is `?field a s2dm:Field`, the concept's own type, rather than
+            // `c:FieldConcepts skos:member ?field`, membership of the collection. S2dm#concept
+            // asserts both for every concept here, and since 2.0.0-alpha.21 either guard returns the
+            // same three readings on this data. They are still not interchangeable in general, which
+            // is why this one is chosen: in real s2dm output the exporter makes every ENUM VALUE a
+            // skos:member of FieldConcepts while typing it s2dm:EnumValue, so the type guard selects
+            // a strict subset of the collection. "Things the model classifies as fields" is that
+            // subset. The seeded graph here has no enum values, so the two coincide in this demo.
+            //
+            // History, because the choice used to be forced: before 2.0.0-alpha.21 a guard reached
+            // by a reverse edge into the join key was unsound (issue #67) and, on this exact query,
+            // dropped every row — field or not. The type guard was then the only one that worked.
+            // It is kept now for the reason above, not as a workaround. CQELS-QL_SPEC.md §6 has the
+            // measurements.
             String byFieldType = S2dm.PREFIXES + """
                     REGISTER QUERY AnyModelledField AS
                     SELECT ?label ?value
