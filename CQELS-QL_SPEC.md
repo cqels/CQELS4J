@@ -1,6 +1,6 @@
 # CQELS-QL Language Specification
 
-**Applies to:** CQELS `2.0.0-alpha.20` · **Based on:** SPARQL 1.1, extended with RSP-QL / C-SPARQL / LARS streaming constructs.
+**Applies to:** CQELS `2.0.0-alpha.21` · **Based on:** SPARQL 1.1, extended with RSP-QL / C-SPARQL / LARS streaming constructs.
 
 CQELS-QL (*Continuous Query Evaluation over Linked Streams — Query Language*) is **SPARQL 1.1 plus
 streaming**. If you know SPARQL, you already know most of it: `SELECT`, `FILTER`, `BIND`, `OPTIONAL`,
@@ -239,77 +239,34 @@ next matching element.
 **Elimination semantics.** A static pattern is a *required* join, exactly as in SPARQL 1.1: if the
 lookup finds no match, the row is eliminated. This is what lets a static pattern act as a **guard** —
 "only vehicles in this fleet", "only signals the model declares" — and not merely as enrichment.
-**As of `2.0.0-alpha.20` the engine enforces this**: a static pattern that fails to match eliminates
+**Since `2.0.0-alpha.20` the engine enforces this**: a static pattern that fails to match eliminates
 the row rather than leaving it unbound (`OPTIONAL`-like). A fully-constant static pattern was, and
 still is, evaluated correctly either way.
 
-> **A hazard that survives the fix above.** A `STREAM` block declaring **more than one** triple
-> pattern — not only for a windowed self-join or aggregate spanning several window elements, but
-> equally for a single atomic multi-statement push matched by two patterns sharing one subject —
-> commonly routes through the composed windowed lookup. (Commonly, not always: under `[NOW]` a
-> two-pattern block behaves differently, as the measurements below show.) On that route
-> the static side is served from a forward, subject-rooted view of the background graph, built
-> from the join key's bound value, rather than the repository directly. A guard reached by a
-> **reverse edge into the join key** falls outside that view: `c:FieldConcepts skos:member ?field`,
-> where `?field` is the join key and appears as the *object*, contributes no assignment on this
-> route for **every** value of `?field` — so the row is dropped unconditionally, even though the
-> pattern is satisfiable in the repository and even with elimination now correctly enforced above.
-> A guard that is an **outgoing** edge from the join key works, because it leaves from the view's
-> own root — e.g. `?field a s2dm:Field`, the fix actually applied in the
+> **Reverse-edge static guards: unsound before `2.0.0-alpha.21`, measured sound since**
+> ([#67](https://github.com/cqels/CQELS4J/issues/67)). Before `2.0.0-alpha.21`, a static guard that
+> reached the join key by a *reverse* edge — `ex:coll ex:member ?f`, with `?f` bound by the stream
+> as the *object* — failed in two opposite ways depending on the query's shape. It could
+> **fabricate** rows: pushing a triple that matched no stream pattern at all still emitted a binding
+> pulled from the store. And it could **eliminate** rows that fully matched. Under `[NOW]`, any
+> satisfied static pattern — forward or reverse — also let a row through while a required stream
+> pattern had no match. The earlier workaround was to guard on an outgoing edge instead.
+>
+> Since `2.0.0-alpha.21` none of that reproduces. A sweep of 162 cases returned the SPARQL 1.1
+> answer in every one — six windows (`[NOW]`, `[TRIPLES 1]`, `[TRIPLES 5]`, `[RANGE 3s]`, `[SLIDE 3s
+> STEP 1s]`, `[PAST 3s]`); one and two stream patterns; reverse, forward and no guard; matching,
+> non-member, unrelated and partial pushes; six static-pattern shapes under `[NOW]`; and a
+> variable-predicate query in four projections. Run against the previous release, the same sweep
+> returns the wrong answer in 24 of them, which is what makes it evidence rather than a tautology.
+> Shapes outside it have not been tested.
+>
+> One point from that history is independent of the bug and still holds. On real s2dm output the two
+> guards are **not** interchangeable: the exporter makes every enum value a `skos:member` of
+> `FieldConcepts` while typing it `s2dm:EnumValue`, so `?field a s2dm:Field` selects a strict
+> **subset** of the collection. That is why
 > [`S2dmConceptCatalog`](examples/src/main/java/org/cqels/examples/cdsp/S2dmConceptCatalog.java)
-> demo. Note what that substitution does and does not buy you. `?field a s2dm:Field` is a **separate
-> triple** the s2dm exporter co-emits alongside the collection edge, not the same edge traversed the
-> other way, so it is available only because the model asserts both — a model publishing membership
-> alone offers no forward guard at all. And where both exist they are not co-extensive: the exporter
-> also makes every **enum value** a `skos:member` of `FieldConcepts` while typing it
-> `s2dm:EnumValue`, so the type guard selects a strict **subset** of the collection. It is the right
-> guard for "things the model classifies as fields"; it is not a drop-in for "everything in
-> FieldConcepts". A `STREAM` block with exactly **one** triple pattern can take a simpler
-> per-element lookup that falls back to the repository directly. That does **not** make it safe.
-> Probing each shape with a matching push and then a deliberately non-matching one on
-> `2.0.0-alpha.20`, a reverse guard is unsound in almost every shape, in one of two opposite ways. A
-> one-pattern block with a **fixed** predicate **fabricates**: with `ex:coll ex:member ex:allowed`
-> in the store and a guard `ex:coll ex:member ?f`, pushing an unrelated triple that cannot match the
-> stream pattern at all still emits `{f=ex:allowed}`, a binding no stream element justifies. Under
-> the accumulating windows — `[TRIPLES]`, `[RANGE]`, `[SLIDE]`, `[PAST]` — a two-pattern block, or a
-> one-pattern block with an aggregate, instead **eliminates**, dropping rows that do match. Under
-> `[NOW]` a two-pattern block fabricates rather than eliminating, and a global aggregate is rejected
-> at registration outright. A sweep of 30 fixed-predicate combinations across five window forms
-> found no correct case at all. Some queries *are* correct. This one is, measured exactly as
-> written, with `ex:coll ex:member ex:allowed` in the store and a single-triple push of `ex:o1 ex:of
-> ex:allowed`:
->
-> ```sparql
-> PREFIX ex: <https://example.org/probe#>
-> SELECT ?p ?f FROM STREAM S [NOW]
-> WHERE {
->   STREAM S { ?o ?p ?f . }
->   ex:coll ex:member ?f .
->   FILTER(?p = ex:of)
-> }
-> ```
->
-> It admits the member, rejects a non-member, and rejects a matching object reached by the wrong
-> predicate. The `PREFIX` line is part of the measurement: drop it and the query still
-> **registers**, then matches nothing at all — the same silent failure this section is about,
-> arriving by a different route.
->
-> **Do not generalise from it.** Each of the following changes — several of which look
-> irrelevant — changes the result, and the list is offered as evidence that the behaviour does not
-> decompose into conditions, not as a set of rules to satisfy: projecting `SELECT ?f` or `SELECT ?o
-> ?f` instead drops the valid row; adding the **satisfied** static pattern `?f a ex:Field .`
-> alongside the guard drops it too, though that triple is in the store; removing the `FILTER` gives
-> a correct unrestricted-predicate query in which `SELECT ?f` now *does* work, so the projection
-> sensitivity above is entangled with the filter rather than independent of it; any accumulating
-> window in place of `[NOW]` eliminates; pushing the same data as an atomic multi-statement element
-> whose relevant statement is not first loses the match; adding a second stream pattern fabricates a
-> partial row when the second statement is absent; and the forward `rdf:type` guard — the workaround
-> recommended everywhere else in this section — itself drops the valid row on this query, in every
-> projection tested. Predicate spelling (prefixed or full IRI), the order of `FILTER` relative to
-> the guard, the number of collection members and the other engine settings tested made no
-> difference. So: prefer a forward edge where the model offers one, but **verify the specific query
-> with both a matching and a non-matching push**, and filter in the result listener when you cannot.
-> A guard that works is a measurement, not a deduction.
+> still guards on the type — it asks for things the model classifies as fields, not for everything
+> in the collection.
 
 ---
 
@@ -401,7 +358,7 @@ are called out.
 - **`SELECT` / `SELECT DISTINCT`**, projection, and `(expr AS ?v)` expressions.
 - **Aggregates:** `COUNT(*)` / `COUNT(?v)`, `SUM`, `AVG`, `MIN`, `MAX`, `GROUP_CONCAT(?v; SEPARATOR=", ")`.
   *Note:* `GROUP BY` selects **per-group** results rather than global ones; it is **not** required
-  for an aggregate to apply. Measured on `2.0.0-alpha.20`, a global (no `GROUP BY`) aggregate
+  for an aggregate to apply. Measured on `2.0.0-alpha.21`, a global (no `GROUP BY`) aggregate
   accumulates correctly over every window that accumulates — `[RANGE]`, `[TRIPLES]`, `[SLIDE]`.
   One shape is rejected: `[NOW]` with a global aggregate **fails at registration**, with a message
   naming the windows to use instead (`[NOW]` is zero-length, so there is nothing to accumulate).
@@ -413,7 +370,7 @@ are called out.
 
   The table below is a list of **measured cases**, not a rule — the boundary between the two is not
   something this document can derive, and shapes outside the list have not been tested. All measured
-  on `2.0.0-alpha.20` with one stream pattern and `[RANGE 3s]`, using elements timestamped 2800,
+  on `2.0.0-alpha.21` with one stream pattern and `[RANGE 3s]`, using elements timestamped 2800,
   2900 and 3100 ms:
 
   | Query shape | Result |
@@ -437,21 +394,26 @@ are called out.
 
 
 - **`FILTER(expr)`** — operators `= != < > <= >= && || !` `+ - * /`, plus built-ins; full SPARQL
-  effective-boolean-value semantics. Verified working on `2.0.0-alpha.20`: `BOUND`, `IF`, `STR`,
+  effective-boolean-value semantics. Verified working on `2.0.0-alpha.21`: `BOUND`, `IF`, `STR`,
   `CONCAT`, `ABS`, `SUBSTR`, `IRI`, `year(...)`, `sameTerm`, and a prefixed name used as a constant
   (resolved against the query's own `PREFIX` declarations, the same as in a triple pattern).
   **Not every SPARQL 1.1 built-in is evaluated**, and an unevaluated one fails the same silent way an
   unregistered function IRI does — no registration error, `FILTER` simply never matches and `BIND`
-  leaves the variable unbound. Known gaps on `2.0.0-alpha.20`:
+  leaves the variable unbound. Known gaps on `2.0.0-alpha.21`:
 
   | Construct | SPARQL 1.1 | Status | Use instead |
   |-----------|-----------|--------|-------------|
   | `REPLACE(str, pattern, repl)` | §17.4.3.14 | **not evaluated** | post-process in the result listener |
-  | `xsd:dateTime` subtraction / `xsd:duration` comparison | XPath-derived, outside the SPARQL 1.1 operator table | not evaluated | express the interval as a **window** ([§3](#3-window-specifications)) |
+  | `xsd:dateTime` subtraction | XPath-derived, outside the SPARQL 1.1 operator table | **not evaluated** — the variable is left unbound | express the interval as a **window** ([§3](#3-window-specifications)) |
+  | `xsd:duration` comparison | XPath-derived, outside the SPARQL 1.1 operator table | **evaluated, wrongly** — `PT2S > PT1S` matches, but `PT10S > PT9S` and `PT60S = PT1M` do not | express the interval as a **window**; do not rely on a comparison that appears to work |
 
-  The last row is not a conformance gap — SPARQL 1.1 does not define `-` over two `xsd:dateTime`
-  values — but it is worth stating, because porting rule engines that do (RDFox, for one) will reach
-  for it. A window expresses the same constraint declaratively and bounds engine state as well.
+  The last two rows are not conformance gaps — SPARQL 1.1's operator table defines neither `-` over
+  two `xsd:dateTime` values nor ordering over `xsd:duration` — but they are worth stating, because
+  porting rule engines that do (RDFox, for one) will reach for them. The duration row is the more
+  dangerous of the two. Rather than failing every time, it returns answers consistent with comparing
+  the literals' *text*: right when the digits happen to sort the same way (`PT2S` vs `PT1S`), wrong
+  when they do not (`PT10S` vs `PT9S`), and blind to equal durations written differently (`PT60S` vs
+  `PT1M`). A window expresses the same constraint declaratively and bounds engine state as well.
 - **`BIND(expr AS ?v)`** — computed variables (evaluated after `FILTER`).
 - **Extension functions (SPARQL 1.1 §17.6)** — since `2.0.0-alpha.11`, a `FILTER` / `BIND` /
   `SELECT`-expression call to an **explicit function IRI** — `<urn:cqels:fn:haversine>(…)` or a
@@ -496,7 +458,7 @@ are called out.
     evaluation boundary is rejected at registration — sorting or truncating an unbounded stream
     is not well-defined without one.
   - `[NOW]` combined with a **global** (no `GROUP BY`) aggregate is **rejected at registration**
-    as of `2.0.0-alpha.20`; earlier alphas silently leaked the raw argument binding instead.
+    since `2.0.0-alpha.20`; earlier alphas silently leaked the raw argument binding instead.
 
 **Evaluation order:** stream patterns → static lookup join → `UNION` → `OPTIONAL` →
 `FILTER NOT EXISTS` → `FILTER` → `BIND` → `GROUP BY` + aggregates → `HAVING` → `ORDER BY` → `LIMIT`.
