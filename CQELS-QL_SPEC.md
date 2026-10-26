@@ -264,7 +264,8 @@ still is, evaluated correctly either way.
 > composed windowed route — a multi-pattern `STREAM` block under `[TRIPLES n]` or `[RANGE d]` — a
 > stream solution whose join key binds a **literal** drops its row; the same query keyed on an IRI
 > answers, and under `[NOW]` it is correct. And on a query with a static graph pattern, a `FILTER`
-> over a `BIND` target drops every row (see the `BIND` entry in
+> over a `BIND` target runs before the `BIND`, so a comparison on it drops every row
+> ([#83](https://github.com/cqels/CQELS4J/issues/83); see the `BIND` entry in
 > [§9](#9-standard-sparql-features-supported-as-is)). Upstream lists further static-lookup gaps for
 > this release; its release notes have them.
 >
@@ -436,10 +437,13 @@ are called out.
 - **`BIND(expr AS ?v)`** — computed variables. Whether a `FILTER` sees a `BIND` target depends on
   the route, measured on `2.0.0-alpha.21`:
   - on a **stream-only** query it does, as SPARQL 1.1 requires;
-  - on a query **with a static graph pattern** it does not: a `FILTER` over a `BIND` target sees the
-    variable unbound and drops **every** row, wherever the `FILTER` is written — a silent wrong
-    answer. Filter on the variables the `BIND` reads instead (`FILTER(?x > 2.5)` rather than
-    `BIND(?x * 2 AS ?y) FILTER(?y > 5)`), which works on both routes.
+  - on a query **with a static graph pattern** it does not
+    ([#83](https://github.com/cqels/CQELS4J/issues/83)): the `FILTER` runs before the `BIND`,
+    wherever it is written, and sees the variable unbound. A comparison on it drops **every** row,
+    and a test that holds for an unbound variable — `FILTER(!BOUND(?y))` — admits every row, which
+    then comes out with `?y` bound. Both are silent wrong answers. Filter on the variables the
+    `BIND` reads instead (`FILTER(?x > 2.5)` rather than `BIND(?x * 2 AS ?y) FILTER(?y > 5)`),
+    which works on both routes.
 
   Since `2.0.0-alpha.21`, on a query with a static graph pattern, an `OPTIONAL`, `UNION` or
   `FILTER NOT EXISTS` that follows a top-level `BIND` and probes its target does see it.
