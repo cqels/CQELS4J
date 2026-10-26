@@ -81,7 +81,7 @@ public class CapabilityProbe {
         caveat("     a literal join key drops its row on the composed route",
                 literalJoinKeyAdmits(),
                 "CQELS-QL_SPEC.md §6");
-        caveat("     a FILTER over a BIND target drops every row beside a static pattern",
+        caveat("#83 a FILTER over a BIND target drops every row beside a static pattern",
                 filterSeesBindTargetBesideStaticPattern(),
                 "CQELS-QL_SPEC.md §9 BIND entry and §6");
         caveat("     REPLACE() is not evaluated",
@@ -723,10 +723,12 @@ public class CapabilityProbe {
     }
 
     /**
-     * Measured on 2.0.0-alpha.21 and found by this repository rather than listed upstream: on a query
-     * with a static graph pattern, a {@code FILTER} over a {@code BIND} target sees the variable
-     * unbound and drops every row — wherever the {@code FILTER} is written. In SPARQL 1.1 a group's
-     * {@code FILTER} sees its {@code BIND}, and a stream-only query gets this right.
+     * #83, measured on 2.0.0-alpha.21: on a query with a static graph pattern, a {@code FILTER} over
+     * a {@code BIND} target runs before the {@code BIND} — wherever the {@code FILTER} is written —
+     * and sees the variable unbound. A comparison on it drops every row; {@code FILTER(!BOUND(?y))}
+     * admits the row, which then comes out with {@code ?y} bound. In SPARQL 1.1 a group's
+     * {@code FILTER} sees its {@code BIND}, and a stream-only query gets this right. Checking the
+     * dropping direction is enough: a fix to the order flips both.
      *
      * <p>The control filters on the variable the {@code BIND} reads instead, which answers; if it
      * stops answering, the static lookup itself has broken and this verdict means nothing.
