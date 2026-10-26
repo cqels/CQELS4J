@@ -48,7 +48,8 @@ public class CepQuantifier {
             // variable-length middle is detected and the escalation reported. Since 2.0.0-alpha.21 this
             // exact input yields ONE match, the full four-event sequence. Earlier alphas also reported a
             // three-event match that skipped a weave, and repeated the four-event one — so expect a
-            // single line here. That is what this input measures, not a stated match-selection policy.
+            // single line here. That follows from the engine's stated match semantics since alpha.21:
+            // each match is a complex event emitted exactly once (CQELS-QL_SPEC.md §7).
             for (String ev : new String[]{
                     Fleet.SPEED_DROP, Fleet.LANE_WEAVE, Fleet.LANE_WEAVE, Fleet.SPEED_SPIKE}) {
                 System.out.println("push: " + ev.substring(Fleet.FLEET.length()));
