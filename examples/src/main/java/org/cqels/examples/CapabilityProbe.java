@@ -78,6 +78,12 @@ public class CapabilityProbe {
         caveat("#82 xsd:duration is compared as text (PT10S > PT9S is false)",
                 durationOrderIsNotLexical(),
                 "CQELS-QL_SPEC.md §9 gap table, CDSP_MAPPING.md §4");
+        caveat("     a literal join key drops its row on the composed route",
+                literalJoinKeyAdmits(),
+                "CQELS-QL_SPEC.md §6");
+        caveat("     a FILTER over a BIND target drops every row beside a static pattern",
+                filterSeesBindTargetBesideStaticPattern(),
+                "CQELS-QL_SPEC.md §9 BIND entry and §6");
         caveat("     REPLACE() is not evaluated",
                 replaceEvaluates(),
                 "CQELS-QL_SPEC.md §9 gap table, CDSP_MAPPING.md §4");
@@ -676,6 +682,77 @@ public class CapabilityProbe {
                 s -> s.push(VF.createStatement(VF.createIRI(C + "o1"), VF.createIRI(C + "v"),
                         VF.createLiteral(1.0))));
         return !rows.isEmpty();
+    }
+
+    /**
+     * Measured on 2.0.0-alpha.21, outside the 162-case sweep that showed #67 fixed: on the composed
+     * windowed route (a multi-pattern {@code STREAM} block under an accumulating window), a stream
+     * solution whose join key binds a LITERAL drops its row. The identical query keyed on an IRI
+     * answers — that is the control, and if it stops answering the comparison means nothing.
+     * Under {@code [NOW]} the literal key is answered correctly. Upstream lists this as a known
+     * issue of the release.
+     *
+     * <p>Returns true when the literal-keyed row appears, i.e. the caveat is fixed.
+     */
+    private static boolean literalJoinKeyAdmits() throws Exception {
+        Seeder seeded = engine -> {
+            try (RepositoryConnection conn = engine.getRepository().getConnection()) {
+                conn.add(VF.createIRI(C + "item1"), VF.createIRI(C + "itemCode"), VF.createLiteral("A1"));
+                conn.add(VF.createIRI(C + "item1"), VF.createIRI(C + "itemCodeIri"), VF.createIRI(C + "A1"));
+            }
+        };
+        IRI o = VF.createIRI(C + "o1");
+        List<Object> literal = run(seeded, """
+            SELECT ?o ?item FROM STREAM S [TRIPLES 1]
+            WHERE { STREAM S { ?o <%1$scode> ?k . ?o <%1$stag> ?t . } ?item <%1$sitemCode> ?k . }
+            """.formatted(C), s -> s.push(List.of(
+                VF.createStatement(o, VF.createIRI(C + "code"), VF.createLiteral("A1")),
+                VF.createStatement(o, VF.createIRI(C + "tag"), VF.createLiteral("t")))));
+        List<Object> iri = run(seeded, """
+            SELECT ?o ?item FROM STREAM S [TRIPLES 1]
+            WHERE { STREAM S { ?o <%1$scodeIri> ?k . ?o <%1$stag> ?t . } ?item <%1$sitemCodeIri> ?k . }
+            """.formatted(C), s -> s.push(List.of(
+                VF.createStatement(o, VF.createIRI(C + "codeIri"), VF.createIRI(C + "A1")),
+                VF.createStatement(o, VF.createIRI(C + "tag"), VF.createLiteral("t")))));
+        if (iri.isEmpty()) {
+            DIVERGENCES.add("REGRESSED — the IRI-keyed control of the literal-join-key check no longer "
+                    + "answers\n      the composed route now drops IRI-keyed rows too; the literal "
+                    + "verdict is meaningless until that is understood");
+        }
+        return !literal.isEmpty();
+    }
+
+    /**
+     * Measured on 2.0.0-alpha.21 and found by this repository rather than listed upstream: on a query
+     * with a static graph pattern, a {@code FILTER} over a {@code BIND} target sees the variable
+     * unbound and drops every row — wherever the {@code FILTER} is written. In SPARQL 1.1 a group's
+     * {@code FILTER} sees its {@code BIND}, and a stream-only query gets this right.
+     *
+     * <p>The control filters on the variable the {@code BIND} reads instead, which answers; if it
+     * stops answering, the static lookup itself has broken and this verdict means nothing.
+     *
+     * <p>Returns true when the {@code FILTER} over the {@code BIND} target admits the row, i.e. the
+     * caveat is fixed.
+     */
+    private static boolean filterSeesBindTargetBesideStaticPattern() throws Exception {
+        Seeder seeded = engine -> {
+            try (RepositoryConnection conn = engine.getRepository().getConnection()) {
+                conn.add(VF.createIRI(C + "o1"), VF.createIRI(C + "kind"), VF.createIRI(C + "K"));
+            }
+        };
+        Pusher four = s -> s.push(VF.createStatement(VF.createIRI(C + "o1"), VF.createIRI(C + "v"),
+                VF.createLiteral(4.0)));
+        String shape = """
+            SELECT ?o ?y FROM STREAM S [NOW]
+            WHERE { STREAM S { ?o <%1$sv> ?x . } ?o <%1$skind> <%1$sK> . BIND(?x * 2 AS ?y) FILTER(%2$s) }
+            """;
+        List<Object> onBindTarget = run(seeded, shape.formatted(C, "?y > 5"), four);
+        List<Object> onInput = run(seeded, shape.formatted(C, "?x > 2.5"), four);
+        if (onInput.isEmpty()) {
+            DIVERGENCES.add("REGRESSED — the control (a FILTER on the BIND's input) no longer answers\n"
+                    + "      the static lookup itself is failing; the BIND/FILTER verdict is meaningless");
+        }
+        return !onBindTarget.isEmpty();
     }
 
     // ---- capability probes ---------------------------------------------------------------

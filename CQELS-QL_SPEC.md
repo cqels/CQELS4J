@@ -243,7 +243,7 @@ lookup finds no match, the row is eliminated. This is what lets a static pattern
 the row rather than leaving it unbound (`OPTIONAL`-like). A fully-constant static pattern was, and
 still is, evaluated correctly either way.
 
-> **Reverse-edge static guards: unsound before `2.0.0-alpha.21`, measured sound since**
+> **Reverse-edge static guards: unsound before `2.0.0-alpha.21`; the shapes below are sound since**
 > ([#67](https://github.com/cqels/CQELS4J/issues/67)). Before `2.0.0-alpha.21`, a static guard that
 > reached the join key by a *reverse* edge — `ex:coll ex:member ?f`, with `?f` bound by the stream
 > as the *object* — failed in two opposite ways depending on the query's shape. It could
@@ -259,6 +259,14 @@ still is, evaluated correctly either way.
 > variable-predicate query in four projections. Run against the previous release, the same sweep
 > returns the wrong answer in 24 of them, which is what makes it evidence rather than a tautology.
 > Shapes outside it have not been tested.
+>
+> Two static-pattern shapes outside that sweep are still wrong on `2.0.0-alpha.21`, measured. On the
+> composed windowed route — a multi-pattern `STREAM` block under `[TRIPLES n]` or `[RANGE d]` — a
+> stream solution whose join key binds a **literal** drops its row; the same query keyed on an IRI
+> answers, and under `[NOW]` it is correct. And on a query with a static graph pattern, a `FILTER`
+> over a `BIND` target drops every row (see the `BIND` entry in
+> [§9](#9-standard-sparql-features-supported-as-is)). Upstream lists further static-lookup gaps for
+> this release; its release notes have them.
 >
 > One point from that history is independent of the bug and still holds. On real s2dm output the two
 > guards are **not** interchangeable: the exporter makes every enum value a `skos:member` of
@@ -293,17 +301,23 @@ Reads as: *within a 20-second window, a high-speed alert, then an aggressive-dri
 hard-braking alert — in that order.*
 
 **`SEQ` syntax.** Arguments are separated by **`;`** (not `,`) and there must be **two or more**. Each
-argument has the shape:
+argument has one of two shapes:
 
 ```
-NOT? <eventVar> <quantifier>?
+<eventVar> <quantifier>?
+NOT <eventVar>
 ```
 
 - **`<eventVar>`** (e.g. `?e1`) must appear as the **subject** of at least one triple pattern in the WHERE
   block — that pattern defines what the event matches. A variable that is never a subject is a compile
   error.
 - **`NOT`** turns the step into a negated gap — "this must *not* occur between the previous and next
-  events" (a gap constraint, not adjacency).
+  events" (a gap constraint, not adjacency). A `NOT` step takes no quantifier: since
+  `2.0.0-alpha.21` a quantified negation such as `NOT ?e+` is refused at registration.
+- A **trailing** `NOT` — `SEQ(?a ; NOT ?b)` — needs a time window to close it. Under `[RANGE …]` it
+  is accepted; since `2.0.0-alpha.21` it is refused at registration under `[NOW]` or `[TRIPLES n]`.
+- Each event variable may appear **once** in a `SEQ`; since `2.0.0-alpha.21` a repeated one is
+  refused at registration.
 
 **Quantifiers:**
 
@@ -314,6 +328,11 @@ NOT? <eventVar> <quantifier>?
 | `?e?` | zero or one |
 | `?e{3}` | exactly three |
 | `?e{2,5}` | between 2 and 5 (inclusive) |
+
+**Matches.** Since `2.0.0-alpha.21` each match is a complex event emitted **exactly once**, and a
+quantified argument consumes every relevant event: `SEQ(?a ; ?b+ ; ?c)` over `a b b c` emits
+`[a b b c]` once. Earlier alphas also emitted shorter matches and repeated longer ones — for that
+input, `[a b b c]` twice and `[a b c]` once.
 
 **Event matching.** If an event variable is the subject of a *single* triple pattern, it fires when one
 statement matches. If it is the subject of *several* patterns, it fires only when a single stream element
@@ -414,7 +433,16 @@ are called out.
   the literals' *text*: right when the digits happen to sort the same way (`PT2S` vs `PT1S`), wrong
   when they do not (`PT10S` vs `PT9S`), and blind to equal durations written differently (`PT60S` vs
   `PT1M`). A window expresses the same constraint declaratively and bounds engine state as well.
-- **`BIND(expr AS ?v)`** — computed variables (evaluated after `FILTER`).
+- **`BIND(expr AS ?v)`** — computed variables. Whether a `FILTER` sees a `BIND` target depends on
+  the route, measured on `2.0.0-alpha.21`:
+  - on a **stream-only** query it does, as SPARQL 1.1 requires;
+  - on a query **with a static graph pattern** it does not: a `FILTER` over a `BIND` target sees the
+    variable unbound and drops **every** row, wherever the `FILTER` is written — a silent wrong
+    answer. Filter on the variables the `BIND` reads instead (`FILTER(?x > 2.5)` rather than
+    `BIND(?x * 2 AS ?y) FILTER(?y > 5)`), which works on both routes.
+
+  Since `2.0.0-alpha.21`, on a query with a static graph pattern, an `OPTIONAL`, `UNION` or
+  `FILTER NOT EXISTS` that follows a top-level `BIND` and probes its target does see it.
 - **Extension functions (SPARQL 1.1 §17.6)** — since `2.0.0-alpha.11`, a `FILTER` / `BIND` /
   `SELECT`-expression call to an **explicit function IRI** — `<urn:cqels:fn:haversine>(…)` or a
   declared-prefix form such as `cqfn:haversine(…)` with `PREFIX cqfn: <urn:cqels:fn:>` — resolves
@@ -437,12 +465,15 @@ are called out.
   paths themselves are still not executable. Write the hops explicitly
   (`?a skos:broader ?mid . ?mid skos:broader ?b .`) for a fixed depth, or use a recursive rule (see
   the [`BoundedTransitiveClosure`](examples/) example) for unbounded closure.
-- **`FILTER NOT EXISTS { … }`** — anti-join (exclude rows with a match). (`MINUS` is not yet executed;
-  since `2.0.0-alpha.13` registering a query containing `MINUS` **fails loud** with a hint to rewrite it
-  as `FILTER NOT EXISTS` — earlier alphas parsed it but silently skipped it.)
+- **`FILTER NOT EXISTS { … }`** — anti-join (exclude rows with a match). Its body may hold only
+  triple patterns over the static graph; since `2.0.0-alpha.21` anything else — an inner `FILTER`,
+  for instance — is refused at registration rather than silently dropped. (`MINUS` is not yet
+  executed; since `2.0.0-alpha.13` registering a query containing `MINUS` **fails loud** with a hint
+  to rewrite it as `FILTER NOT EXISTS` — earlier alphas parsed it but silently skipped it.)
 - **`GROUP BY ?a, ?b`** · **`HAVING(expr)`** — per-group aggregation (**not** required for an
-  aggregate to apply — see the aggregates note above) + post-aggregation filter; `HAVING` references
-  the **SELECT aliases** (e.g. `HAVING(?cnt > 1)`, not `HAVING(COUNT(*) > 1)`).
+  aggregate to apply — see the aggregates note above) + post-aggregation filter; `HAVING` may use
+  the SELECT alias (`HAVING(?cnt > 1)`) or the aggregate call (`HAVING(COUNT(*) > 1)`); since
+  `2.0.0-alpha.21` the two answer the same. Before it, the call form silently matched nothing.
 - **`ORDER BY ?v [ASC|DESC]`** (default `ASC`) · **`LIMIT n`** — on a continuous query, semantics
   are decided by the **execution route**, not by whether the query text declares a window: a
   declared window alone does not make a query "windowed" in the sense that matters here.
@@ -452,8 +483,10 @@ are called out.
   - A **legacy-windowed, single-pattern, non-aggregate** `SELECT` combining `ORDER BY` with
     `LIMIT` has no such boundary and is **rejected at registration** rather than ranked per window.
   - A **windowed stream–static, non-aggregate** query whose stream side needs the windowed join
-    falls through instead to a **continuous top-`k`**: the current top-`k` is re-emitted whenever
-    it changes, and that top-`k` accumulates *across* windows rather than resetting each one.
+    ranks **per evaluation** since `2.0.0-alpha.21`, like the other batch routes: each arrival
+    emits the current window's ranked rows, and a row that leaves the window stops competing. A bare
+    `ORDER BY` or a bare `LIMIT` registers on this route too. Before `2.0.0-alpha.21` it ran a
+    continuous top-`k` accumulated across the whole stream, and refused a bare modifier.
   - A bare `ORDER BY` or a bare `LIMIT` (not paired with the other) over a route with no
     evaluation boundary is rejected at registration — sorting or truncating an unbounded stream
     is not well-defined without one.
@@ -461,7 +494,9 @@ are called out.
     since `2.0.0-alpha.20`; earlier alphas silently leaked the raw argument binding instead.
 
 **Evaluation order:** stream patterns → static lookup join → `UNION` → `OPTIONAL` →
-`FILTER NOT EXISTS` → `FILTER` → `BIND` → `GROUP BY` + aggregates → `HAVING` → `ORDER BY` → `LIMIT`.
+`FILTER NOT EXISTS` → `FILTER` → `GROUP BY` + aggregates → `HAVING` → `ORDER BY` → `LIMIT`. `BIND`
+is deliberately not placed in that chain: where it runs depends on the route and on what follows
+it — see the `BIND` entry above.
 
 ---
 
