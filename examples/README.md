@@ -21,10 +21,12 @@ charging stations, geofenced zones, drivers, GTFS-style service assignments) liv
 connected world rather than ad-hoc per-demo data. The domain models a smart electric-vehicle fleet /
 vehicle-to-grid (V2G) scenario.
 
-> **Reading the output:** CQELS is a *continuous* engine — it re-evaluates a query's window as each
-> element arrives and re-emits the current results (RStream-style). Because each observation is pushed
-> as several triples, you'll see a result row or aggregate **printed multiple times** as a reading
-> streams in, and counts climb while the window fills. That repetition is the engine working, not a
+> **Reading the output:** CQELS is a *continuous* engine, and what it emits per arrival depends on
+> the query's shape. A single-pattern query reports each new solution once, as its element arrives.
+> Multi-pattern window queries and rolling aggregates re-evaluate the window and re-emit the current
+> results (RStream-style). Because each observation is pushed as several triples, you'll see a result
+> row or aggregate **printed multiple times** as a reading streams in, and counts climb while the
+> window fills. That repetition is the engine working, not a
 > bug; the **latest / distinct values** are the answer. The demos print every emission so the dynamics
 > are visible.
 
@@ -159,7 +161,7 @@ s2dm repository's own schemas, with a couple added to give the rollup a hierarch
 |-------|---------------|----------|
 | [`S2dmConceptCatalog`](src/main/java/org/cqels/examples/cdsp/S2dmConceptCatalog.java) | Stream–static join against a SKOS concept graph; `[TRIPLES 1]` over atomic multi-statement elements | Readings are presented with the label and definition the *modeller* wrote: the query joins live telemetry to `skos:prefLabel` / `skos:definition`, so renaming a concept upstream changes every consumer with no query edit. |
 | [`S2dmInstanceZones`](src/main/java/org/cqels/examples/cdsp/S2dmInstanceZones.java) | `FILTER` over instance-tag bindings + `GROUP BY` on a compound (row × side) key | S2DM **instance tags**: one `Door.isOpen` concept tagged with an `InCabinZone` (row × side) replaces VSS's exploded `…Row1.DriverSide.IsOpen` paths — "any door, any zone" binds row/side as data, a rear-passenger-side interlock filters on the tag, and a dashboard counts door-open *events* per vehicle and zone (current state would need the latest reading per zone, which this release cannot express). A third row changes the data, not the query. |
-| [`SkosConceptRollup`](src/main/java/org/cqels/examples/cdsp/SkosConceptRollup.java) | Custom RETE rules (`cqels-reasoning-rete`) over `skos:broader` | Rolling observations up the concept hierarchy: `Seat`/`Door` readings answer a query that asks only about `Cabin`, while `Powertrain` — narrower than `Vehicle` but not than `Cabin` — correctly stays out. SKOS carries no RDFS entailment, so the lift is stated as an explicit rule rather than inherited from `rdfs:subClassOf`. |
+| [`SkosConceptRollup`](src/main/java/org/cqels/examples/cdsp/SkosConceptRollup.java) | Custom RETE rules (`cqels-reasoning-rete`) over `skos:broader` | Rolling observations up the concept hierarchy: `Seat`/`Door` readings answer a query that asks only about `Cabin`, and one two hops up that asks only about `Vehicle`; `Powertrain` — narrower than `Vehicle` but not than `Cabin` — answers the vehicle query and correctly stays out of the cabin one. SKOS carries no RDFS entailment, so the lift is stated as an explicit rule rather than inherited from `rdfs:subClassOf`. |
 
 > These are written against the **published** `2.0.0-alpha.21` surface. Five engine limitations
 > came up while building an earlier version of these demos, each filed with a minimal reproducer:
@@ -171,8 +173,7 @@ s2dm repository's own schemas, with a couple added to give the rollup a hierarch
 > four bugs are fixed — `#56`'s fix is a loud parse-time rejection, not execution, so property
 > paths themselves remain unsupported even though the issue is closed. Only `#58` is still open as
 > a limitation. Each demo's Javadoc names what it still works around rather than hiding it —
-> `SkosConceptRollup` names two (unsupported property paths and `#58`), which is why its list is
-> the longest.
+> `SkosConceptRollup` names two: unsupported property paths, and `#58`.
 
 ### Query dialects
 | Class | CQELS feature | Scenario |

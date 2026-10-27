@@ -195,12 +195,13 @@ established that the manifest itself is authentic.
 Every other **versioned artifact** — jars, POMs, SBOMs and their `.md5`/`.sha1` sidecars — *is*
 anonymously available from the Maven repository.
 
-Repository **metadata** is not: `maven-metadata.xml` and its checksum sidecars are absent by
-design (a release stages only its own version, so copying that metadata would overwrite the
-accumulated version list with a single entry). Fixed-version resolution never reads them, which
-is what every dependency declaration does; version ranges and `LATEST` are not supported here.
-They remain listed in `SHA256SUMS` because the manifest records everything the release produced,
-which is why the bulk check filters to `org/cqels/**` jars.
+Repository **metadata** is served too, since the `2.0.0-alpha.21` release: the publishing pipeline
+now builds a cumulative `maven-metadata.xml` per artifact, listing every published version, so
+version ranges resolve. The release's `SHA256SUMS` lists those files, and the served
+`org/cqels/cqels-engine/maven-metadata.xml` matched its digest when this was checked. But the next
+release rewrites them to add its own version, so a digest stays valid only until then. That is why
+the bulk check filters to `org/cqels/**` jars, and why only a fixed version is pinned to a signed
+digest.
 
 ## Reproducibility — and its limits
 

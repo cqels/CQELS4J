@@ -728,7 +728,10 @@ public class CapabilityProbe {
      * and sees the variable unbound. A comparison on it drops every row; {@code FILTER(!BOUND(?y))}
      * admits the row, which then comes out with {@code ?y} bound. In SPARQL 1.1 a group's
      * {@code FILTER} sees its {@code BIND}, and a stream-only query gets this right. Checking the
-     * dropping direction is enough: a fix to the order flips both.
+     * dropping direction is enough: a fix to the order flips both. The query deliberately has no
+     * {@code OPTIONAL} / {@code UNION} / {@code FILTER NOT EXISTS} block: since alpha.21 a
+     * {@code BIND} written above one of those runs before the {@code FILTER}, which would hide the
+     * defect.
      *
      * <p>The control filters on the variable the {@code BIND} reads instead, which answers; if it
      * stops answering, the static lookup itself has broken and this verdict means nothing.

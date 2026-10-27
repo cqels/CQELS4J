@@ -103,8 +103,9 @@ try (CQELSEngine engine = CQELSEngine.builder().withMemoryStore().build()) {
 
 > **No account, no token, no `settings.xml`.**
 
-Fixed versions only — the repository serves no metadata, so version ranges and `LATEST` do not
-resolve. Pin the version, as above.
+Pin the version, as above. Since the `2.0.0-alpha.21` release the repository also serves
+`maven-metadata.xml`, so version ranges resolve. A range picks up the next alpha unreviewed, though,
+and alphas change behaviour — see each release's notes.
 
 ---
 
