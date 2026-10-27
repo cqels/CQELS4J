@@ -400,7 +400,10 @@ are called out.
   refused at registration; earlier alphas silently returned the bare aggregate (`?c = 2`, not `20`).
   Compute it in the result listener. On a single-pattern stream query, `DISTINCT` is scoped to the
   window. Under `[NOW]` that means one arrival: since `2.0.0-alpha.21` the same projection from two
-  arrivals is reported twice.
+  arrivals is reported twice. With `ORDER BY … LIMIT`, `DISTINCT` can also repeat a projection
+  within one arrival, once for each row that improves the sort (upstream #904): on alpha.21,
+  `SELECT DISTINCT ?o … [NOW] … ORDER BY DESC(?x) LIMIT 1` over one element carrying
+  `(o1 ex:v 1) (o1 ex:v 2) (o1 ex:v 3)` emits `o1` three times (alpha.20: once).
 - **Aggregates:** `COUNT(*)` / `COUNT(?v)`, `SUM`, `AVG`, `MIN`, `MAX`, `GROUP_CONCAT(?v; SEPARATOR=", ")`.
   *Note:* `GROUP BY` selects **per-group** results rather than global ones; it is **not** required
   for an aggregate to apply. Measured on `2.0.0-alpha.21`, a global (no `GROUP BY`) aggregate
@@ -476,10 +479,14 @@ are called out.
     `BIND(?x * 2 AS ?y) FILTER(?y > 5)`), which works on both routes.
 
   Since `2.0.0-alpha.21`, on a query with a static graph pattern, a top-level `BIND` written
-  **above** an `OPTIONAL`, `UNION` or `FILTER NOT EXISTS` block runs before that block. The block
-  sees the target, and so does the group's `FILTER`: `BIND(?x * 2 AS ?y) OPTIONAL { … }
-  FILTER(?y > 5)` answers correctly. A `BIND` written below the first such block still runs after
-  the `FILTER`.
+  **above** the first `OPTIONAL` or `UNION` block runs before that block. The block sees the
+  target, and so does the group's `FILTER`: `BIND(?x * 2 AS ?y) OPTIONAL { … } FILTER(?y > 5)`
+  answers correctly. A `BIND` written below that block still runs after the `FILTER`. A
+  `FILTER NOT EXISTS` block is different: it sees every top-level `BIND` target, whether the
+  `BIND` is written above or below it, but it does not change when the group's `FILTER` runs —
+  `BIND(?x * 2 AS ?y) FILTER NOT EXISTS { … } FILTER(?y > 5)` still drops the row. Filtering on
+  the `BIND`'s input (`FILTER(?x > 2.5)`) works beside a `FILTER NOT EXISTS` since
+  `2.0.0-alpha.21`; on alpha.20 it dropped the row as well.
 - **Extension functions (SPARQL 1.1 §17.6)** — since `2.0.0-alpha.11`, a `FILTER` / `BIND` /
   `SELECT`-expression call to an **explicit function IRI** — `<urn:cqels:fn:haversine>(…)` or a
   declared-prefix form such as `cqfn:haversine(…)` with `PREFIX cqfn: <urn:cqels:fn:>` — resolves
@@ -555,8 +562,9 @@ RETURN p.firstName, p.lastName, c.name
 ```
 
 CypherQL reuses the streaming model with graph-traversal patterns instead of triple patterns. Measured
-on `2.0.0-alpha.21`, only `[NOW]` answers on a live stream: the same `MATCH` under `[RANGE 2s]` or
-`[SLIDE 2s STEP 1s]` registers and stays silent (upstream lists this as a known issue). `RETURN
+on `2.0.0-alpha.21` (and the same on alpha.20), `[NOW]` and `[TRIPLES n]` answer on a live stream:
+the same `MATCH` under `[RANGE 2s]` or `[SLIDE 2s STEP 1s]` registers and emits nothing while the
+stream is live (upstream lists this as a known issue: those windows fire on completion). `RETURN
 DISTINCT` parses and is ignored — duplicate rows are emitted.
 
 ---
