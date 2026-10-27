@@ -481,9 +481,11 @@ are called out.
   Since `2.0.0-alpha.21`, on a query with a static graph pattern, a top-level `BIND` written
   **above** the first `OPTIONAL` or `UNION` block runs before that block. The block sees the
   target, and so does the group's `FILTER`: `BIND(?x * 2 AS ?y) OPTIONAL { … } FILTER(?y > 5)`
-  answers correctly. A `BIND` written below that block still runs after the `FILTER`. A
-  `FILTER NOT EXISTS` block is different: it sees every top-level `BIND` target, whether the
-  `BIND` is written above or below it, but it does not change when the group's `FILTER` runs —
+  answers correctly. A `BIND` written below that block still runs after the `FILTER`. The same
+  query with `GROUP BY` under `[TRIPLES 2]` still returns no row, measured; under `[NOW]`, or
+  without the `GROUP BY`, it answers. A `FILTER NOT EXISTS` block is different: it sees every
+  top-level `BIND` target, whether the `BIND` is written above or below it, but it does not change
+  when the group's `FILTER` runs —
   `BIND(?x * 2 AS ?y) FILTER NOT EXISTS { … } FILTER(?y > 5)` still drops the row. Filtering on
   the `BIND`'s input (`FILTER(?x > 2.5)`) works beside a `FILTER NOT EXISTS` since
   `2.0.0-alpha.21`; on alpha.20 it dropped the row as well.
@@ -502,6 +504,15 @@ are called out.
   `2.0.0-alpha.21` a `STREAM` block inside `OPTIONAL` is refused at registration; earlier alphas
   registered it and null-filled every row. To correlate two streams, use a top-level multi-stream
   join.
+
+  **On a stream-only query, a `FILTER` over a variable the `OPTIONAL` binds runs before the
+  `OPTIONAL`** ([#85](https://github.com/cqels/CQELS4J/issues/85)), measured on alpha.20 and
+  alpha.21 under `[NOW]` and `[TRIPLES 2]`. The `FILTER` sees the variable unbound, and the row
+  then comes out carrying the bound value. So the negation idiom `OPTIONAL { ?o ex:label ?l }
+  FILTER(!BOUND(?l))` admits every row, and `FILTER(BOUND(?l))` or `FILTER(?l = 8)` drops every
+  row. A `FILTER` on other variables is unaffected, and a query with a static graph pattern is
+  correct. For the negation, write `FILTER NOT EXISTS { ?o ex:label ?any }` instead. For a test on
+  the optional value, apply it in the result listener.
 - **`{ … } UNION { … }`** — alternative patterns merged before `FILTER`.
 - **Property paths (`/`, `^`, `+`, `*`, `?`, `|`)** — **not supported, and (since `2.0.0-alpha.20`)
   cleanly rejected.** A path such as `?a skos:broader+ ?b` fails registration with a parse error
@@ -545,11 +556,16 @@ are called out.
 
 **Evaluation order:** stream patterns → static lookup join → `UNION` → `OPTIONAL` →
 `FILTER` and `FILTER NOT EXISTS` → `GROUP BY` + aggregates → `HAVING` → `ORDER BY` → `LIMIT`.
-`FILTER` and `FILTER NOT EXISTS` only remove rows, so their order relative to each other changes
-no result. `BIND` is deliberately not placed in that chain: where it runs depends on the route and
-on what follows it. On a query with a static graph pattern, a `BIND` that is not above the first
-`OPTIONAL` / `UNION` is seen by a `FILTER NOT EXISTS` but not by the `FILTER` — see the `BIND`
-entry above.
+That is the intended order. Two measured exceptions answer silently wrong:
+
+- On a query with a static graph pattern, a `FILTER` over a `BIND` target runs before the `BIND`,
+  except in the cases the `BIND` entry above lists ([#83](https://github.com/cqels/CQELS4J/issues/83)).
+  A `FILTER NOT EXISTS` sees every top-level `BIND` target.
+- On a stream-only query, a `FILTER` over a variable an `OPTIONAL` binds runs before the
+  `OPTIONAL` ([#85](https://github.com/cqels/CQELS4J/issues/85); see the `OPTIONAL` entry above).
+
+`BIND` is deliberately not placed in the chain: where it runs depends on the route and on what
+follows it.
 
 ---
 

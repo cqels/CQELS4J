@@ -84,6 +84,9 @@ public class CapabilityProbe {
         caveat("#83 a FILTER over a BIND target drops every row beside a static pattern",
                 filterSeesBindTargetBesideStaticPattern(),
                 "CQELS-QL_SPEC.md §9 BIND entry and §6");
+        caveat("#85 a FILTER over an OPTIONAL variable drops every row on a stream-only query",
+                filterSeesOptionalVariableOnStreamOnlyQuery(),
+                "CQELS-QL_SPEC.md §9 OPTIONAL entry, GETTING_STARTED.md limitations table");
         caveat("     REPLACE() is not evaluated",
                 replaceEvaluates(),
                 "CQELS-QL_SPEC.md §9 gap table, CDSP_MAPPING.md §4");
@@ -758,6 +761,40 @@ public class CapabilityProbe {
                     + "      the static lookup itself is failing; the BIND/FILTER verdict is meaningless");
         }
         return !onBindTarget.isEmpty();
+    }
+
+    /**
+     * #85, measured on 2.0.0-alpha.20 and 2.0.0-alpha.21: on a stream-only query, a {@code FILTER}
+     * over a variable an {@code OPTIONAL} binds runs before the {@code OPTIONAL} and sees it
+     * unbound. {@code FILTER(BOUND(?l))} drops a row whose {@code ?l} the {@code OPTIONAL} binds;
+     * {@code FILTER(!BOUND(?l))} admits it, carrying the bound value. With a static graph pattern
+     * beside the stream pattern the same query is correct. As for #83, checking the dropping
+     * direction is enough.
+     *
+     * <p>The control is the same query without the {@code FILTER}, which answers; if it stops
+     * answering, the {@code OPTIONAL} itself has broken and this verdict means nothing.
+     *
+     * <p>Returns true when {@code FILTER(BOUND(?l))} admits the row, i.e. the caveat is fixed.
+     */
+    private static boolean filterSeesOptionalVariableOnStreamOnlyQuery() throws Exception {
+        Seeder seeded = engine -> {
+            try (RepositoryConnection conn = engine.getRepository().getConnection()) {
+                conn.add(VF.createIRI(C + "o1"), VF.createIRI(C + "label"), VF.createLiteral(8));
+            }
+        };
+        Pusher four = s -> s.push(VF.createStatement(VF.createIRI(C + "o1"), VF.createIRI(C + "v"),
+                VF.createLiteral(4)));
+        String shape = """
+            SELECT ?o ?l FROM STREAM S [NOW]
+            WHERE { STREAM S { ?o <%1$sv> ?x . } OPTIONAL { ?o <%1$slabel> ?l } %2$s }
+            """;
+        List<Object> filtered = run(seeded, shape.formatted(C, "FILTER(BOUND(?l))"), four);
+        List<Object> unfiltered = run(seeded, shape.formatted(C, ""), four);
+        if (unfiltered.isEmpty()) {
+            DIVERGENCES.add("REGRESSED — the control (the same OPTIONAL with no FILTER) no longer answers\n"
+                    + "      the stream-only OPTIONAL itself is failing; the OPTIONAL/FILTER verdict is meaningless");
+        }
+        return !filtered.isEmpty();
     }
 
     // ---- capability probes ---------------------------------------------------------------
