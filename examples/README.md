@@ -22,8 +22,9 @@ connected world rather than ad-hoc per-demo data. The domain models a smart elec
 vehicle-to-grid (V2G) scenario.
 
 > **Reading the output:** CQELS is a *continuous* engine, and what it emits per arrival depends on
-> the query's shape. A single-pattern query reports each new solution once, as its element arrives.
-> Multi-pattern window queries and rolling aggregates re-evaluate the window and re-emit the current
+> the query's shape. A window query of one triple pattern with a fixed predicate (`?o ex:v ?x`)
+> reports each new solution once, as its element arrives. Multi-pattern window queries, a single
+> pattern with a variable predicate, and rolling aggregates re-evaluate the window and re-emit the current
 > results (RStream-style). Because each observation is pushed as several triples, you'll see a result
 > row or aggregate **printed multiple times** as a reading streams in, and counts climb while the
 > window fills. That repetition is the engine working, not a
