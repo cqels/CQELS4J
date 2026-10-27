@@ -764,9 +764,9 @@ public class CapabilityProbe {
     }
 
     /**
-     * #85, measured on 2.0.0-alpha.20 and 2.0.0-alpha.21: on a stream-only query, a {@code FILTER}
-     * over a variable an {@code OPTIONAL} binds runs before the {@code OPTIONAL} and sees it
-     * unbound. {@code FILTER(BOUND(?l))} drops a row whose {@code ?l} the {@code OPTIONAL} binds;
+     * #85, measured on 2.0.0-alpha.21 (and the same on alpha.20): on a stream-only query, a
+     * {@code FILTER} over a variable an {@code OPTIONAL} binds runs before the {@code OPTIONAL} and
+     * sees it unbound. {@code FILTER(BOUND(?l))} drops a row whose {@code ?l} the {@code OPTIONAL} binds;
      * {@code FILTER(!BOUND(?l))} admits it, carrying the bound value. With a static graph pattern
      * beside the stream pattern the same query is correct. As for #83, checking the dropping
      * direction is enough.
