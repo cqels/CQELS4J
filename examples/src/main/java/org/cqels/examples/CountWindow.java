@@ -10,8 +10,10 @@ import org.cqels.engine.DataStream;
  * re-evaluates as they arrive — "the last N readings" rather than "the last N seconds". Here we count
  * observations per vehicle over the most recent triples.
  *
- * <p>(The window counts stream <em>triples</em>; each observation contributes five, so size it
- * accordingly — {@code [TRIPLES 30]} holds the last 6 observations (30 ÷ 5) and the earliest age out.)
+ * <p>(Despite its name, the window counts stream <em>elements</em> — one per push. {@link Fleet}
+ * pushes each of an observation's five triples as its own element, so here that is five per
+ * observation: {@code [TRIPLES 30]} holds the last 6 observations (30 ÷ 5) and the earliest age
+ * out. An observation pushed as one atomic element would count once.)
  *
  * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.examples.CountWindow}
  */

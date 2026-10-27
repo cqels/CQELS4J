@@ -115,17 +115,16 @@ public final class Fleet {
     /**
      * Zero-pad a minted identifier so that <strong>lexicographic order matches minting order</strong>.
      *
-     * <p>This is not cosmetic. {@code CdspDrivingStyle} orders a pair of frames with
-     * {@code FILTER(STR(?f1) < STR(?f2))}, because CQELS-QL on this release cannot compare event
-     * times. Unpadded, {@code "frame/10" < "frame/9"} is true, so at the 9→10 rollover the
-     * comparison inverts, the query reads the speed from the EARLIER frame, and the stale-speed
-     * false alert that scenario 4 exists to prevent comes back. Found in review, with a probe that
-     * straddled the rollover deliberately.
+     * <p>{@code CdspDrivingStyle} once ordered a pair of frames with
+     * {@code FILTER(STR(?f1) < STR(?f2))}. Unpadded, {@code "frame/10" < "frame/9"} is true, so at
+     * the 9→10 rollover the comparison inverted, the query read the speed from the EARLIER frame,
+     * and the stale-speed false alert that scenario 4 exists to prevent came back. Found in review,
+     * with a probe that straddled the rollover deliberately. The query now orders frames by event
+     * time ({@code sosa:phenomenonTime}), so no result depends on this padding any more. It keeps
+     * printed frame IRIs in minting order.
      *
-     * <p>Eight digits is far more than any demo emits, and the padding is a demo-scoped device: it
-     * makes identifier order a faithful proxy for arrival order <em>within one run</em>. It is not
-     * a general technique — a real deployment orders by event time, which is what this release
-     * cannot yet express.
+     * <p>Eight digits is far more than any demo emits. Identifier order is a proxy for arrival
+     * order <em>within one run</em> only; ordering by event time is the general technique.
      *
      * <p>Applied to {@link #pushFrame} ONLY. An earlier version padded every minted identifier,
      * which changed {@code HelloCqels}'s printed observation IRIs from {@code obs/2} to
@@ -170,11 +169,10 @@ public final class Fleet {
      * together.
      *
      * <p>Why this matters beyond realism: it makes the two readings <strong>co-temporal by
-     * construction</strong>. A query that correlates them needs no timestamp comparison, which
-     * CQELS-QL cannot express on this release anyway. Pushing the signals as separate observations
-     * instead lets a query pair a <em>current</em> reading of one signal with a <em>stale</em>
-     * reading of the other, anywhere in the window — see {@code CdspDrivingStyle}, where that
-     * distinction decides whether a swerve alert is correct.
+     * construction</strong>. A query that correlates them needs no timestamp comparison. Pushing
+     * the signals as separate observations instead lets a query pair a <em>current</em> reading
+     * of one signal with a <em>stale</em> reading of the other, anywhere in the window — see
+     * {@code CdspDrivingStyle}, where that distinction decides whether a swerve alert is correct.
      */
     public static void pushFrame(DataStream stream, String sensor, String vehicle,
                                  String signalA, double valueA, String signalB, double valueB) {

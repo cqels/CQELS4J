@@ -34,8 +34,8 @@ import org.cqels.examples.Fleet;
  * </ul>
  * The eight rules' <strong>detection</strong> becomes one query. The output query's segment
  * assembly does not: it projects a segment id, start and end fix points with coordinates, and both
- * timestamps, all of which need the angle pair ordered <em>in time</em> — the comparison this
- * release cannot make. See {@code CDSP_MAPPING.md} §2.2. The intermediate individuals
+ * timestamps. This query does order the angle pair in time (below), but it does not project the
+ * fix points and timestamps a full segment needs. See {@code CDSP_MAPPING.md} §2.2. The intermediate individuals
  * ({@code LargeAngleChange}, {@code HighSpeedObservation}, {@code AggressiveDriving}) exist only to
  * carry state between Datalog rules; a continuous query has no such handoff to make, so the
  * {@code SKOLEM(...)} minting that names them is not needed either.
@@ -47,9 +47,9 @@ import org.cqels.examples.Fleet;
  *       {@code CurrentObservation} per property, so its speed guard reads the LATEST speed.
  *       Matching a free-standing {@code vss:Speed} observation anywhere in the window does not: a
  *       vehicle that was fast, slowed, then swerved still pairs with the stale fast reading and
- *       alerts (scenario 4). CQELS-QL cannot express "the latest value of X" on this release —
- *       there is no event-time comparison ({@code xsd:dateTime} arithmetic is not evaluated) and no
- *       argmax. The fix is in the data model rather than the query: each telemetry <em>frame</em>
+ *       alerts (scenario 4). CQELS-QL cannot express "the latest value of X" on this release: it
+ *       can order two readings by event time, but it has no argmax, and {@code xsd:dateTime}
+ *       subtraction is not evaluated. The fix is in the data model rather than the query: each telemetry <em>frame</em>
  *       ({@link Fleet#pushFrame}) carries angle and speed in ONE atomic element, as a real vehicle
  *       emits them, so {@code ?f2 vss:Speed ?speed} is by construction the speed at the moment of
  *       the second angle reading.</li>

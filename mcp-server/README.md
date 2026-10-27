@@ -60,7 +60,7 @@ Enumerated from a live `tools/list` against this jar.
 | Tool | What it does |
 |------|--------------|
 | `query` | One-shot SPARQL / CQELS-QL / Cypher query over the knowledge graph and streams. |
-| `create_stream` | Create a named stream (idempotent) so a query can be registered over it **before** events arrive — streams are hot, with no replay. |
+| `create_stream` | Create a named stream (idempotent) so a query can be registered over it **before** events arrive. A query registered later still receives the stream's recent history — except a CEP query, which sees only events pushed after it registers. |
 | `push_stream_events` | Push timestamped observations onto a named stream. Each event is one atomic observation: simple `facts` triples or an RDF-Messages `nquads` body (typed literals, multi-triple observations). |
 | `register_stream_query` | Register a standing CQELS-QL or Cypher continuous query; results are buffered and drained via `recall_memory(queryId)` (CEP `FILTER(SEQ(...))` via `cep: true`). |
 | `validate_stream_query` | Dry-run: statically validate CQELS-QL without registering it. |
@@ -102,8 +102,10 @@ Enumerated from a live `tools/list` against this jar.
 `memory_routing`, `spatial_recall`.
 
 > The natural streaming order is **create_stream → register_stream_query →
-> push_stream_events → recall_memory(queryId)**: streams are hot with no replay, so register
-> the standing query before feeding it. The server's `initialize` response carries these usage
+> push_stream_events → recall_memory(queryId)**. A stream keeps its recent elements (upstream:
+> the last 8192 by default) and replays them to a continuous query registered later. A CEP query
+> gets no replay, and live pushes that arrive during a replay can be dropped, so register the
+> standing query before feeding it. The server's `initialize` response carries these usage
 > instructions, and `cqels://docs/*` resources document the CQELS-QL/CEP syntax — an agent can
 > discover all of this without reading this README.
 >

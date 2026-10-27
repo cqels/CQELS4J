@@ -40,8 +40,9 @@ and no `~/.m2/settings.xml` to edit — add the repository to your POM and build
 </repositories>
 ```
 
-Fixed versions only: the repository serves no metadata, so version ranges and `LATEST` do not
-resolve. Pin the version, as the snippet below does.
+Pin the version, as the snippet below does. Since the `2.0.0-alpha.21` release the repository also
+serves `maven-metadata.xml`, so version ranges resolve. Alphas change behaviour from one release to
+the next, so a pin is still the safer choice.
 
 > Every release is published from a cosign-signed manifest — see
 > [SUPPLY_CHAIN.md](SUPPLY_CHAIN.md) to verify what you downloaded. The one artifact not served
@@ -198,6 +199,9 @@ fault.
 |------|---------|-----------------|
 | `REPLACE()` | The variable is left unbound | Move the string manipulation to the result listener |
 | Rules matching the background graph ([#58](https://github.com/cqels/CQELS4J/issues/58)) | The reasoner reads stream elements only, so an ontology in the store is invisible to rules | Push the ontology onto the stream at start-up |
+| A `FILTER` over a `BIND` target, beside a static pattern ([#83](https://github.com/cqels/CQELS4J/issues/83)) | The `FILTER` runs before the `BIND`: `FILTER(?y > 5)` drops every row, `FILTER(!BOUND(?y))` admits every row | Filter on the `BIND`'s inputs (`?x > 2.5` for `?y = ?x * 2`), or write the `BIND` above an `OPTIONAL` — see `CQELS-QL_SPEC.md` §9 |
+| A **literal** join key between a multi-pattern `STREAM` block and a static pattern, under `[TRIPLES n]` / `[RANGE d]` | The row is dropped; the same query keyed on an IRI answers | Key the join on an IRI, or use `[NOW]` — see `CQELS-QL_SPEC.md` §6 |
+| `xsd:duration` comparison ([#82](https://github.com/cqels/CQELS4J/issues/82)) | Compared as text: `"PT10S" > "PT9S"` and `"PT60S" = "PT1M"` are false | Express the interval as a window |
 
 Property paths (`+`, `*`, `/`, `^`, `?`, `|`) are also unsupported, but they no longer belong in
 the table above: registration now rejects a query containing one with a clear parse error, instead

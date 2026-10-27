@@ -40,20 +40,19 @@ import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
  *                     -> ?a skos:broader ?c
  * </pre>
  * R1 lifts each observation onto the concept directly above it, so a {@code Seat} reading is
- * matched by a query that asks only about {@code Cabin} and mentions no narrower concept. The
- * discriminating case is {@code Powertrain}: it is narrower than {@code Vehicle} but not than
- * {@code Cabin}, and it correctly stays out of the cabin query — the rollup follows the modelled
+ * matched by a query that asks only about {@code Cabin} and mentions no narrower concept. With
+ * recursive inference on, the lift carries on up the hierarchy: the same {@code Seat} reading also
+ * reaches a query that asks only about {@code Vehicle}, two hops up. The discriminating case is
+ * {@code Powertrain}: it is narrower than {@code Vehicle} but not than {@code Cabin}, so it reaches
+ * the vehicle query and correctly stays out of the cabin one — the rollup follows the modelled
  * hierarchy rather than lifting everything everywhere.
  *
- * <p><strong>Known limits on 2.0.0-alpha.21</strong>, each verified here rather than assumed:
- * <ul>
- *   <li>R2 is registered and {@code enableRecursiveInference(true)} is set, but the two-hop
- *       rollup ({@code Seat -> Cabin -> Vehicle}) does not produce a {@code Vehicle}-level match,
- *       so this demo asserts only the one-hop claim it can actually demonstrate.</li>
- *   <li>The hierarchy must be pushed into the stream: the reasoner reads stream elements only,
- *       never the background graph — even though that is exactly where an s2dm catalogue lives.</li>
- * </ul>
- * Filed as #58 (background graph) and #56 (property paths), each with a minimal reproducer. #56
+ * <p><strong>Known limit on 2.0.0-alpha.21:</strong> the hierarchy must be pushed into the stream.
+ * The reasoner reads stream elements only, never the background graph — even though that is
+ * exactly where an s2dm catalogue lives. (An earlier version of this demo also listed the two-hop
+ * rollup as not working. Measured on alpha.20 and alpha.21, it works, and the demo now shows it.)
+ *
+ * <p>Filed as #58 (background graph) and #56 (property paths), each with a minimal reproducer. #56
  * is listed although no query here contains a path expression: the natural way to write this
  * rollup is {@code ?narrow skos:broader+ ?broad} in the query itself, and the reason it is a pair
  * of RETE rules instead is that property paths still do not execute — the engine now rejects one
@@ -155,12 +154,27 @@ public class SkosConceptRollup {
             engine.registerCqelsQuery(cabinActivity, row ->
                     System.out.println("  [Cabin rollup] " + row));
 
+            // "Anything happening anywhere in the vehicle" — two hops above Seat and Door.
+            String vehicleActivity = S2dm.PREFIXES + """
+                    REGISTER QUERY VehicleActivity AS
+                    SELECT ?obs
+                    FROM STREAM Cabin [TRIPLES 1]
+                    WHERE {
+                      STREAM Cabin {
+                        ?obs c:ofConcept <https://example.org/vss#Vehicle> .
+                      }
+                    }
+                    """;
+            engine.registerCqelsQuery(vehicleActivity, row ->
+                    System.out.println("  [Vehicle rollup] " + row));
+
 
             engine.start();
             System.out.println("""
-                    Engine started. Hierarchy: Seat/Door -> Cabin (skos:broader).
-                    Observations are pushed against the NARROW concepts only; the query asks
-                    about Cabin and is answered by inference.
+                    Engine started. Hierarchy: Seat/Door -> Cabin -> Vehicle,
+                    Powertrain -> Vehicle (skos:broader).
+                    Observations are pushed against the NARROW concepts only; the queries ask
+                    about Cabin and Vehicle and are answered by inference.
                     """);
 
             System.out.println("seeding the skos:broader hierarchy INTO the stream "
