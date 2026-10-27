@@ -544,9 +544,12 @@ are called out.
     since `2.0.0-alpha.20`; earlier alphas silently leaked the raw argument binding instead.
 
 **Evaluation order:** stream patterns → static lookup join → `UNION` → `OPTIONAL` →
-`FILTER NOT EXISTS` → `FILTER` → `GROUP BY` + aggregates → `HAVING` → `ORDER BY` → `LIMIT`. `BIND`
-is deliberately not placed in that chain: where it runs depends on the route and on what follows
-it — see the `BIND` entry above.
+`FILTER` and `FILTER NOT EXISTS` → `GROUP BY` + aggregates → `HAVING` → `ORDER BY` → `LIMIT`.
+`FILTER` and `FILTER NOT EXISTS` only remove rows, so their order relative to each other changes
+no result. `BIND` is deliberately not placed in that chain: where it runs depends on the route and
+on what follows it. On a query with a static graph pattern, a `BIND` that is not above the first
+`OPTIONAL` / `UNION` is seen by a `FILTER NOT EXISTS` but not by the `FILTER` — see the `BIND`
+entry above.
 
 ---
 
