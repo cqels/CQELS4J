@@ -510,9 +510,11 @@ are called out.
   alpha.21 under `[NOW]` and `[TRIPLES 2]`. The `FILTER` sees the variable unbound, and the row
   then comes out carrying the bound value. So the negation idiom `OPTIONAL { ?o ex:label ?l }
   FILTER(!BOUND(?l))` admits every row, and `FILTER(BOUND(?l))` or `FILTER(?l = 8)` drops every
-  row. A `FILTER` on other variables is unaffected, and a query with a static graph pattern is
-  correct. For the negation, write `FILTER NOT EXISTS { ?o ex:label ?any }` instead. For a test on
-  the optional value, apply it in the result listener.
+  row. A `FILTER` on other variables is unaffected. A `GROUP BY` query with a static graph
+  pattern under `[TRIPLES 2]` does the same; one under `[NOW]`, and a non-aggregate query with a
+  static graph pattern, are correct on alpha.21. For the negation, write
+  `FILTER NOT EXISTS { ?o ex:label ?any }` instead. For a test on the optional value, apply it in
+  the result listener.
 - **`{ … } UNION { … }`** — alternative patterns merged before `FILTER`.
 - **Property paths (`/`, `^`, `+`, `*`, `?`, `|`)** — **not supported, and (since `2.0.0-alpha.20`)
   cleanly rejected.** A path such as `?a skos:broader+ ?b` fails registration with a parse error
@@ -561,8 +563,9 @@ That is the intended order. Two measured exceptions answer silently wrong:
 - On a query with a static graph pattern, a `FILTER` over a `BIND` target runs before the `BIND`,
   except in the cases the `BIND` entry above lists ([#83](https://github.com/cqels/CQELS4J/issues/83)).
   A `FILTER NOT EXISTS` sees every top-level `BIND` target.
-- On a stream-only query, a `FILTER` over a variable an `OPTIONAL` binds runs before the
-  `OPTIONAL` ([#85](https://github.com/cqels/CQELS4J/issues/85); see the `OPTIONAL` entry above).
+- On a stream-only query, and on a `GROUP BY` query with a static graph pattern under
+  `[TRIPLES 2]`, a `FILTER` over a variable an `OPTIONAL` binds runs before the `OPTIONAL`
+  ([#85](https://github.com/cqels/CQELS4J/issues/85); see the `OPTIONAL` entry above).
 
 `BIND` is deliberately not placed in the chain: where it runs depends on the route and on what
 follows it.
