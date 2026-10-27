@@ -22,6 +22,9 @@ import org.eclipse.rdf4j.repository.RepositoryConnection;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
@@ -766,15 +769,19 @@ public class CapabilityProbe {
     /**
      * #85, measured on 2.0.0-alpha.21 (and the same on alpha.20): on a stream-only query, a
      * {@code FILTER} over a variable an {@code OPTIONAL} binds runs before the {@code OPTIONAL} and
-     * sees it unbound. {@code FILTER(BOUND(?l))} drops a row whose {@code ?l} the {@code OPTIONAL} binds;
-     * {@code FILTER(!BOUND(?l))} admits it, carrying the bound value. With a static graph pattern
-     * beside the stream pattern the same query is correct. As for #83, checking the dropping
-     * direction is enough.
+     * sees it unbound. {@code FILTER(BOUND(?l))} drops a row whose {@code ?l} the {@code OPTIONAL}
+     * binds; {@code FILTER(!BOUND(?l))} admits it, carrying the bound value. A windowed
+     * {@code GROUP BY} query with a static graph pattern does the same; a non-aggregate query with
+     * one is correct.
      *
-     * <p>The control is the same query without the {@code FILTER}, which answers; if it stops
-     * answering, the {@code OPTIONAL} itself has broken and this verdict means nothing.
+     * <p>Two subjects arrive: {@code o1}, which the {@code OPTIONAL} labels, and {@code o2}, which it
+     * does not. The control is the query with no {@code FILTER}: it must return {@code o1} with
+     * {@code ?l} bound and {@code o2} without, or the {@code OPTIONAL} itself has broken and the
+     * verdict means nothing. The verdict needs both directions right — {@code BOUND} keeps only
+     * {@code o1}, {@code !BOUND} keeps only {@code o2} — so a query that loses its {@code FILTER}
+     * altogether does not read as a fix.
      *
-     * <p>Returns true when {@code FILTER(BOUND(?l))} admits the row, i.e. the caveat is fixed.
+     * <p>Returns true when both filters answer as SPARQL requires, i.e. the caveat is fixed.
      */
     private static boolean filterSeesOptionalVariableOnStreamOnlyQuery() throws Exception {
         Seeder seeded = engine -> {
@@ -782,19 +789,40 @@ public class CapabilityProbe {
                 conn.add(VF.createIRI(C + "o1"), VF.createIRI(C + "label"), VF.createLiteral(8));
             }
         };
-        Pusher four = s -> s.push(VF.createStatement(VF.createIRI(C + "o1"), VF.createIRI(C + "v"),
-                VF.createLiteral(4)));
+        Pusher both = s -> {
+            s.push(VF.createStatement(VF.createIRI(C + "o1"), VF.createIRI(C + "v"), VF.createLiteral(3)));
+            s.push(VF.createStatement(VF.createIRI(C + "o2"), VF.createIRI(C + "v"), VF.createLiteral(4)));
+        };
         String shape = """
             SELECT ?o ?l FROM STREAM S [NOW]
             WHERE { STREAM S { ?o <%1$sv> ?x . } OPTIONAL { ?o <%1$slabel> ?l } %2$s }
             """;
-        List<Object> filtered = run(seeded, shape.formatted(C, "FILTER(BOUND(?l))"), four);
-        List<Object> unfiltered = run(seeded, shape.formatted(C, ""), four);
-        if (unfiltered.isEmpty()) {
-            DIVERGENCES.add("REGRESSED — the control (the same OPTIONAL with no FILTER) no longer answers\n"
-                    + "      the stream-only OPTIONAL itself is failing; the OPTIONAL/FILTER verdict is meaningless");
+        Set<String> unfiltered = subjects(run(seeded, shape.formatted(C, ""), both));
+        Set<String> bound = subjects(run(seeded, shape.formatted(C, "FILTER(BOUND(?l))"), both));
+        Set<String> unbound = subjects(run(seeded, shape.formatted(C, "FILTER(!BOUND(?l))"), both));
+        if (!unfiltered.equals(Set.of("o1+l", "o2"))) {
+            DIVERGENCES.add("REGRESSED — the control (the OPTIONAL with no FILTER) returned " + unfiltered
+                    + ", not [o1+l, o2]\n      the stream-only OPTIONAL itself is failing; the "
+                    + "OPTIONAL/FILTER verdict is meaningless");
         }
-        return !filtered.isEmpty();
+        boolean boundRight = bound.equals(Set.of("o1+l"));
+        boolean unboundRight = unbound.equals(Set.of("o2"));
+        if (boundRight != unboundRight) {
+            DIVERGENCES.add("PARTIAL — #85 is fixed in one direction only: FILTER(BOUND(?l)) returned "
+                    + bound + ", FILTER(!BOUND(?l)) returned " + unbound);
+        }
+        return boundRight && unboundRight;
+    }
+
+    /** Each row as its subject's local name, suffixed {@code +l} when {@code ?l} is bound. */
+    private static Set<String> subjects(List<Object> rows) {
+        Set<String> out = new TreeSet<>();
+        for (Object row : rows) {
+            Map<?, ?> bindings = (Map<?, ?>) row;
+            String o = String.valueOf(bindings.get("o"));
+            out.add(o.substring(o.lastIndexOf('#') + 1) + (bindings.get("l") == null ? "" : "+l"));
+        }
+        return out;
     }
 
     // ---- capability probes ---------------------------------------------------------------
