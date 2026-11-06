@@ -268,7 +268,8 @@ CDSP already exposes the data CQELS needs, in two places:
 
 - **IoTDB.** CDSP upstreamed IoTDB support into VISSR, and CQELS has two IoTDB storage modules.
   `cqels-storage-iotdb-tsfile` **is** published at `2.0.0-alpha.21`; `cqels-storage-iotdb-session`
-  is **not** (404 on the release mirror), so that half means building from the engine repository.
+  is **not** (404 on the release mirror), so that half cannot be run from the published artifacts at
+  this version.
 - **VISS over WebSocket.** The information layer speaks VISS; the unpublished `cqels-cdsp` module
   contains a `CdspWebSocketClient` and a `VssToRdfMapper` that already do the JSON→RDF step CDSP's
   C++ triple assembler performs. Publishing it would remove the hand-written mapping layer from

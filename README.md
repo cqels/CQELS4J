@@ -27,7 +27,7 @@ rebuilt for edge-to-cloud deployments — code name **COSMO**.
   self-register via `ServiceLoader` — on the classpath, no Java glue.
 - **Aggregation & joins** — incremental (F-IVM) and parallel windowed aggregation,
   multi-way stream joins, and stream + static-graph composition.
-- **Durable & embeddable** — pluggable storage backends (LMDB, RocksDB, IoTDB) with
+- **Durable & embeddable** — pluggable storage backends (LMDB and IoTDB TsFile published; RocksDB not yet) with
   event-journal recovery; runs on ARM hardware (Raspberry Pi, Jetson) as well as servers.
 - **Standards-based & interoperable** — plain RDF with [SPARQL 1.1](https://www.w3.org/TR/sparql11-query/)
   semantics; works out of the box with standard vocabularies such as W3C
@@ -132,7 +132,7 @@ electric-vehicle fleet / vehicle-to-grid (V2G) scenario.)
 **Windowing & aggregation**
 | Demo | Feature |
 |------|---------|
-| [`WindowedAggregation`](examples/src/main/java/org/cqels/examples/WindowedAggregation.java) | tumbling `[RANGE]` + `GROUP BY` aggregates |
+| [`WindowedAggregation`](examples/src/main/java/org/cqels/examples/WindowedAggregation.java) | rolling `[RANGE]` + `GROUP BY` aggregates, one row per arrival |
 | [`SlidingWindowTrends`](examples/src/main/java/org/cqels/examples/SlidingWindowTrends.java) | sliding `[SLIDE … STEP …]` windows |
 | [`CountWindow`](examples/src/main/java/org/cqels/examples/CountWindow.java) | count-based `[TRIPLES N]` window |
 | [`DirectionalWindow`](examples/src/main/java/org/cqels/examples/DirectionalWindow.java) | directional/LARS `[FUTURE … EMIT …]` window |

@@ -7,6 +7,7 @@ import org.cqels.asp.solver.AspSolverBackend;
 import org.cqels.asp.solver.WarmParseCacheAspSolverBackend;
 import org.cqels.engine.CQELSEngine;
 import org.cqels.engine.DataStream;
+import org.cqels.engine.cep.PatternMatch;
 import org.cqels.reasoning.Rule;
 import org.cqels.reasoning.RuleCondition;
 import org.cqels.reasoning.RuleConsequent;
@@ -15,7 +16,9 @@ import org.cqels.reasoning.TriplePattern;
 import org.cqels.reasoning.TripleTemplate;
 import org.cqels.reasoning.config.ReasoningConfig;
 import org.cqels.reasoning.engine.ReactiveReteAdapter;
+import org.cqels.stream.StreamElement;
 import org.eclipse.rdf4j.model.IRI;
+import org.eclipse.rdf4j.model.Statement;
 import org.eclipse.rdf4j.model.ValueFactory;
 import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
 import org.eclipse.rdf4j.repository.RepositoryConnection;
@@ -90,6 +93,12 @@ public class CapabilityProbe {
         caveat("#85 a FILTER over an OPTIONAL variable drops every row on a stream-only query",
                 filterSeesOptionalVariableOnStreamOnlyQuery(),
                 "CQELS-QL_SPEC.md §9 OPTIONAL entry, GETTING_STARTED.md limitations table");
+        caveat("#74 a CEP SEQ variable that is never a subject matches any element",
+                seqVariableMustBeASubject(),
+                "CQELS-QL_SPEC.md §7 SEQ arguments, GETTING_STARTED.md limitations table");
+        caveat("     FROM <graph> does not scope a static lookup",
+                fromGraphScopesStaticLookup(),
+                "CQELS-QL_SPEC.md §6, GETTING_STARTED.md limitations table");
         caveat("     REPLACE() is not evaluated",
                 replaceEvaluates(),
                 "CQELS-QL_SPEC.md §9 gap table, CDSP_MAPPING.md §4");
@@ -121,6 +130,10 @@ public class CapabilityProbe {
         capability("GROUP BY with aggregates", groupByWorks());
         capability("single-pattern [RANGE] aggregates at window close",
                 singlePatternRangeAggregatesAtWindowClose());
+        capability("two-pattern [RANGE] aggregate reports on every arrival (rolling)",
+                twoPatternRangeAggregateRolls());
+        capability("CypherQL: FROM STREAM before MATCH registers; MATCH first is a syntax error",
+                cypherClauseOrder());
         capability("warm parse-cache ASP backend reachable via registerQuery", warmBackendReachable());
 
         System.out.println("\n" + "-".repeat(72));
@@ -825,6 +838,89 @@ public class CapabilityProbe {
         return out;
     }
 
+    /**
+     * #74, measured on 2.0.0-alpha.21: a {@code SEQ} argument must be the subject of a triple
+     * pattern (CQELS-QL_SPEC.md §7), but one that is not registers anyway and matches any element.
+     * The variable here is mentioned nowhere else; an alert is followed by an unrelated element,
+     * and the query reports a two-event match.
+     *
+     * <p>The control makes the second argument a subject and pushes two alerts: it must match. If it
+     * stops matching, CEP itself has broken and this verdict means nothing.
+     *
+     * <p>Returns true when the query is refused at registration or matches nothing, i.e. fixed.
+     */
+    private static boolean seqVariableMustBeASubject() throws Exception {
+        String alert = "<" + C + "hasAlert> <" + C + "Overheat>";
+        List<Object> unmentioned = cep("?e1 " + alert + " . FILTER(SEQ(?e1 ; ?zz))",
+                VF.createStatement(VF.createIRI(C + "x1"), VF.createIRI(C + "unrelated"), VF.createIRI(C + "y")));
+        List<Object> control = cep("?e1 " + alert + " . ?e2 " + alert + " . FILTER(SEQ(?e1 ; ?e2))",
+                VF.createStatement(VF.createIRI(C + "m2"), VF.createIRI(C + "hasAlert"), VF.createIRI(C + "Overheat")));
+        if (control == null || control.isEmpty()) {
+            DIVERGENCES.add("REGRESSED — the control (two alerts, both SEQ arguments subjects) no longer matches\n"
+                    + "      CEP itself is failing; the #74 verdict is meaningless");
+        }
+        return unmentioned == null || unmentioned.isEmpty();
+    }
+
+    /**
+     * Registers {@code SELECT ?e1 … [RANGE 30s] WHERE { body }} as a CEP query, pushes an alert at
+     * 1 s and {@code second} at 2 s, and returns the matches, or null when registration is refused.
+     */
+    private static List<Object> cep(String body, Statement second) throws Exception {
+        try (CQELSEngine engine = CQELSEngine.builder().id("probe-" + System.nanoTime()).withMemoryStore().build()) {
+            DataStream stream = engine.createStream("S");
+            List<Object> matches = new CopyOnWriteArrayList<>();
+            try {
+                engine.registerCepQuery(withRegister("SELECT ?e1 FROM STREAM S [RANGE 30s]\nWHERE { " + body + " }\n"),
+                        (PatternMatch<StreamElement> m) -> matches.add(m.getEvents().size()));
+            } catch (Exception refused) {
+                return null;
+            }
+            engine.start();
+            stream.push(VF.createStatement(VF.createIRI(C + "m1"), VF.createIRI(C + "hasAlert"),
+                    VF.createIRI(C + "Overheat")), 1000L);
+            Thread.sleep(100);
+            stream.push(second, 2000L);
+            Thread.sleep(1500);
+            return matches;
+        }
+    }
+
+    /**
+     * Measured on 2.0.0-alpha.21: {@code FROM <g>} does not scope the static lookup. A static
+     * pattern matches a triple stored only in another named graph exactly as if the clause were
+     * absent (the default graph too, not checked here). Raised in #79.
+     *
+     * <p>The control stores the triple in the declared graph, where it must match; if it stops
+     * matching, the static lookup itself has broken.
+     *
+     * <p>Returns true when the triple in the other graph is NOT matched, i.e. fixed.
+     */
+    private static boolean fromGraphScopesStaticLookup() throws Exception {
+        String where = """
+            SELECT ?city FROM STREAM S [NOW] FROM <%1$sgraph>
+            WHERE { STREAM S { ?req <%1$spersonIri> ?person . } ?person <%1$scity> ?city . }
+            """.formatted(C);
+        Pusher request = s -> s.push(VF.createStatement(VF.createIRI(C + "req1"),
+                VF.createIRI(C + "personIri"), VF.createIRI(C + "alice")));
+        List<Object> elsewhere = run(inGraph("other"), where, request);
+        List<Object> declared = run(inGraph("graph"), where, request);
+        if (declared.isEmpty()) {
+            DIVERGENCES.add("REGRESSED — the control (data in the declared graph) no longer answers\n"
+                    + "      the static lookup itself is failing; the FROM <graph> verdict is meaningless");
+        }
+        return elsewhere.isEmpty();
+    }
+
+    private static Seeder inGraph(String graph) {
+        return engine -> {
+            try (RepositoryConnection conn = engine.getRepository().getConnection()) {
+                conn.add(VF.createIRI(C + "alice"), VF.createIRI(C + "city"), VF.createLiteral("Berlin"),
+                        VF.createIRI(C + graph));
+            }
+        };
+    }
+
     // ---- capability probes ---------------------------------------------------------------
 
     /**
@@ -882,6 +978,59 @@ public class CapabilityProbe {
         public org.cqels.asp.solver.AspSolveResult solve(String program, List<String> facts, long limit) {
             invoked = true;
             return delegate.solve(program, facts, limit);
+        }
+    }
+
+    /**
+     * CQELS-QL_SPEC.md §9 lists "two stream patterns" as a rolling {@code [RANGE]} aggregate, and
+     * the WindowedAggregation example depends on it: a running count on every arrival, not a bucket
+     * reported when it closes. Three elements, timestamped inside one 3 s bucket, each satisfying
+     * both patterns: a rolling window has already reported {@code n=3} before anything closes the
+     * bucket; a tumbling one would still be silent. Raised in #77.
+     */
+    private static boolean twoPatternRangeAggregateRolls() throws Exception {
+        try (CQELSEngine engine = CQELSEngine.builder().id("probe-range-roll").withMemoryStore().build()) {
+            DataStream stream = engine.createStream("S");
+            List<Object> rows = new CopyOnWriteArrayList<>();
+            engine.registerCqelsQuery(withRegister(
+                    "SELECT (COUNT(*) AS ?n) FROM STREAM S [RANGE 3s]\n"
+                    + "WHERE { STREAM S { ?o <" + C + "v> ?val . ?o <" + C + "w> ?w . } }\n"), rows::add);
+            engine.start();
+            for (int i = 1; i <= 3; i++) {
+                stream.push(List.of(
+                        VF.createStatement(VF.createIRI(C + "o" + i), VF.createIRI(C + "v"), VF.createLiteral(i)),
+                        VF.createStatement(VF.createIRI(C + "o" + i), VF.createIRI(C + "w"), VF.createLiteral(i))),
+                        100L * i);
+                Thread.sleep(200);
+            }
+            for (int i = 0; i < 20 && rows.stream().noneMatch(CapabilityProbe::countIsThree); i++) {
+                Thread.sleep(100);
+            }
+            return rows.stream().anyMatch(CapabilityProbe::countIsThree);
+        }
+    }
+
+    /**
+     * CQELS-QL_SPEC.md §10 states the CypherQL clause order: {@code FROM STREAM} first, and a query
+     * starting with {@code MATCH} is a syntax error (the spec's own example had it the wrong way
+     * round until #76). Both halves are checked, so the sentence goes stale in either direction.
+     */
+    private static boolean cypherClauseOrder() throws Exception {
+        String match = "MATCH (req:Request)-[:FOR]->(p:Person)-[:LOCATED_IN]->(c:City)\n";
+        String from = "FROM STREAM ProfileRequests [NOW]\n";
+        String ret = "RETURN p.firstName, p.lastName, c.name";
+        return cypherRegisters(from + match + ret) && !cypherRegisters(match + from + ret);
+    }
+
+    private static boolean cypherRegisters(String query) throws Exception {
+        try (CQELSEngine engine = CQELSEngine.builder().id("probe-" + System.nanoTime()).withMemoryStore().build()) {
+            engine.createStream("ProfileRequests");
+            try {
+                engine.registerCypherQuery(query, row -> { });
+                return true;
+            } catch (Exception refused) {
+                return false;
+            }
         }
     }
 

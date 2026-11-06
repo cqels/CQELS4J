@@ -53,7 +53,8 @@ public class WindowedAggregation {
                     System.out.println("  window stats -> " + row));
 
             engine.start();
-            System.out.println("Engine started. Per-vehicle avg/peak speed each 3s.\n");
+            System.out.println("Engine started. Per-vehicle avg/peak speed over a rolling 3s window, "
+                    + "reported on every arrival.\n");
 
             String[][] fleet = {
                     {Fleet.SENSOR_EV1, Fleet.EV1}, {Fleet.SENSOR_EV2, Fleet.EV2}, {Fleet.SENSOR_EV3, Fleet.EV3}};

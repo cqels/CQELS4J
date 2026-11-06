@@ -69,6 +69,7 @@ Unlike a one-shot SPARQL query, a CQELS-QL query is **registered** and runs cont
 unregistered:
 
 ```sparql
+PREFIX ex: <http://example.org/>
 REGISTER QUERY HighTemperature AS
 SELECT ?sensor ?temp
 FROM STREAM Sensors [NOW]
@@ -106,7 +107,7 @@ A window appears in square brackets after a stream name. **Time units:** `s` (se
 | Window | Syntax | Meaning |
 |--------|--------|---------|
 | Instantaneous | `[NOW]` | Only the current element; no buffering. Evaluated once per arriving element (one `push`, which may carry several statements). Since `2.0.0-alpha.21` it emits every solution the element yields; earlier alphas emitted only the first. |
-| Tumbling time | `[RANGE 10s]` | Fixed, non-overlapping N-second windows. |
+| Time window | `[RANGE 10s]` | The last N seconds of elements, by event time. An aggregate over it reports either epoch-aligned **tumbling** buckets or a **rolling** window on every arrival, depending on the query's shape — see the measured cases under §9 *Aggregates*. |
 | Sliding time | `[RANGE 10s STEP 5s]` | N-second window advancing every M seconds (overlapping). |
 | Sliding time (alt) | `[SLIDE 30s STEP 10s]` | Equivalent sliding-window spelling. |
 | Count-based | `[TRIPLES 100]` | The most recent N elements (pushes), regardless of time — despite the name, an element of several statements counts once. |
@@ -233,6 +234,12 @@ WHERE {
 | `CACHE d` | Cache lookup results for duration *d*. |
 | `FROM NAMED <iri>` | Named background graph. |
 
+**The graph IRI does not scope the lookup.** Measured on `2.0.0-alpha.21`: with
+`FROM <http://example.org/graph>`, a static pattern still matches a triple stored only in another
+named graph, or in the default graph — exactly as if the `FROM` clause were absent. Every static
+pattern reads the whole repository. Keep data you must not match out of the engine's store, or
+add a distinguishing triple to the pattern.
+
 Because the lookup re-reads the static store per element, updates to background facts are reflected on the
 next matching element.
 
@@ -310,8 +317,11 @@ NOT <eventVar>
 ```
 
 - **`<eventVar>`** (e.g. `?e1`) must appear as the **subject** of at least one triple pattern in the WHERE
-  block — that pattern defines what the event matches. A variable that is never a subject is a compile
-  error.
+  block — that pattern defines what the event matches. **This is not enforced**
+  ([#74](https://github.com/cqels/CQELS4J/issues/74)): measured on `2.0.0-alpha.21`, a variable
+  that is never a subject — mentioned nowhere else, or only as an object — registers without a
+  warning and then matches **any** element on the stream, so a misspelled variable turns its step
+  into a wildcard. Check that every `SEQ` variable is the subject of a pattern.
 - **`NOT`** turns the step into a negated gap — "this must *not* occur between the previous and next
   events" (a gap constraint, not adjacency). A `NOT` step takes no quantifier: since
   `2.0.0-alpha.21` a quantified negation such as `NOT ?e+` is refused at registration. Nor may it
@@ -578,12 +588,14 @@ The same engine accepts continuous **Cypher** queries for property-graph pattern
 streams (registered separately from CQELS-QL):
 
 ```cypher
-MATCH (req:Request)-[:FOR]->(p:Person)-[:LOCATED_IN]->(c:City)
 FROM STREAM ProfileRequests [NOW]
+MATCH (req:Request)-[:FOR]->(p:Person)-[:LOCATED_IN]->(c:City)
 RETURN p.firstName, p.lastName, c.name
 ```
 
-CypherQL reuses the streaming model with graph-traversal patterns instead of triple patterns. Measured
+CypherQL reuses the streaming model with graph-traversal patterns instead of triple patterns. The
+clauses come in the order shown: `FROM STREAM` first, then `MATCH`, then `RETURN`; a query that
+starts with `MATCH` is a syntax error. Measured
 on `2.0.0-alpha.21` (and the same on alpha.20), `[NOW]` and `[TRIPLES n]` answer on a live stream:
 the same `MATCH` under `[RANGE 2s]` or `[SLIDE 2s STEP 1s]` registers and emits nothing while the
 stream is live (upstream lists this as a known issue: those windows fire on completion). `RETURN
