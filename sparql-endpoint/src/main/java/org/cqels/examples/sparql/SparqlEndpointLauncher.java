@@ -137,7 +137,7 @@ public final class SparqlEndpointLauncher {
         }
         int bound = ((ServerConnector) server.getConnectors()[0]).getLocalPort();
 
-        System.out.println("listening on http://" + host + ":" + bound + options.path());
+        System.out.println("listening on " + listeningUrl(host, bound, options.path()));
         System.out.flush();
         log.info("SPARQL endpoint ready: update {}, token {}, execution limit {} s, {} query slots, max rows {}, store {}",
                 options.updateEnabled() ? "enabled" : "disabled", options.authToken() == null ? "none" : "set",
@@ -205,6 +205,12 @@ public final class SparqlEndpointLauncher {
     static CQELSEngine buildEngine(Repository store) {
         CQELSEngine.Builder builder = CQELSEngine.builder().id("sparql-endpoint");
         return store == null ? builder.withMemoryStore().build() : builder.repository(store).build();
+    }
+
+    /** The advertised URL. An IPv6 literal needs brackets ({@code http://[::1]:8089/sparql}), or scripts cannot use it. */
+    static String listeningUrl(String host, int port, String path) {
+        String h = host.contains(":") && !host.startsWith("[") ? "[" + host + "]" : host;
+        return "http://" + h + ":" + port + path;
     }
 
     /** The start-up refusal described in the class comment. */

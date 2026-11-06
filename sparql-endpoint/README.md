@@ -60,13 +60,13 @@ All settings are environment variables, named like the MCP server's `CQELS_MCP_H
 | Request | Result |
 |---|---|
 | `GET /sparql?query=…` | query |
-| `POST /sparql` — `application/x-www-form-urlencoded`, `query=` or `update=` | query / update |
+| `POST /sparql` — `application/x-www-form-urlencoded`, `query=` or `update=` | query / update; percent-escapes decode in the declared `charset`, UTF-8 when none |
 | `POST /sparql` — `application/sparql-query` | query, body is the query |
 | `POST /sparql` — `application/sparql-update` | update, body is the update |
 | `default-graph-uri`, `named-graph-uri` | query dataset; overrides `FROM` / `FROM NAMED` in the query |
 | `using-graph-uri`, `using-named-graph-uri` | update dataset; together with `USING`, `USING NAMED` or `WITH` in the update → `400` (§2.2.3) |
 | relative IRIs | resolved against the request URL, the service-defined base of §2.3 |
-| `Accept` | negotiated through RDF4J's writer registries, `q` values honoured. Defaults: SPARQL JSON for SELECT/ASK, Turtle for CONSTRUCT/DESCRIBE. Also XML, CSV, TSV, binary; N-Triples, N-Quads, TriG, JSON-LD, RDF/XML as far as the RDF4J Rio modules on the classpath go. |
+| `Accept` | negotiated through RDF4J's writer registries per RFC 9110: `q` values honoured, `q=0` excludes, the most specific range wins, repeated `Accept` fields form one list, and the response is labelled with the media type that matched (`application/json` if that is what was asked for). Defaults: SPARQL JSON for SELECT/ASK, Turtle for CONSTRUCT/DESCRIBE. Also XML, CSV, TSV, binary; N-Triples, N-Quads, TriG, JSON-LD, RDF/XML as far as the RDF4J Rio modules on the classpath go. |
 | `GET /health`, `GET /ready` | `200` once the engine has started and Jetty is bound (never behind the token). |
 
 | Status | When |
@@ -79,7 +79,7 @@ All settings are environment variables, named like the MCP server's `CQELS_MCP_H
 | `413` | body over `CQELS_SPARQL_MAX_REQUEST_BYTES` |
 | `415` | unknown POST `Content-Type` or charset |
 | `500` | evaluation failed |
-| `503` | execution limit exceeded (as Fuseki answers), or every query slot busy (then with `Retry-After: 1`) |
+| `503` | execution limit exceeded by a query or an update (as Fuseki answers), or every query slot busy (then with `Retry-After: 1`) |
 
 A result streams as it is produced, so the status is sent with the first buffer. If the
 execution limit trips **after** that, the response is aborted — the connection closes without
