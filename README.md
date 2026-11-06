@@ -132,7 +132,7 @@ electric-vehicle fleet / vehicle-to-grid (V2G) scenario.)
 **Windowing & aggregation**
 | Demo | Feature |
 |------|---------|
-| [`WindowedAggregation`](examples/src/main/java/org/cqels/examples/WindowedAggregation.java) | rolling `[RANGE]` + `GROUP BY` aggregates, one row per arrival |
+| [`WindowedAggregation`](examples/src/main/java/org/cqels/examples/WindowedAggregation.java) | rolling `[RANGE]` + `GROUP BY` aggregates, re-emitted on every arrival |
 | [`SlidingWindowTrends`](examples/src/main/java/org/cqels/examples/SlidingWindowTrends.java) | sliding `[SLIDE … STEP …]` windows |
 | [`CountWindow`](examples/src/main/java/org/cqels/examples/CountWindow.java) | count-based `[TRIPLES N]` window |
 | [`DirectionalWindow`](examples/src/main/java/org/cqels/examples/DirectionalWindow.java) | directional/LARS `[FUTURE … EMIT …]` window |

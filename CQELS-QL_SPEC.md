@@ -234,11 +234,13 @@ WHERE {
 | `CACHE d` | Cache lookup results for duration *d*. |
 | `FROM NAMED <iri>` | Named background graph. |
 
-**The graph IRI does not scope the lookup.** Measured on `2.0.0-alpha.21`: with
-`FROM <http://example.org/graph>`, a static pattern still matches a triple stored only in another
-named graph, or in the default graph — exactly as if the `FROM` clause were absent. Every static
-pattern reads the whole repository. Keep data you must not match out of the engine's store, or
-add a distinguishing triple to the pattern.
+**On a query over one stream, the graph IRI does not scope the lookup.** Measured on
+`2.0.0-alpha.21`: with `FROM <http://example.org/graph>`, a static pattern still matches a triple
+stored only in another named graph, or in the default graph — exactly as if the `FROM` clause were
+absent. That held under `[NOW]`, `[TRIPLES 1]` and `[RANGE 3s]`, with one or two stream patterns.
+A query joining **two** streams under `[RANGE]` is scoped correctly: the same triple outside the
+declared graph is not matched. On a one-stream query, keep data you must not match out of the
+engine's store, or add a distinguishing triple to the pattern.
 
 Because the lookup re-reads the static store per element, updates to background facts are reflected on the
 next matching element.

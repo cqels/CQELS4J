@@ -108,7 +108,7 @@ in the table + the `Build & run` block above).
 ### Windowing & aggregation
 | Class | CQELS feature | Scenario |
 |-------|---------------|----------|
-| [`WindowedAggregation`](src/main/java/org/cqels/examples/WindowedAggregation.java) | `[RANGE 3s]` rolling + `GROUP BY` | Per-vehicle average / peak speed and sample count over the last 3 seconds, one row per arrival. |
+| [`WindowedAggregation`](src/main/java/org/cqels/examples/WindowedAggregation.java) | `[RANGE 3s]` rolling + `GROUP BY` | Per-vehicle average / peak speed and sample count over the last 3 seconds; every arrival re-emits the current per-vehicle rows. |
 | [`SlidingWindowTrends`](src/main/java/org/cqels/examples/SlidingWindowTrends.java) | `[SLIDE 4s STEP 2s]` + `GROUP BY` | Per-vehicle moving state-of-charge (battery-drain) trend — average / min / max re-emitted every 2s. |
 | [`CountWindow`](src/main/java/org/cqels/examples/CountWindow.java) | `[TRIPLES 30]` count-based window | Observations per vehicle over the most recent stream triples (the last N readings, not seconds). |
 | [`DirectionalWindow`](src/main/java/org/cqels/examples/DirectionalWindow.java) | `[FUTURE 2s EMIT EARLY_AND_FINAL]` (LARS) | Forward-looking charge-reading counts per vehicle during a V2G charging burst (running + final rows). |
