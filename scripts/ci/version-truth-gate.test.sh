@@ -43,7 +43,7 @@ PIN=2.0.0-alpha.18
 newfix() {
   local v=${1:-$PIN} d
   d=$(mktemp -d "$WORK/fix.XXXXXX")
-  mkdir -p "$d/examples" "$d/mcp-server"
+  mkdir -p "$d/examples" "$d/mcp-server" "$d/sparql-endpoint"
 
   for p in examples mcp-server; do
     cat > "$d/$p/pom.xml" <<EOF
@@ -54,6 +54,24 @@ newfix() {
 </project>
 EOF
   done
+
+  cat > "$d/sparql-endpoint/pom.xml" <<EOF
+<project>
+    <properties>
+        <cqels.version>$v</cqels.version>
+        <jetty.version>12.0.16</jetty.version>
+    </properties>
+</project>
+EOF
+
+  cat > "$d/sparql-endpoint/README.md" <<'EOF'
+# CQELS SPARQL endpoint
+
+```bash
+curl -G http://127.0.0.1:8089/sparql \
+  --data-urlencode 'query=SELECT ?v WHERE { ?v ?p ?o }'
+```
+EOF
 
   cat > "$d/README.md" <<EOF
 # CQELS
@@ -228,6 +246,14 @@ checkmsg 1 "a stale 'Latest release' stamp fires" "README.md:3" "$d"
 
 d=$(newfix); sed -i.bak "s|<cqels.version>$PIN|<cqels.version>2.0.0-alpha.16|" "$d/mcp-server/pom.xml"
 checkmsg 2 "the two poms disagreeing is a usage error, not a doc report" "disagree about the pin" "$d"
+
+# The third pom (sparql-endpoint, cqels/CQELS4J#104). Before it was in POMS a
+# bump could move the other two and leave it behind with A1 still green.
+d=$(newfix); sed -i.bak "s|<cqels.version>$PIN|<cqels.version>2.0.0-alpha.16|" "$d/sparql-endpoint/pom.xml"
+checkmsg 2 "sparql-endpoint left on the old pin is half a bump too" "sparql-endpoint/pom.xml says '2.0.0-alpha.16'" "$d"
+
+d=$(newfix); rm "$d/sparql-endpoint/pom.xml"
+checkmsg 2 "a missing sparql-endpoint pom refuses to guess the pin" "sparql-endpoint/pom.xml not found" "$d"
 
 # The house lesson: match() returns only the FIRST occurrence, so a line whose
 # display token was bumped can hide a stale URL behind it.
@@ -1297,7 +1323,7 @@ echo
 echo "the pin itself — a usage error (exit 2), not a report of 19 stale docs"
 
 for bad in '${revision}' '2.0.0-alpha-SNAPSHOT' '2.0.0' 'not a version'; do
-  d=$(newfix); sed -i.bak "s|<cqels.version>$PIN|<cqels.version>$bad|" "$d/examples/pom.xml" "$d/mcp-server/pom.xml"
+  d=$(newfix); sed -i.bak "s|<cqels.version>$PIN|<cqels.version>$bad|" "$d/examples/pom.xml" "$d/mcp-server/pom.xml" "$d/sparql-endpoint/pom.xml"
   check 2 "pin '$bad' is rejected" "$d"
 done
 
@@ -1577,6 +1603,20 @@ cat > "$WORK/t-good" <<'EOF'
 {"jsonrpc":"2.0","id":5,"result":{"prompts":[{"name":"recall_about","arguments":[{"name":"topic","required":true},{"name":"window"}]},{"name":"store_knowledge","arguments":[{"name":"graph"}]}]}}
 {"jsonrpc":"2.0","id":6,"result":{"resourceTemplates":[{"uriTemplate":"cqels://queries/{queryId}/results"}]}}
 EOF
+# The recorded answers C2/C3 compare (VTG_SPARQL_CAPTURE): the endpoint's JSON
+# for ASK {} and for the README example, and the Jetty cqels-mcp resolves.
+# Exported for every deep case, so the C1 cases above and below reach C2/C3
+# with a GOOD endpoint and keep testing what they name.
+spcap() { # spcap <name> <ask-json> <example-json> <jetty>
+  mkdir -p "$WORK/$1"
+  printf '%s\n' "$2" > "$WORK/$1/ask"
+  printf '%s\n' "$3" > "$WORK/$1/example"
+  printf '%s\n' "$4" > "$WORK/$1/jetty-mcp"
+}
+ROWS='{"head":{"vars":["v"]},"results":{"bindings":[{"v":{"type":"uri","value":"https://example.org/fleet/vehicle/EV-7Q2"}}]}}'
+spcap s-good '{"head":{},"boolean":true}' "$ROWS" 12.0.16
+export VTG_SPARQL_CAPTURE="$WORK/s-good"
+
 d=$(newfix); VTG_DEEP_CAPTURE="$WORK/t-good" check 0 \
   "documented surface == advertised surface (nested argument names ignored)" "$d" --deep
 
@@ -1640,6 +1680,42 @@ else
   printf '%s\n' "$out" | sed 's/^/          /'
   fail=$((fail + 1))
 fi
+
+echo
+echo "deep tier — the SPARQL endpoint does what its README says (C2), on cqels-mcp's Jetty (C3)"
+
+d=$(newfix); VTG_DEEP_CAPTURE="$WORK/t-good" checkmsg 0 "a working endpoint passes, saying what it ran" \
+  "example query returns 1 row(s)" "$d" --deep
+
+spcap s-empty '{"head":{},"boolean":true}' '{"head":{"vars":["v"]},"results":{"bindings":[]}}' 12.0.16
+d=$(newfix); VTG_DEEP_CAPTURE="$WORK/t-good" VTG_SPARQL_CAPTURE="$WORK/s-empty" checkmsg 1 \
+  "the README example answering NO rows fires (a reader would paste it and see nothing)" "returns NO rows" "$d" --deep
+
+spcap s-error '{"head":{},"boolean":true}' 'malformed query: Encountered "<EOF>"' 12.0.16
+d=$(newfix); VTG_DEEP_CAPTURE="$WORK/t-good" VTG_SPARQL_CAPTURE="$WORK/s-error" checkmsg 1 \
+  "the README example answering an ERROR fires, quoting it" "malformed query" "$d" --deep
+
+spcap s-askfalse '{"head":{},"boolean":false}' "$ROWS" 12.0.16
+d=$(newfix); VTG_DEEP_CAPTURE="$WORK/t-good" VTG_SPARQL_CAPTURE="$WORK/s-askfalse" checkmsg 1 \
+  "ASK {} not answering true fires" "did not answer ASK {}" "$d" --deep
+
+spcap s-jetty '{"head":{},"boolean":true}' "$ROWS" 12.0.21
+d=$(newfix); VTG_DEEP_CAPTURE="$WORK/t-good" VTG_SPARQL_CAPTURE="$WORK/s-jetty" checkmsg 1 \
+  "cqels-mcp moving to another Jetty fires, naming both versions" "pins jetty.version 12.0.16, but org.cqels:cqels-mcp" "$d" --deep
+
+spcap s-nojetty '{"head":{},"boolean":true}' "$ROWS" ''
+d=$(newfix); VTG_DEEP_CAPTURE="$WORK/t-good" VTG_SPARQL_CAPTURE="$WORK/s-nojetty" checkmsg 3 \
+  "an unreadable resolved Jetty is INCONCLUSIVE, not a drift report" "could not read which jetty-server" "$d" --deep
+
+# The example is READ from the README, so rewording it away must fail, not
+# leave the tier running nothing of the README's.
+d=$(newfix); sed -i.bak "/--data-urlencode/d" "$d/sparql-endpoint/README.md"
+VTG_DEEP_CAPTURE="$WORK/t-good" checkmsg 1 "a README with no curl example left fails ('pass vacuously')" \
+  "pass vacuously" "$d" --deep
+
+d=$(newfix); sed -i.bak "/jetty.version/d" "$d/sparql-endpoint/pom.xml"
+VTG_DEEP_CAPTURE="$WORK/t-good" checkmsg 1 "a pom with no readable jetty.version fails" \
+  "declares no readable <jetty.version>" "$d" --deep
 
 echo
 echo "arguments"
