@@ -96,7 +96,7 @@ public class CapabilityProbe {
         caveat("#74 a CEP SEQ variable that is never a subject matches any element",
                 seqVariableMustBeASubject(),
                 "CQELS-QL_SPEC.md §7 SEQ arguments, GETTING_STARTED.md limitations table");
-        caveat("     FROM <graph> does not scope a static lookup",
+        caveat("     FROM <graph> does not scope a static lookup on a one-stream query",
                 fromGraphScopesStaticLookup(),
                 "CQELS-QL_SPEC.md §6, GETTING_STARTED.md limitations table");
         caveat("     REPLACE() is not evaluated",
@@ -841,25 +841,36 @@ public class CapabilityProbe {
     /**
      * #74, measured on 2.0.0-alpha.21: a {@code SEQ} argument must be the subject of a triple
      * pattern (CQELS-QL_SPEC.md §7), but one that is not registers anyway and matches any element.
-     * The variable here is mentioned nowhere else; an alert is followed by an unrelated element,
-     * and the query reports a two-event match.
+     * Both measured forms are checked — the variable mentioned nowhere else, and the variable used
+     * only as an object — each with an alert followed by an unrelated element.
      *
      * <p>The control makes the second argument a subject and pushes two alerts: it must match. If it
      * stops matching, CEP itself has broken and this verdict means nothing.
      *
-     * <p>Returns true when the query is refused at registration or matches nothing, i.e. fixed.
+     * <p>Returns true when both forms are refused at registration or match nothing, i.e. fixed; a
+     * change in only one form is reported as PARTIAL.
      */
     private static boolean seqVariableMustBeASubject() throws Exception {
         String alert = "<" + C + "hasAlert> <" + C + "Overheat>";
-        List<Object> unmentioned = cep("?e1 " + alert + " . FILTER(SEQ(?e1 ; ?zz))",
-                VF.createStatement(VF.createIRI(C + "x1"), VF.createIRI(C + "unrelated"), VF.createIRI(C + "y")));
+        Statement unrelated = VF.createStatement(VF.createIRI(C + "x1"), VF.createIRI(C + "unrelated"),
+                VF.createIRI(C + "y"));
+        List<Object> unmentioned = cep("?e1 " + alert + " . FILTER(SEQ(?e1 ; ?zz))", unrelated);
+        List<Object> objectOnly = cep("?e1 " + alert + " . ?x <" + C + "hasAlert> ?e2 . "
+                + "FILTER(SEQ(?e1 ; ?e2))", unrelated);
         List<Object> control = cep("?e1 " + alert + " . ?e2 " + alert + " . FILTER(SEQ(?e1 ; ?e2))",
                 VF.createStatement(VF.createIRI(C + "m2"), VF.createIRI(C + "hasAlert"), VF.createIRI(C + "Overheat")));
         if (control == null || control.isEmpty()) {
             DIVERGENCES.add("REGRESSED — the control (two alerts, both SEQ arguments subjects) no longer matches\n"
                     + "      CEP itself is failing; the #74 verdict is meaningless");
         }
-        return unmentioned == null || unmentioned.isEmpty();
+        boolean unmentionedFixed = unmentioned == null || unmentioned.isEmpty();
+        boolean objectOnlyFixed = objectOnly == null || objectOnly.isEmpty();
+        if (unmentionedFixed != objectOnlyFixed) {
+            DIVERGENCES.add("PARTIAL — #74 changed for one form only: unmentioned variable "
+                    + (unmentionedFixed ? "fixed" : "still a wildcard") + ", object-only variable "
+                    + (objectOnlyFixed ? "fixed" : "still a wildcard"));
+        }
+        return unmentionedFixed && objectOnlyFixed;
     }
 
     /**
@@ -887,14 +898,16 @@ public class CapabilityProbe {
     }
 
     /**
-     * Measured on 2.0.0-alpha.21: {@code FROM <g>} does not scope the static lookup. A static
-     * pattern matches a triple stored only in another named graph exactly as if the clause were
-     * absent (the default graph too, not checked here). Raised in #79.
+     * Measured on 2.0.0-alpha.21: on a query over one stream, {@code FROM <g>} does not scope the
+     * static lookup. A static pattern matches a triple stored only in another named graph, or in the
+     * default graph, exactly as if the clause were absent. (A two-stream {@code [RANGE]} join is
+     * scoped correctly, so this check stays on one stream.) Raised in #79.
      *
      * <p>The control stores the triple in the declared graph, where it must match; if it stops
      * matching, the static lookup itself has broken.
      *
-     * <p>Returns true when the triple in the other graph is NOT matched, i.e. fixed.
+     * <p>Returns true when neither the other named graph nor the default graph is matched, i.e.
+     * fixed; a change for only one of them is reported as PARTIAL.
      */
     private static boolean fromGraphScopesStaticLookup() throws Exception {
         String where = """
@@ -903,20 +916,29 @@ public class CapabilityProbe {
             """.formatted(C);
         Pusher request = s -> s.push(VF.createStatement(VF.createIRI(C + "req1"),
                 VF.createIRI(C + "personIri"), VF.createIRI(C + "alice")));
-        List<Object> elsewhere = run(inGraph("other"), where, request);
-        List<Object> declared = run(inGraph("graph"), where, request);
-        if (declared.isEmpty()) {
+        boolean otherScoped = run(inGraph("other"), where, request).isEmpty();
+        boolean defaultScoped = run(inGraph(null), where, request).isEmpty();
+        if (run(inGraph("graph"), where, request).isEmpty()) {
             DIVERGENCES.add("REGRESSED — the control (data in the declared graph) no longer answers\n"
                     + "      the static lookup itself is failing; the FROM <graph> verdict is meaningless");
         }
-        return elsewhere.isEmpty();
+        if (otherScoped != defaultScoped) {
+            DIVERGENCES.add("PARTIAL — FROM <graph> now scopes the lookup against "
+                    + (otherScoped ? "another named graph" : "the default graph") + " only");
+        }
+        return otherScoped && defaultScoped;
     }
 
+    /** Seeds {@code alice city "Berlin"} into the named graph {@code graph}, or the default graph if null. */
     private static Seeder inGraph(String graph) {
         return engine -> {
             try (RepositoryConnection conn = engine.getRepository().getConnection()) {
-                conn.add(VF.createIRI(C + "alice"), VF.createIRI(C + "city"), VF.createLiteral("Berlin"),
-                        VF.createIRI(C + graph));
+                if (graph == null) {
+                    conn.add(VF.createIRI(C + "alice"), VF.createIRI(C + "city"), VF.createLiteral("Berlin"));
+                } else {
+                    conn.add(VF.createIRI(C + "alice"), VF.createIRI(C + "city"), VF.createLiteral("Berlin"),
+                            VF.createIRI(C + graph));
+                }
             }
         };
     }
@@ -983,10 +1005,13 @@ public class CapabilityProbe {
 
     /**
      * CQELS-QL_SPEC.md §9 lists "two stream patterns" as a rolling {@code [RANGE]} aggregate, and
-     * the WindowedAggregation example depends on it: a running count on every arrival, not a bucket
-     * reported when it closes. Three elements, timestamped inside one 3 s bucket, each satisfying
-     * both patterns: a rolling window has already reported {@code n=3} before anything closes the
-     * bucket; a tumbling one would still be silent. Raised in #77.
+     * the WindowedAggregation example depends on it: a running count on every arrival over the last
+     * 3 s of event time, not a bucket reported when it closes. Raised in #77.
+     *
+     * <p>Three elements, timestamped inside one 3 s bucket, each satisfying both patterns. Each
+     * arrival must report the running count — {@code n=1}, then {@code n=2}, then {@code n=3} — before
+     * the next element is pushed, which rejects close-only and batched reporting. A fourth element at
+     * 10 s must then report {@code n=1}, which rejects a window that never evicts.
      */
     private static boolean twoPatternRangeAggregateRolls() throws Exception {
         try (CQELSEngine engine = CQELSEngine.builder().id("probe-range-roll").withMemoryStore().build()) {
@@ -996,18 +1021,29 @@ public class CapabilityProbe {
                     "SELECT (COUNT(*) AS ?n) FROM STREAM S [RANGE 3s]\n"
                     + "WHERE { STREAM S { ?o <" + C + "v> ?val . ?o <" + C + "w> ?w . } }\n"), rows::add);
             engine.start();
-            for (int i = 1; i <= 3; i++) {
+            long[] timestamps = {100L, 200L, 300L, 10_000L};
+            int[] expected = {1, 2, 3, 1};
+            for (int k = 0; k < timestamps.length; k++) {
+                int before = rows.size();
                 stream.push(List.of(
-                        VF.createStatement(VF.createIRI(C + "o" + i), VF.createIRI(C + "v"), VF.createLiteral(i)),
-                        VF.createStatement(VF.createIRI(C + "o" + i), VF.createIRI(C + "w"), VF.createLiteral(i))),
-                        100L * i);
-                Thread.sleep(200);
+                        VF.createStatement(VF.createIRI(C + "o" + k), VF.createIRI(C + "v"), VF.createLiteral(k)),
+                        VF.createStatement(VF.createIRI(C + "o" + k), VF.createIRI(C + "w"), VF.createLiteral(k))),
+                        timestamps[k]);
+                for (int i = 0; i < 30 && rows.size() == before; i++) {
+                    Thread.sleep(100);
+                }
+                if (rows.size() == before || !countIs(rows.get(rows.size() - 1), expected[k])) {
+                    return false;
+                }
             }
-            for (int i = 0; i < 20 && rows.stream().noneMatch(CapabilityProbe::countIsThree); i++) {
-                Thread.sleep(100);
-            }
-            return rows.stream().anyMatch(CapabilityProbe::countIsThree);
+            return true;
         }
+    }
+
+    /** True when the row binds {@code ?n} to exactly {@code n} (parsed as in {@link #countIsThree}). */
+    private static boolean countIs(Object row, int n) {
+        return java.util.regex.Pattern.compile("\\bn=" + n + "(?![\\d.eE+-])")
+                .matcher(String.valueOf(row)).find();
     }
 
     /**
@@ -1019,17 +1055,19 @@ public class CapabilityProbe {
         String match = "MATCH (req:Request)-[:FOR]->(p:Person)-[:LOCATED_IN]->(c:City)\n";
         String from = "FROM STREAM ProfileRequests [NOW]\n";
         String ret = "RETURN p.firstName, p.lastName, c.name";
-        return cypherRegisters(from + match + ret) && !cypherRegisters(match + from + ret);
+        return cypherRefusal(from + match + ret) == null
+                && String.valueOf(cypherRefusal(match + from + ret)).contains("Syntax error");
     }
 
-    private static boolean cypherRegisters(String query) throws Exception {
+    /** Registers the CypherQL query; returns null if it registers, or the refusal's message. */
+    private static String cypherRefusal(String query) throws Exception {
         try (CQELSEngine engine = CQELSEngine.builder().id("probe-" + System.nanoTime()).withMemoryStore().build()) {
             engine.createStream("ProfileRequests");
             try {
                 engine.registerCypherQuery(query, row -> { });
-                return true;
+                return null;
             } catch (Exception refused) {
-                return false;
+                return String.valueOf(refused.getMessage());
             }
         }
     }

@@ -84,7 +84,7 @@ same way, swapping `-Dexec.mainClass`. A few representative ones — the full ca
 | Class | What it shows |
 |-------|---------------|
 | `org.cqels.examples.HelloCqels` | `[NOW]` window + `FILTER` — low-battery alert (SoC < 20 %), the minimal continuous query |
-| `org.cqels.examples.WindowedAggregation` | `[RANGE 3s]` rolling window + `GROUP BY` — per-vehicle avg/peak speed, one row per arrival |
+| `org.cqels.examples.WindowedAggregation` | `[RANGE 3s]` rolling window + `GROUP BY` — per-vehicle avg/peak speed, re-emitted for every vehicle on each arrival |
 | `org.cqels.examples.SlidingWindowTrends` | `[SLIDE 4s STEP 2s]` overlapping windows — per-vehicle moving state-of-charge trend |
 | `org.cqels.examples.AdvancedQueryOperators` | `OPTIONAL` / `UNION` / `FILTER NOT EXISTS` / `BIND` enriching a speed reading against the static fleet graph |
 | `org.cqels.examples.ComplexEventPattern` | declarative CEP — `FILTER(SEQ(?e1; ?e2))` road-rage detection (speed drop then spike) |
@@ -205,7 +205,7 @@ fault.
 | A `FILTER` over an `OPTIONAL` variable, on a stream-only query or a windowed `GROUP BY` query ([#85](https://github.com/cqels/CQELS4J/issues/85)) | The `FILTER` runs before the `OPTIONAL`: `OPTIONAL { … ?l } FILTER(!BOUND(?l))` admits every row, `FILTER(BOUND(?l))` drops every row | Write the negation as `FILTER NOT EXISTS { … }`; test the optional value in the result listener — see `CQELS-QL_SPEC.md` §9 |
 | A **literal** join key between a multi-pattern `STREAM` block and a static pattern, under `[TRIPLES n]` / `[RANGE d]` | The row is dropped; the same query keyed on an IRI answers | Key the join on an IRI, or use `[NOW]` — see `CQELS-QL_SPEC.md` §6 |
 | `xsd:duration` comparison ([#82](https://github.com/cqels/CQELS4J/issues/82)) | Compared as text: `"PT10S" > "PT9S"` and `"PT60S" = "PT1M"` are false | Express the interval as a window |
-| `FROM <graph>` naming the background graph | The IRI does not scope the lookup: a static pattern also matches triples stored in any other named graph, or the default graph | Keep data you must not match out of the store — see `CQELS-QL_SPEC.md` §6 |
+| `FROM <graph>` naming the background graph, on a query over one stream | The IRI does not scope the lookup: a static pattern also matches triples stored in any other named graph, or the default graph | Keep data you must not match out of the store — see `CQELS-QL_SPEC.md` §6 |
 | A CEP `SEQ` variable that is never the subject of a pattern ([#74](https://github.com/cqels/CQELS4J/issues/74)) | That step matches **any** element on the stream, so a misspelled variable raises false matches | Check that every `SEQ` variable is the subject of a triple pattern — see `CQELS-QL_SPEC.md` §7 |
 
 Property paths (`+`, `*`, `/`, `^`, `?`, `|`) are also unsupported, but they no longer belong in
