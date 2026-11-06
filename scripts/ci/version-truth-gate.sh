@@ -177,7 +177,23 @@ ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || {
 cd "$ROOT" || exit 2
 
 WORK=$(mktemp -d)
-trap 'rm -rf "$WORK"' EXIT
+# The deep tier starts JVMs in the background (the MCP server for C1, the SPARQL
+# endpoint for C2). Killing them only on the normal path left a live endpoint
+# behind when the gate itself was interrupted — reproduced in review of #106 by
+# a SIGTERM while C2 waited on curl: the shell exited and the JVM went on
+# answering queries. Every background pid is recorded in BGPIDS the moment it
+# exists, and the EXIT trap — which INT and TERM route through — reaps them.
+BGPIDS=""
+cleanup() {
+  for p in $BGPIDS; do
+    kill "$p" 2>/dev/null
+    wait "$p" 2>/dev/null
+  done
+  rm -rf "$WORK"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 fail=0
 err() { echo "::error::$*"; fail=1; }
@@ -1520,9 +1536,11 @@ if [ "$DEEP" -eq 1 ]; then
       sleep 60
     } > "$FIFO" &
     WRITER=$!
+    BGPIDS="$BGPIDS $WRITER"
     : > "$TRANSCRIPT"
     java -jar mcp-server/target/cqels-mcp-server.jar < "$FIFO" > "$TRANSCRIPT" 2>/dev/null &
     SRV=$!
+    BGPIDS="$BGPIDS $SRV"
     for _ in $(seq 1 90); do grep -q '"id":6' "$TRANSCRIPT" 2>/dev/null && break; sleep 1; done
     kill "$SRV" "$WRITER" 2>/dev/null
     wait "$SRV" 2>/dev/null
@@ -1656,8 +1674,35 @@ PY
   echo "-- deep: sparql endpoint --"
   SPDOC=sparql-endpoint/README.md
   SPPOM=sparql-endpoint/pom.xml
-  EXAMPLE=$(sed -n "s/.*--data-urlencode 'query=\(.*\)'.*/\1/p" "$SPDOC" 2>/dev/null | head -1)
+  # The example is taken the way a reader's SHELL takes it: the first fenced
+  # block holding a `--data-urlencode 'query=…'` curl, continuation lines
+  # joined, tokenised by shlex. A sed over the raw line kept quotes the shell
+  # strips, so the gate and the reader disagreed in both directions (review of
+  # #106): an unescaped 'Alice' inside the single-quoted argument reached the
+  # endpoint intact here but as a bare Alice — and a 400 — for the reader, and
+  # the correct '\'' escape did the opposite.
+  EXAMPLE=$("$PY3" - "$SPDOC" <<'PY' 2>/dev/null
+import re, shlex, sys
+try:
+    text = open(sys.argv[1], encoding='utf-8').read()
+except OSError:
+    sys.exit(0)
+for block in re.findall(r'^```[a-z]*\n(.*?)^```', text, re.S | re.M):
+    if '--data-urlencode' not in block:
+        continue
+    command = re.sub(r'\\\n', ' ', block)
+    try:
+        tokens = shlex.split(command, comments=False)
+    except ValueError:
+        continue
+    for i, tok in enumerate(tokens[:-1]):
+        if tok == '--data-urlencode' and tokens[i + 1].startswith('query='):
+            sys.stdout.write(tokens[i + 1][len('query='):])
+            sys.exit(0)
+PY
+)
   JETTY_PIN=$(sed -n 's|.*<jetty\.version>\(.*\)</jetty\.version>.*|\1|p' "$SPPOM" | head -1)
+  [ -n "$EXAMPLE" ] && echo "note: $SPDOC example query, as a shell passes it: $EXAMPLE"
   if [ -z "$EXAMPLE" ]; then
     err "$SPDOC no longer carries a curl example (--data-urlencode 'query=…') — the deep tier would have nothing of the README's to run, so it would pass vacuously."
   fi
@@ -1687,6 +1732,7 @@ PY
     CQELS_SPARQL_PORT=0 CQELS_SPARQL_SEED_FLEET=true \
       java -jar sparql-endpoint/target/cqels-sparql-endpoint.jar > "$SPW/stdout" 2> "$SPW/stderr" &
     SPSRV=$!
+    BGPIDS="$BGPIDS $SPSRV"
     URL=""
     for _ in $(seq 1 90); do
       URL=$(sed -n 's/^listening on //p' "$SPW/stdout" 2>/dev/null | head -1)
@@ -1705,19 +1751,26 @@ PY
       err "$SPDOC says the jar prints 'listening on …' once started, but it exited first: $(tail -3 "$SPW/stderr" | tr '\n' ' ')"
       exit 1
     fi
-    curl -sS -G "$URL" -H 'Accept: application/sparql-results+json' --data-urlencode 'query=ASK {}' \
-      -o "$SPW/ask" 2>/dev/null
+    # Deadlines: the startup loop bounds only startup, and an endpoint that sends
+    # headers and then stalls held curl forever (review of #106). No -f on
+    # purpose: an HTTP error body is evidence, and the checks below quote it.
+    curl -sS --connect-timeout 10 --max-time 60 -G "$URL" -H 'Accept: application/sparql-results+json' \
+      --data-urlencode 'query=ASK {}' -o "$SPW/ask" 2>/dev/null
     rc1=$?
-    curl -sS -G "$URL" -H 'Accept: application/sparql-results+json' --data-urlencode "query=$EXAMPLE" \
-      -o "$SPW/example" 2>/dev/null
+    curl -sS --connect-timeout 10 --max-time 60 -G "$URL" -H 'Accept: application/sparql-results+json' \
+      --data-urlencode "query=$EXAMPLE" -o "$SPW/example" 2>/dev/null
     rc2=$?
     kill "$SPSRV" 2>/dev/null; wait "$SPSRV" 2>/dev/null
     if [ "$rc1" -ne 0 ] || [ "$rc2" -ne 0 ]; then
-      echo "??:   INCONCLUSIVE — the endpoint at $URL started but a request to it failed at the transport level. Not a documentation defect; re-run."
+      echo "??:   INCONCLUSIVE — the endpoint at $URL started but a request to it failed at the transport level or timed out (curl exit $rc1 / $rc2). Not a documentation defect; re-run."
       exit 3
     fi
   fi
 
+  # Validated, not just indexed: a binding list holding null counted as a row
+  # and passed, and `"results": "broken"` crashed the parser into an
+  # INCONCLUSIVE (review of #106). A malformed answer is the endpoint's
+  # defect; only the interpreter failing is ours.
   SPV=$("$PY3" - "$SPW" <<'PY'
 import json, os, sys
 d = sys.argv[1]
@@ -1727,13 +1780,16 @@ def load(name):
             return json.load(fh)
     except (OSError, ValueError):
         return None
+def term(t):
+    return isinstance(t, dict) and isinstance(t.get('type'), str) and isinstance(t.get('value'), str)
 ask, example = load('ask'), load('example')
-rows = -1
-if isinstance(example, dict):
-    b = (example.get('results') or {}).get('bindings')
-    if isinstance(b, list):
+ask_ok = isinstance(ask, dict) and ask.get('boolean') is True
+rows = -1   # -1 = not a well-formed SPARQL JSON SELECT result
+if isinstance(example, dict) and isinstance(example.get('results'), dict):
+    b = example['results'].get('bindings')
+    if isinstance(b, list) and all(isinstance(r, dict) and r and all(term(v) for v in r.values()) for r in b):
         rows = len(b)
-print('%s %d' % ('true' if isinstance(ask, dict) and ask.get('boolean') is True else 'bad', rows))
+print('%s %d' % ('true' if ask_ok else 'bad', rows))
 PY
 )
   if [ $? -ne 0 ] || [ -z "$SPV" ]; then
