@@ -449,8 +449,9 @@ are called out.
     nothing, and so does `COUNT(*)` written beside it. An argument left unbound by an `OPTIONAL`
     is counted correctly (`{n=0}`).
   - **`AVG` of a group in which no row binds the argument is `null`**, where SPARQL 1.1 gives 0.
-  - **A `GROUP BY` key keeps a literal's label but not its language tag or datatype**, so
-    `"cat"@en` and `"cat"@fr` fall into one group (`{l=cat, n=2}`). Upstream reports the same for
+  - **A `GROUP BY` key compares a literal by its label, ignoring its language tag or datatype**,
+    so `"cat"@en` and `"cat"@fr` fall into one group, reported under the first key seen
+    (`{l="cat"@en, n=2}`). Upstream reports the same for
     `"PT1S"^^xsd:duration` and `"PT1S"^^xsd:dayTimeDuration`. When the tag matters, add
     `BIND(LANG(?l) AS ?lang)` and `GROUP BY ?l ?lang`: measured, that keeps the two apart.
     (`GROUP BY LANG(?l)` is a syntax error.)
