@@ -400,6 +400,18 @@ class SparqlProtocolServletTest {
         }
     }
 
+    /** RDF4J wraps an update's timeout twice (UpdateExecutionException → SailException → QueryInterruptedException). */
+    @Test
+    void updateExecutionLimitIs503() throws Exception {
+        try (Endpoint slow = Endpoint.start(EndpointOptions.defaults().withMaxExecutionSeconds(1).withUpdateEnabled(true), 300)) {
+            var r = post(slow.url(), "application/sparql-update",
+                    "DELETE { ?a ?b ?c } WHERE { { SELECT ?a ?b ?c WHERE { ?a ?b ?c . ?d ?e ?f . ?g ?h ?i . ?j ?k ?l } ORDER BY ?a LIMIT 1 } }",
+                    null);
+            assertEquals(503, r.statusCode(), r.body());
+            assertTrue(r.body().contains("execution limit"), r.body());
+        }
+    }
+
     @Test
     void concurrencyCapAnswers503WithRetryAfterAtOnce() throws Exception {
         try (Endpoint one = Endpoint.start(EndpointOptions.defaults().withMaxExecutionSeconds(2).withMaxConcurrentQueries(1), 300)) {
@@ -464,21 +476,62 @@ class SparqlProtocolServletTest {
     void negotiationHelper() {
         var reg = org.eclipse.rdf4j.query.resultio.TupleQueryResultWriterRegistry.getInstance();
         org.eclipse.rdf4j.query.resultio.QueryResultFormat json = org.eclipse.rdf4j.query.resultio.TupleQueryResultFormat.JSON;
-        assertEquals(json, SparqlProtocolServlet.negotiate(null, reg, json).orElseThrow());
-        assertEquals(json, SparqlProtocolServlet.negotiate("*/*", reg, json).orElseThrow());
-        assertEquals(org.eclipse.rdf4j.query.resultio.TupleQueryResultFormat.CSV,
-                SparqlProtocolServlet.negotiate("text/csv", reg, json).orElseThrow());
+        var csv = org.eclipse.rdf4j.query.resultio.TupleQueryResultFormat.CSV;
+        var tsv = org.eclipse.rdf4j.query.resultio.TupleQueryResultFormat.TSV;
+        assertEquals(json, SparqlProtocolServlet.negotiate(null, reg, json).orElseThrow().format());
+        assertEquals("application/sparql-results+json", SparqlProtocolServlet.negotiate("*/*", reg, json).orElseThrow().mediaType());
+        assertEquals(csv, SparqlProtocolServlet.negotiate("text/csv", reg, json).orElseThrow().format());
         assertTrue(SparqlProtocolServlet.negotiate("image/png", reg, json).isEmpty());
         assertTrue(SparqlProtocolServlet.negotiate("text/*", reg, json).isPresent());
-        // q=0 is an exclusion the wildcard must not override (RFC 9110 §12.5.1)
-        var notJson = SparqlProtocolServlet.negotiate("application/sparql-results+json;q=0, */*", reg, json);
-        assertTrue(notJson.isPresent() && !notJson.get().equals(json), String.valueOf(notJson));
+        // q=0 is an exclusion the wildcard must not override (RFC 9110 §12.5.1) — of that media
+        // type; JSON's other alias is still acceptable through */* and labels the response
+        var n = SparqlProtocolServlet.negotiate("application/sparql-results+json;q=0, */*", reg, json).orElseThrow();
+        assertFalse(n.mediaType().equals("application/sparql-results+json"), n.toString());
         assertTrue(SparqlProtocolServlet.negotiate("*/*;q=0", reg, json).isEmpty());
+        // excluding one alias leaves an explicitly accepted one
+        n = SparqlProtocolServlet.negotiate("application/json;q=0, application/sparql-results+json", reg, json).orElseThrow();
+        assertEquals("application/sparql-results+json", n.mediaType());
+        n = SparqlProtocolServlet.negotiate("application/json", reg, json).orElseThrow();
+        assertEquals(json, n.format());
+        assertEquals("application/json", n.mediaType());
         // equal q: the more specific range wins, then the one listed first
-        assertEquals(org.eclipse.rdf4j.query.resultio.TupleQueryResultFormat.TSV,
-                SparqlProtocolServlet.negotiate("*/*, text/tab-separated-values", reg, json).orElseThrow());
-        assertEquals(org.eclipse.rdf4j.query.resultio.TupleQueryResultFormat.CSV,
-                SparqlProtocolServlet.negotiate("text/csv, application/sparql-results+json", reg, json).orElseThrow());
+        assertEquals(tsv, SparqlProtocolServlet.negotiate("*/*, text/tab-separated-values", reg, json).orElseThrow().format());
+        assertEquals(csv, SparqlProtocolServlet.negotiate("text/csv, application/sparql-results+json", reg, json).orElseThrow().format());
+    }
+
+    @Test
+    void repeatedAcceptFieldsAreOneList() throws Exception {
+        var r = HTTP.send(HttpRequest.newBuilder(URI.create(shared.url() + "?query=" + enc("ASK {}")))
+                .header("Accept", "image/png").header("Accept", "application/sparql-results+xml").build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, r.statusCode(), r.body());
+        assertTrue(type(r).startsWith("application/sparql-results+xml"), type(r));
+        var excluded = HTTP.send(HttpRequest.newBuilder(URI.create(shared.url() + "?query=" + enc("SELECT * WHERE {}")))
+                .header("Accept", "*/*").header("Accept", "application/sparql-results+json;q=0").build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, excluded.statusCode());
+        assertFalse(type(excluded).startsWith("application/sparql-results+json"), type(excluded));
+    }
+
+    @Test
+    void formBodyDecodesInItsDeclaredCharset() throws Exception {
+        // %E9 is é in ISO-8859-1 and an invalid byte in UTF-8
+        var r = post(shared.url(), "application/x-www-form-urlencoded; charset=ISO-8859-1",
+                "query=SELECT+%28%22caf%E9%22+AS+%3Fx%29+WHERE+%7B%7D", "text/csv");
+        assertEquals(200, r.statusCode(), r.body());
+        assertTrue(r.body().contains("café"), r.body());
+        var utf8 = post(shared.url(), "application/x-www-form-urlencoded",
+                "query=SELECT+%28%22caf%C3%A9%22+AS+%3Fx%29+WHERE+%7B%7D", "text/csv");
+        assertTrue(utf8.body().contains("café"), utf8.body());
+        var unknown = post(shared.url(), "application/x-www-form-urlencoded; charset=no-such-charset", "query=ASK%7B%7D", null);
+        assertEquals(415, unknown.statusCode(), unknown.body());
+    }
+
+    @Test
+    void listeningUrlBracketsIpv6() {
+        assertEquals("http://[::1]:8089/sparql", SparqlEndpointLauncher.listeningUrl("::1", 8089, "/sparql"));
+        assertEquals("http://[::1]:8089/sparql", SparqlEndpointLauncher.listeningUrl("[::1]", 8089, "/sparql"));
+        assertEquals("http://127.0.0.1:1/q", SparqlEndpointLauncher.listeningUrl("127.0.0.1", 1, "/q"));
     }
 
     @Test

@@ -21,7 +21,6 @@ import org.eclipse.rdf4j.query.QueryLanguage;
 import org.eclipse.rdf4j.query.TupleQuery;
 import org.eclipse.rdf4j.query.TupleQueryResult;
 import org.eclipse.rdf4j.query.Update;
-import org.eclipse.rdf4j.query.UpdateExecutionException;
 import org.eclipse.rdf4j.query.impl.SimpleDataset;
 import org.eclipse.rdf4j.query.parser.ParsedUpdate;
 import org.eclipse.rdf4j.query.parser.QueryParserUtil;
@@ -48,6 +47,7 @@ import java.net.URLDecoder;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -174,7 +174,10 @@ public final class SparqlProtocolServlet extends HttpServlet {
         try {
             params = Params.parse(req.getQueryString());
             if (type.equals("application/x-www-form-urlencoded")) {
-                params = params.and(Params.parse(body));
+                // Percent-escapes in the body decode in the body's declared charset (UTF-8
+                // when none is given, as the URL encoding standard says); the query string
+                // is always UTF-8.
+                params = params.and(Params.parse(body, bodyCharset(req)));
             }
         } catch (IllegalArgumentException e) {
             fail(resp, HttpServletResponse.SC_BAD_REQUEST, e.getMessage());
@@ -234,37 +237,39 @@ public final class SparqlProtocolServlet extends HttpServlet {
             if (options.maxExecutionSeconds() > 0) {
                 query.setMaxExecutionTime(options.maxExecutionSeconds());
             }
-            String accept = req.getHeader("Accept");
+            // A list header may arrive as several fields; RFC 9110 §5.2 makes them one list.
+            List<String> acceptFields = Collections.list(req.getHeaders("Accept"));
+            String accept = acceptFields.isEmpty() ? null : String.join(", ", acceptFields);
 
             // The tuple and boolean registries are keyed by the shared QueryResultFormat type,
             // hence the widened defaults here.
             if (query instanceof TupleQuery tq) {
-                Optional<QueryResultFormat> fmt = negotiate(accept, TupleQueryResultWriterRegistry.getInstance(),
-                        (QueryResultFormat) TupleQueryResultFormat.JSON);
+                Optional<Negotiated<QueryResultFormat>> fmt = negotiate(accept,
+                        TupleQueryResultWriterRegistry.getInstance(), (QueryResultFormat) TupleQueryResultFormat.JSON);
                 if (fmt.isEmpty()) {
                     notAcceptable(resp, accept);
                     return;
                 }
                 writeTuples(resp, tq, fmt.get());
             } else if (query instanceof GraphQuery gq) {
-                Optional<RDFFormat> fmt = negotiate(accept, RDFWriterRegistry.getInstance(), RDFFormat.TURTLE);
+                Optional<Negotiated<RDFFormat>> fmt = negotiate(accept, RDFWriterRegistry.getInstance(), RDFFormat.TURTLE);
                 if (fmt.isEmpty()) {
                     notAcceptable(resp, accept);
                     return;
                 }
-                RDFWriter writer = RDFWriterRegistry.getInstance().get(fmt.get()).orElseThrow()
+                RDFWriter writer = RDFWriterRegistry.getInstance().get(fmt.get().format()).orElseThrow()
                         .getWriter(begin(resp, fmt.get()));
                 gq.evaluate(writer);
             } else if (query instanceof BooleanQuery bq) {
-                Optional<QueryResultFormat> fmt = negotiate(accept, BooleanQueryResultWriterRegistry.getInstance(),
-                        (QueryResultFormat) BooleanQueryResultFormat.JSON);
+                Optional<Negotiated<QueryResultFormat>> fmt = negotiate(accept,
+                        BooleanQueryResultWriterRegistry.getInstance(), (QueryResultFormat) BooleanQueryResultFormat.JSON);
                 if (fmt.isEmpty()) {
                     notAcceptable(resp, accept);
                     return;
                 }
                 boolean answer = bq.evaluate();   // evaluate BEFORE committing, so a timeout can still be a 503
-                BooleanQueryResultWriter writer = BooleanQueryResultWriterRegistry.getInstance().get(fmt.get())
-                        .orElseThrow().getWriter(begin(resp, fmt.get()));
+                BooleanQueryResultWriter writer = BooleanQueryResultWriterRegistry.getInstance()
+                        .get(fmt.get().format()).orElseThrow().getWriter(begin(resp, fmt.get()));
                 writer.handleBoolean(answer);
             } else {
                 fail(resp, HttpServletResponse.SC_BAD_REQUEST, "unsupported query form");
@@ -275,6 +280,11 @@ public final class SparqlProtocolServlet extends HttpServlet {
             fail(resp, HttpServletResponse.SC_SERVICE_UNAVAILABLE,
                     "query exceeded the execution limit of " + options.maxExecutionSeconds() + " s");
         } catch (QueryEvaluationException e) {
+            if (timedOut(e)) {
+                fail(resp, HttpServletResponse.SC_SERVICE_UNAVAILABLE,
+                        "query exceeded the execution limit of " + options.maxExecutionSeconds() + " s");
+                return;
+            }
             log.warn("query evaluation failed: {}", e.getMessage());
             fail(resp, HttpServletResponse.SC_INTERNAL_SERVER_ERROR, "query evaluation failed: " + e.getMessage());
         } catch (RuntimeException e) {
@@ -287,8 +297,9 @@ public final class SparqlProtocolServlet extends HttpServlet {
         }
     }
 
-    private void writeTuples(HttpServletResponse resp, TupleQuery tq, QueryResultFormat fmt) throws IOException {
-        var factory = TupleQueryResultWriterRegistry.getInstance().get(fmt).orElseThrow();
+    private void writeTuples(HttpServletResponse resp, TupleQuery tq, Negotiated<QueryResultFormat> fmt)
+            throws IOException {
+        var factory = TupleQueryResultWriterRegistry.getInstance().get(fmt.format()).orElseThrow();
         if (options.maxRows() == 0) {
             TupleQueryResultWriter writer = factory.getWriter(begin(resp, fmt));
             // Streams. A timeout before the first buffer is flushed is still a clean 503; one
@@ -378,10 +389,31 @@ public final class SparqlProtocolServlet extends HttpServlet {
         } catch (QueryInterruptedException e) {
             fail(resp, HttpServletResponse.SC_SERVICE_UNAVAILABLE,
                     "update exceeded the execution limit of " + options.maxExecutionSeconds() + " s");
-        } catch (UpdateExecutionException e) {
-            log.warn("update failed: {}", e.getMessage());
+        } catch (RuntimeException e) {
+            // RDF4J reports an update's timeout as UpdateExecutionException wrapping a
+            // SailException wrapping the QueryInterruptedException (measured on 4.3.8), so the
+            // catch above never sees it; the cause chain decides.
+            if (timedOut(e)) {
+                fail(resp, HttpServletResponse.SC_SERVICE_UNAVAILABLE,
+                        "update exceeded the execution limit of " + options.maxExecutionSeconds() + " s");
+                return;
+            }
+            log.warn("update failed: {}", e.toString());
             fail(resp, HttpServletResponse.SC_INTERNAL_SERVER_ERROR, "update failed: " + e.getMessage());
         }
+    }
+
+    /** Whether {@code e} or anything it wraps is RDF4J's execution-limit interruption. */
+    private static boolean timedOut(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            if (t instanceof QueryInterruptedException) {
+                return true;
+            }
+            if (t.getCause() == t) {
+                break;
+            }
+        }
+        return false;
     }
 
     /**
@@ -398,8 +430,9 @@ public final class SparqlProtocolServlet extends HttpServlet {
     // ---- helpers -----------------------------------------------------------------------
 
     /** Starts the response for a successful result: status, media type, charset, and the body stream. */
-    private static OutputStream begin(HttpServletResponse resp, FileFormat format) throws IOException {
-        String type = format.getDefaultMIMEType();
+    private static OutputStream begin(HttpServletResponse resp, Negotiated<?> negotiated) throws IOException {
+        FileFormat format = negotiated.format();
+        String type = negotiated.mediaType();
         if (format.hasCharset()) {
             Charset cs = format.getCharset() == null ? StandardCharsets.UTF_8 : format.getCharset();
             type += "; charset=" + cs.name();
@@ -409,19 +442,26 @@ public final class SparqlProtocolServlet extends HttpServlet {
         return resp.getOutputStream();
     }
 
+    /** A negotiated writer format and the media type to label the response with. */
+    record Negotiated<F extends FileFormat>(F format, String mediaType) { }
+
     /**
-     * Content negotiation against one of RDF4J's writer registries (RFC 9110 §12.5.1). Each
-     * candidate format takes the quality of the <em>most specific</em> media range that matches
-     * any of its MIME types — exact over {@code type/*} over {@code *&#47;*} — so
-     * {@code json;q=0, *&#47;*} excludes JSON instead of letting the wildcard bring it back.
-     * Among candidates of equal quality the more specific match wins, then the range listed
-     * first, then the default. A missing header selects the default. Empty means nothing is
+     * Content negotiation against one of RDF4J's writer registries (RFC 9110 §12.5.1). Every
+     * media type a format is registered under (JSON results are both
+     * {@code application/sparql-results+json} and {@code application/json}) is scored on its
+     * own: it takes the quality of the <em>most specific</em> range matching it — exact over
+     * {@code type/*} over {@code *&#47;*} — so {@code json;q=0, *&#47;*} excludes that type
+     * instead of letting the wildcard bring it back, while an alias the client did accept still
+     * counts. The best-scoring media type wins (higher q, then more specific match, then the
+     * range listed first, then the default format and its primary type), and the response is
+     * labelled with it. A missing header selects the default. Empty means nothing is
      * acceptable: 406.
      */
-    static <F extends FileFormat, S> Optional<F> negotiate(String accept, FileFormatServiceRegistry<F, S> registry,
-                                                           F dflt) {
+    static <F extends FileFormat, S> Optional<Negotiated<F>> negotiate(String accept,
+                                                                       FileFormatServiceRegistry<F, S> registry,
+                                                                       F dflt) {
         if (accept == null || accept.isBlank()) {
-            return Optional.of(dflt);
+            return Optional.of(new Negotiated<>(dflt, dflt.getDefaultMIMEType()));
         }
         record Range(String type, double q, int order) {
             int specificity() {
@@ -434,6 +474,11 @@ public final class SparqlProtocolServlet extends HttpServlet {
                     case 2 -> mime.startsWith(type.substring(0, type.length() - 1));
                     default -> mime.equals(type);
                 };
+            }
+
+            boolean beats(Range other) {
+                return q > other.q || (q == other.q && (specificity() > other.specificity()
+                        || (specificity() == other.specificity() && order < other.order)));
             }
         }
         List<Range> ranges = new ArrayList<>();
@@ -464,27 +509,22 @@ public final class SparqlProtocolServlet extends HttpServlet {
                 candidates.add(f);
             }
         }
-        F best = null;
+        Negotiated<F> best = null;
         Range bestRange = null;
         for (F f : candidates) {
-            Range match = null;
-            for (String mime : f.getMIMETypes()) {
+            for (String mime : f.getMIMETypes()) {   // the format's primary type first
                 String m = mime.toLowerCase(Locale.ROOT);
+                Range match = null;   // the most specific range for this type, earliest on a tie
                 for (Range r : ranges) {
                     if (r.matches(m) && (match == null || r.specificity() > match.specificity()
                             || (r.specificity() == match.specificity() && r.order() < match.order()))) {
                         match = r;
                     }
                 }
-            }
-            if (match == null || match.q() <= 0) {
-                continue;
-            }
-            if (bestRange == null || match.q() > bestRange.q()
-                    || (match.q() == bestRange.q() && (match.specificity() > bestRange.specificity()
-                    || (match.specificity() == bestRange.specificity() && match.order() < bestRange.order())))) {
-                best = f;
-                bestRange = match;
+                if (match != null && match.q() > 0 && (bestRange == null || match.beats(bestRange))) {
+                    best = new Negotiated<>(f, mime);
+                    bestRange = match;
+                }
             }
         }
         return Optional.ofNullable(best);
@@ -547,15 +587,21 @@ public final class SparqlProtocolServlet extends HttpServlet {
                 }
             }
         }
-        String enc = req.getCharacterEncoding();
         Charset cs;
         try {
-            cs = enc == null ? StandardCharsets.UTF_8 : Charset.forName(enc);
+            cs = bodyCharset(req);
         } catch (IllegalArgumentException e) {
-            fail(resp, HttpServletResponse.SC_UNSUPPORTED_MEDIA_TYPE, "unsupported charset '" + enc + "'");
+            fail(resp, HttpServletResponse.SC_UNSUPPORTED_MEDIA_TYPE,
+                    "unsupported charset '" + req.getCharacterEncoding() + "'");
             return null;
         }
         return out.toString(cs);
+    }
+
+    /** The body's declared charset, UTF-8 when none; {@code IllegalArgumentException} for an unknown one. */
+    private static Charset bodyCharset(HttpServletRequest req) {
+        String enc = req.getCharacterEncoding();
+        return enc == null ? StandardCharsets.UTF_8 : Charset.forName(enc);
     }
 
     private static String mediaType(String contentType) {
@@ -613,6 +659,10 @@ public final class SparqlProtocolServlet extends HttpServlet {
      */
     record Params(Map<String, List<String>> map) {
         static Params parse(String encoded) {
+            return parse(encoded, StandardCharsets.UTF_8);
+        }
+
+        static Params parse(String encoded, Charset cs) {
             Map<String, List<String>> m = new LinkedHashMap<>();
             if (encoded != null && !encoded.isEmpty()) {
                 for (String pair : encoded.split("&")) {
@@ -620,17 +670,17 @@ public final class SparqlProtocolServlet extends HttpServlet {
                         continue;
                     }
                     int eq = pair.indexOf('=');
-                    String name = decode(eq < 0 ? pair : pair.substring(0, eq));
-                    String value = eq < 0 ? "" : decode(pair.substring(eq + 1));
+                    String name = decode(eq < 0 ? pair : pair.substring(0, eq), cs);
+                    String value = eq < 0 ? "" : decode(pair.substring(eq + 1), cs);
                     m.computeIfAbsent(name, k -> new ArrayList<>()).add(value);
                 }
             }
             return new Params(m);
         }
 
-        private static String decode(String s) {
+        private static String decode(String s, Charset cs) {
             try {
-                return URLDecoder.decode(s, StandardCharsets.UTF_8);
+                return URLDecoder.decode(s, cs);
             } catch (IllegalArgumentException e) {
                 throw new IllegalArgumentException("malformed percent-encoding in request parameters");
             }
