@@ -30,8 +30,8 @@ import java.util.List;
  * @param allowedOrigins       browser origins allowed to call the endpoint, or {@code *}; they get
  *                             CORS headers. Enforced by {@link AccessFilters.Origins}, which
  *                             refuses any other {@code Origin} with 403 — the servlet itself does not
- * @param allowedHosts         host names a request's {@code Host} may carry, or {@code *}; empty =
- *                             the loopback names plus the bind host. Enforced by
+ * @param allowedHosts         host names a request's {@code Host} may carry in addition to the
+ *                             loopback names and the bind host, or {@code *} for any. Enforced by
  *                             {@link AccessFilters.Hosts} whenever no token is set (or this is
  *                             given explicitly) — the defence against DNS rebinding
  * @param maxRequestBytes      bodies larger than this answer 413 before being parsed
