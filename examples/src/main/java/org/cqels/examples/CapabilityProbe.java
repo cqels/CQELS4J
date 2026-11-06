@@ -381,12 +381,24 @@ public class CapabilityProbe {
             """;
         List<Object> valueEqual = run(null, pair.formatted(C, "?x = ?y"), equalValues);
         List<Object> termEqual = run(null, pair.formatted(C, "sameTerm(?x, ?y)"), equalValues);
+        // Positive literal cases: two separately bound copies of the SAME literal term, numeric and
+        // language-tagged, must satisfy sameTerm. Every earlier positive used IRIs, so a sameTerm
+        // that only recognised IRIs passed (codex, round 6 of #116).
+        List<Map<String, Object>> o1 = List.of(row("o", iri("o1")));
+        boolean literalsSame = true;
+        for (Literal lit : List.of(VF.createLiteral("1", org.eclipse.rdf4j.model.vocabulary.XSD.INT),
+                VF.createLiteral("cat", "fr"))) {
+            literalsSame &= exactRows(run(null, pair.formatted(C, "sameTerm(?x, ?y)"), s -> s.push(List.of(
+                    VF.createStatement(iri("o1"), iri("a"), lit),
+                    VF.createStatement(iri("o1"), iri("b"), lit)))), o1);
+        }
         if (valueEqual.isEmpty()) {
             DIVERGENCES.add("REGRESSED — the control (\"1\"^^xsd:int = \"1.0\"^^xsd:decimal) no longer "
                     + "matches\n      the sameTerm-vs-equality verdict is meaningless until that is understood");
         }
 
-        return !same.isEmpty() && otherIri.isEmpty() && iriVsLiteral.isEmpty() && termEqual.isEmpty();
+        return !same.isEmpty() && otherIri.isEmpty() && iriVsLiteral.isEmpty() && termEqual.isEmpty()
+                && literalsSame;
     }
 
     /**
@@ -1573,7 +1585,8 @@ public class CapabilityProbe {
             // Term identity — label, language tag and datatype — whatever Literal class the engine uses.
             // Language tags compare case-insensitively, as RDF term equality does (@EN is @en).
             return actual instanceof Literal got && got.getLabel().equals(want.getLabel())
-                    && got.getLanguage().map(String::toLowerCase).equals(want.getLanguage().map(String::toLowerCase))
+                    && got.getLanguage().map(t -> t.toLowerCase(java.util.Locale.ROOT))
+                            .equals(want.getLanguage().map(t -> t.toLowerCase(java.util.Locale.ROOT)))
                     && got.getDatatype().equals(want.getDatatype());
         }
         // A plain string: a Java String, or a simple literal (xsd:string, no language tag). "25"^^xsd:int
