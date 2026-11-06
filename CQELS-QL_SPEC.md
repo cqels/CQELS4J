@@ -160,17 +160,24 @@ match per anchor (see [§7](#7-complex-event-processing-cep)).
 > non-directional window.
 >
 > **`EMIT` on backward windows.** Since `2.0.0-alpha.22`, `EMIT ON_CLOSE` or `EMIT ON_UPDATE` on a
-> `[RANGE]`, `[SLIDE]` or `[TRIPLES]` window chooses the emission model of an aggregate over one
-> stream's triple patterns, with or without a static graph pattern:
+> `[RANGE]`, `[SLIDE]` or `[TRIPLES]` window can state the emission model of an aggregate over one
+> stream. Measured on `2.0.0-alpha.22` with one `COUNT` over one stream pattern:
 > `[RANGE 3s EMIT ON_UPDATE]` reports on every arrival, and `[RANGE 3s EMIT ON_CLOSE]` once per
-> closed bucket (see §9 *Aggregates*). An aggregate on such a window that states no `EMIT` logs one warning naming the
-> model its window keyword chose. `EMIT` on any other query — non-aggregate, multi-stream — is
-> refused at registration, as are `EMIT EARLY_AND_FINAL` on a backward window and `EMIT` under
-> `[NOW]`.
+> closed bucket (see §9 *Aggregates*). `EMIT ON_CLOSE` is narrower than that sentence suggests: it
+> runs only on the incremental aggregate route — one `COUNT` / `SUM` / `AVG` / `MIN` / `MAX` over
+> one stream triple pattern, with optional `GROUP BY`, `FILTER` and `BIND`. Adding `HAVING` or a
+> second aggregate is refused at registration, measured under `[RANGE 3s]` and `[TRIPLES 3]`. An
+> aggregate on a backward window that states no `EMIT` logs one warning naming the model its
+> window keyword chose. `EMIT` on a non-aggregate or multi-stream query is refused at
+> registration, as are `EMIT EARLY_AND_FINAL` on a backward window and `EMIT` under `[NOW]`.
 >
-> **Default.** Without `LATENESS`, every event-time (`RANGE`/`FUTURE`) window drops late-arriving
-> events **silently** (allowed-lateness is 0; `[NOW]` and `[TRIPLES n]` use no watermark, so
-> lateness does not apply). If late data matters, say so in the window spec.
+> **Default.** Without `LATENESS`, allowed lateness is 0, and what happens to an element older than
+> one already seen depends on the route. Measured on `2.0.0-alpha.22` with `COUNT(*)` over
+> elements at 2800, 2900 and then 2850 ms: the on-close aggregate (`[RANGE 3s]`, or
+> `[RANGE 3s EMIT ON_CLOSE]`) drops the late element **silently** and reports 2. The per-arrival
+> forms (`[RANGE 3s EMIT ON_UPDATE]`, `[SLIDE 3s STEP 1s]`) count it and report 3. `[NOW]` and
+> `[TRIPLES n]` use no watermark, so lateness does not apply. If late data matters, say so in the
+> window spec.
 
 ---
 
@@ -420,7 +427,8 @@ are called out.
 - **`SELECT` / `SELECT DISTINCT`**, projection, and `(expr AS ?v)` expressions. Since
   `2.0.0-alpha.21` an expression that **wraps an aggregate**, such as `(COUNT(*) * 10 AS ?c)`, is
   refused at registration; earlier alphas silently returned the bare aggregate (`?c = 2`, not `20`).
-  Compute it in the result listener. On a single-pattern stream query, `DISTINCT` is scoped to the
+  Since `2.0.0-alpha.22` the arithmetic can go over the aggregate's alias instead: measured,
+  `(COUNT(*) AS ?n) (?n * 10 AS ?scaled)` under `[TRIPLES 3]` reports 10, 20, 30. On a single-pattern stream query, `DISTINCT` is scoped to the
   window. Under `[NOW]` that means one arrival: since `2.0.0-alpha.21` the same projection from two
   arrivals is reported twice. With `ORDER BY … LIMIT`, alpha.21 could also repeat a projection
   within one arrival, once for each row that improved the sort (upstream #904). Measured on
@@ -429,8 +437,20 @@ are called out.
 - **Aggregates:** `COUNT(*)` / `COUNT(?v)`, `SUM`, `AVG`, `MIN`, `MAX`, `GROUP_CONCAT(?v; SEPARATOR=", ")`,
   and since `2.0.0-alpha.22` per-aggregate `DISTINCT` (`COUNT(DISTINCT ?v)`).
   *Note:* `GROUP BY` selects **per-group** results rather than global ones; it is **not** required
-  for an aggregate to apply. Measured on `2.0.0-alpha.22`, a global (no `GROUP BY`) aggregate
+  for an aggregate to apply. Measured on `2.0.0-alpha.22`, a global (no `GROUP BY`) `COUNT(*)`
   accumulates correctly over every window that accumulates — `[RANGE]`, `[TRIPLES]`, `[SLIDE]`.
+  Three exceptions, all upstream known issues of `2.0.0-alpha.22`, measured under `[RANGE 3s]`
+  and `[TRIPLES 3]`:
+  - **An aggregate whose argument no solution binds reports no row at all** where SPARQL 1.1
+    gives `COUNT` 0. With `?missing` bound by no pattern, `SELECT (COUNT(?missing) AS ?n)` emits
+    nothing, and so does `COUNT(*)` written beside it. An argument left unbound by an `OPTIONAL`
+    is counted correctly (`{n=0}`).
+  - **`AVG` of a group in which no row binds the argument is `null`**, where SPARQL 1.1 gives 0.
+  - **A `GROUP BY` key keeps a literal's label but not its language tag or datatype**, so
+    `"cat"@en` and `"cat"@fr` fall into one group (`{l=cat, n=2}`). Upstream reports the same for
+    `"PT1S"^^xsd:duration` and `"PT1S"^^xsd:dayTimeDuration`. When the tag matters, add
+    `BIND(LANG(?l) AS ?lang)` and `GROUP BY ?l ?lang`: measured, that keeps the two apart.
+    (`GROUP BY LANG(?l)` is a syntax error.)
   One shape is rejected: `[NOW]` with a global aggregate **fails at registration**, with a message
   naming the windows to use instead (`[NOW]` is zero-length, so there is nothing to accumulate).
   `[NOW]` with `GROUP BY` registers, and since `2.0.0-alpha.21` folds once per arrival: each arrival
@@ -523,7 +543,11 @@ are called out.
   `FILTER(BOUND(?l))` only the rows with one. That holds on a stream-only query, and on a
   `GROUP BY` query with a static graph pattern under `[TRIPLES 2]`. On alpha.20 and alpha.21 both
   shapes ran the `FILTER` first, so it saw the variable unbound.
-- **`{ … } UNION { … }`** — alternative patterns merged before `FILTER`.
+- **`{ … } UNION { … }`** — alternative patterns merged before `FILTER`. **A static `UNION` drops
+  every row when the variable joining it to the stream is not projected** — an upstream known
+  issue of `2.0.0-alpha.22`. Measured under `[NOW]`, `[TRIPLES 3]` and `[RANGE 3s]`:
+  `SELECT ?r ?city … { STREAM S { ?r ex:person ?p } { ?p ex:city ?city } UNION { ?p ex:town ?city } }`
+  answers nothing, and the same query projecting `?p` answers. Project the join variable.
 - **Property paths (`/`, `^`, `+`, `*`, `?`, `|`)** — **executed on one route since
   `2.0.0-alpha.22`**: the triple patterns of the one `STREAM` block of a single-stream query over a
   `[RANGE]`, `[SLIDE]` or `[TRIPLES]` window, with no static graph pattern. Measured on
@@ -578,10 +602,12 @@ are called out.
   - `[NOW]` combined with a **global** (no `GROUP BY`) aggregate is **rejected at registration**
     since `2.0.0-alpha.20`; earlier alphas silently leaked the raw argument binding instead.
 
-**Evaluation order:** stream patterns → static lookup join → `UNION` → `OPTIONAL` →
-`FILTER` and `FILTER NOT EXISTS` → `GROUP BY` + aggregates → `HAVING` → `ORDER BY` → `LIMIT`.
-Top-level `BIND`s run with the `OPTIONAL` and `UNION` blocks, in the order written, before the
-group's `FILTER`. Since `2.0.0-alpha.22` that holds on every route; on earlier alphas a `FILTER`
+**Evaluation order:** stream patterns → static lookup join → `OPTIONAL`, `UNION` and `BIND`, **in
+the order written** → `FILTER` and `FILTER NOT EXISTS` → `GROUP BY` + aggregates → `HAVING` →
+`ORDER BY` → `LIMIT`. Written order matters: measured, with `ex:label "a"` and `ex:fallback "b"`
+stored, `OPTIONAL { ?o ex:label ?l }` before `{ ?o ex:label ?l } UNION { ?o ex:fallback ?l }`
+answers `a` only, and the reverse order answers `a` and `b`.
+Since `2.0.0-alpha.22` that order holds on every route; on earlier alphas a `FILTER`
 could run before a `BIND` ([#83](https://github.com/cqels/CQELS4J/issues/83)) or an `OPTIONAL`
 ([#85](https://github.com/cqels/CQELS4J/issues/85)) on some routes.
 
@@ -602,11 +628,14 @@ CypherQL reuses the streaming model with graph-traversal patterns instead of tri
 clauses come in the order shown: `FROM STREAM` first, then `MATCH`, then `RETURN`; a query that
 starts with `MATCH` is a syntax error.
 
-Since `2.0.0-alpha.22` every window answers on a live stream. Measured on `2.0.0-alpha.22` with
-three elements 300 ms apart, `MATCH (o:Observation) RETURN o` reports all three under `[NOW]`.
-Under `[TRIPLES 2]`, `[RANGE 2s]` and `[SLIDE 2s STEP 1s]` it reports the first two; the window
-holding the third has not closed yet. On alpha.20 and alpha.21, `[RANGE]` and `[SLIDE]` reported
-nothing until the source completed. A variable-length relationship such as
+CypherQL accepts `[NOW]`, `[TRIPLES n]`, `[RANGE d]` and `[SLIDE d STEP s]`; the directional
+`[PAST …]` / `[FUTURE …]` forms are a syntax error. Since `2.0.0-alpha.22`, `[RANGE]` and `[SLIDE]`
+answer on a live stream once an element's event time passes the window's end. On alpha.20 and
+alpha.21 they reported nothing until the source completed. Measured on `2.0.0-alpha.22` with
+`MATCH (o:Observation) RETURN o` over elements at event times 500, 1000 and 2500 ms: under
+`[RANGE 2s]` and `[SLIDE 2s STEP 1s]` nothing is reported until the element at 2500 arrives, and
+then `o1` and `o2`. `[TRIPLES 2]` reports `o1` and `o2` as the second element arrives. As with
+CQELS-QL, elapsed wall-clock time alone closes nothing. A variable-length relationship such as
 `(a)-[:broader*1..3]->(b)` is also evaluated since `2.0.0-alpha.22`, once per window batch:
 over `leaf → mid → root` it answers the three pairs. `RETURN DISTINCT` needs a projected
 variable or property; under `[NOW]`, the same `o.type` from two arrivals is reported twice.

@@ -82,12 +82,21 @@ public class CapabilityProbe {
         System.out.println("Capability probe — does the engine still behave as this repo documents?\n");
 
         System.out.println("-- caveats (documented as BROKEN; a pass here means the docs are stale) --");
-        caveat("     xsd:duration in MAX is compared as text (MAX of PT9S, PT10S is PT9S)",
-                durationMaxIsByValue(),
+        knownBug("     xsd:duration in MAX is compared as text (MAX of PT9S, PT10S is PT9S)",
+                durationMax(), "PT9S", "PT10S",
                 "CQELS-QL_SPEC.md §9 gap table, CDSP_MAPPING.md §4, GETTING_STARTED.md limitations table");
-        caveat("     AVG of a group with no bound argument is null, not 0",
-                avgOfUnboundGroupIsZero(),
-                "GETTING_STARTED.md limitations table");
+        knownBug("     AVG of a group with no bound argument is null, not 0",
+                avgOfUnboundGroup(), "null", "0",
+                "CQELS-QL_SPEC.md §9 Aggregates, GETTING_STARTED.md limitations table");
+        knownBug("     an aggregate whose argument nothing binds reports no row, not COUNT 0",
+                countOfNeverBoundArgument(), "no row", "0",
+                "CQELS-QL_SPEC.md §9 Aggregates, GETTING_STARTED.md limitations table");
+        knownBug("     GROUP BY merges \"cat\"@en and \"cat\"@fr into one group",
+                groupsOverLanguageTaggedKey(), "1 group", "2 groups",
+                "CQELS-QL_SPEC.md §9 Aggregates, GETTING_STARTED.md limitations table");
+        knownBug("     a static UNION drops every row when its join variable is not projected",
+                unionWithUnprojectedJoinVariable(), "0 rows", "1 row",
+                "CQELS-QL_SPEC.md §9 UNION entry, GETTING_STARTED.md limitations table");
         caveat("#58 reasoner cannot match the background graph",
                 reasonerSeesBackgroundGraph(),
                 "SkosConceptRollup.java, CDSP_MAPPING.md §5, GETTING_STARTED.md limitations table");
@@ -156,6 +165,27 @@ public class CapabilityProbe {
             DIVERGENCES.add("NOW FIXED — " + name + "\n      remove the caveat and its workaround from: " + docs);
         } else {
             System.out.println("  still open " + name);
+        }
+    }
+
+    /**
+     * A behaviour documented as broken in one EXACT way. {@code observed} is compared with the
+     * documented broken result and with the result a fix would give; anything else — no result at
+     * all, an error, a third value — is a divergence too, because the docs then describe neither
+     * what happens nor what a fix looks like. A boolean caveat cannot tell those apart: it reads
+     * "no row" as "still broken" (codex, review of #116).
+     */
+    private static void knownBug(String name, String observed, String asDocumented, String fixed, String docs) {
+        checks++;
+        if (asDocumented.equals(observed)) {
+            System.out.println("  still open " + name);
+        } else if (fixed.equals(observed)) {
+            System.out.println("  NOW FIXED  " + name);
+            DIVERGENCES.add("NOW FIXED — " + name + "\n      remove the caveat and its workaround from: " + docs);
+        } else {
+            System.out.println("  CHANGED    " + name);
+            DIVERGENCES.add("CHANGED — " + name + "\n      observed " + observed + "; documented as "
+                    + asDocumented + ", fixed would be " + fixed + ". Re-measure and edit: " + docs);
         }
     }
 
@@ -274,14 +304,34 @@ public class CapabilityProbe {
         }
     }
 
-    /** REPLACE (SPARQL 1.1 §17.4.3.14) must bind; fixed in alpha.22 (before, the variable stayed unbound). */
+    /**
+     * REPLACE (SPARQL 1.1 §17.4.3.14) must evaluate; fixed in alpha.22 (before, the variable stayed
+     * unbound). The value is asserted, not just its presence: {@code STR(?x)} alone would also bind
+     * {@code ?r} (codex, review of #116). The second case is the nested segment-id cleanup that
+     * CDSP_MAPPING.md now says ports directly.
+     */
     private static boolean replaceEvaluates() throws Exception {
-        List<Object> rows = run(null, """
+        String single = firstValue(run(null, """
             SELECT ?r FROM STREAM S [TRIPLES 1]
             WHERE { STREAM S { ?o <%sof> ?x . } BIND(REPLACE(STR(?x), "^.*#", "") AS ?r) }
             """.formatted(C),
-                s -> s.pushTriple(C + "o1", C + "of", C + "a"));
-        return rows.stream().anyMatch(r -> r.toString().contains("r="));
+                s -> s.pushTriple(C + "o1", C + "of", C + "a")), "r");
+        String nested = firstValue(run(null, """
+            SELECT ?r FROM STREAM S [TRIPLES 1]
+            WHERE { STREAM S { ?o <%sof> ?x . }
+                    BIND(REPLACE(REPLACE(STR(?x), "^.*#", ""), "[^a-zA-Z0-9]", "") AS ?r) }
+            """.formatted(C),
+                s -> s.pushTriple(C + "o1", C + "of", C + "a-b_c")), "r");
+        return "a".equals(single) && "abc".equals(nested);
+    }
+
+    /** The label (or string form) of {@code var} in the first row, or null. */
+    private static String firstValue(List<Object> rows, String var) {
+        if (rows.isEmpty()) {
+            return null;
+        }
+        Object v = ((Map<?, ?>) rows.get(0)).get(var);
+        return v == null ? null : (v instanceof Literal l ? l.getLabel() : String.valueOf(v));
     }
 
     /** sameTerm (SPARQL 1.1 §17.4.1.1) must evaluate, even over one variable with itself. */
@@ -681,15 +731,31 @@ public class CapabilityProbe {
      *   "PT60S" = "PT1M"    did NOT match  (equal durations, different text)
      * </pre>
      *
-     * <p>All three must match now. The first is the control: it held as text too, so it is the row
-     * that would catch a type error per the SPARQL 1.1 operator table, which defines no ordering
-     * over durations. The other two are the ones only value comparison passes.
+     * <p>All three must match now, and their negations must NOT: a check made only of comparisons
+     * that should hold also passes on an engine that ignores the {@code FILTER} (codex, review of
+     * #116). The first pair is the control: {@code PT2S > PT1S} held as text too, so it is the
+     * row that would catch a type error. A row-bound duration from the stream is checked as well,
+     * against a constant, both ways.
      */
     private static boolean durationFilterIsByValue() throws Exception {
-        boolean twoGtOne = durationFilterMatches("\"PT2S\"^^<%1$sduration> > \"PT1S\"^^<%1$sduration>");
-        boolean tenGtNine = durationFilterMatches("\"PT10S\"^^<%1$sduration> > \"PT9S\"^^<%1$sduration>");
-        boolean sixtyEqMin = durationFilterMatches("\"PT60S\"^^<%1$sduration> = \"PT1M\"^^<%1$sduration>");
-        return twoGtOne && tenGtNine && sixtyEqMin;
+        String d = "^^<%1$sduration>";
+        boolean holds = durationFilterMatches("\"PT2S\"" + d + " > \"PT1S\"" + d)
+                && durationFilterMatches("\"PT10S\"" + d + " > \"PT9S\"" + d)
+                && durationFilterMatches("\"PT60S\"" + d + " = \"PT1M\"" + d);
+        boolean rejects = !durationFilterMatches("\"PT1S\"" + d + " > \"PT2S\"" + d)
+                && !durationFilterMatches("\"PT9S\"" + d + " > \"PT10S\"" + d)
+                && !durationFilterMatches("\"PT60S\"" + d + " != \"PT1M\"" + d);
+        IRI duration = VF.createIRI("http://www.w3.org/2001/XMLSchema#duration");
+        Set<String> rowBound = subjects(run(null, """
+            SELECT ?o FROM STREAM S [NOW]
+            WHERE { STREAM S { ?o <%1$sd> ?d . } FILTER(?d > "PT9S"^^<http://www.w3.org/2001/XMLSchema#duration>) }
+            """.formatted(C), s -> {
+                s.push(VF.createStatement(VF.createIRI(C + "o1"), VF.createIRI(C + "d"),
+                        VF.createLiteral("PT10S", duration)));
+                s.push(VF.createStatement(VF.createIRI(C + "o2"), VF.createIRI(C + "d"),
+                        VF.createLiteral("PT8S", duration)));
+            }));
+        return holds && rejects && rowBound.equals(Set.of("o1"));
     }
 
     /**
@@ -701,16 +767,18 @@ public class CapabilityProbe {
      * <p>The control is {@code MAX} over two durations whose text and value orders agree
      * ({@code PT1S}, {@code PT2S}): it must report {@code PT2S}, or the aggregate itself is failing.
      *
-     * <p>Returns true when the last report is {@code PT10S}, i.e. the caveat is fixed.
+     * <p>Returns the last {@code ?m} reported for {@code PT9S, PT10S}: {@code PT9S} as documented,
+     * {@code PT10S} once fixed, {@code no row} if nothing was reported.
      */
-    private static boolean durationMaxIsByValue() throws Exception {
+    private static String durationMax() throws Exception {
         String agreeing = lastMax("PT1S", "PT2S");
         if (!"PT2S".equals(agreeing)) {
             DIVERGENCES.add("REGRESSED — the control (MAX of PT1S, PT2S) reported " + agreeing
                     + ", not PT2S\n      MAX over durations is failing outright; the text-order "
                     + "verdict is meaningless");
         }
-        return "PT10S".equals(lastMax("PT9S", "PT10S"));
+        String m = lastMax("PT9S", "PT10S");
+        return m == null ? "no row" : m;
     }
 
     /** Pushes two {@code xsd:duration} values and returns the last {@code ?m} MAX reported, or null. */
@@ -742,9 +810,10 @@ public class CapabilityProbe {
      * <p>The control stores the label, so the {@code OPTIONAL} binds the argument: {@code AVG} must
      * then report the label's value, or the aggregate route itself is failing.
      *
-     * <p>Returns true when the unbound group reports 0, i.e. the caveat is fixed.
+     * <p>Returns the last {@code ?a} for the unbound group: {@code null} as documented, {@code 0}
+     * once fixed, {@code no row} if nothing was reported.
      */
-    private static boolean avgOfUnboundGroupIsZero() throws Exception {
+    private static String avgOfUnboundGroup() throws Exception {
         String query = """
             SELECT ?o (AVG(?l) AS ?a) FROM STREAM S [TRIPLES 2]
             WHERE { STREAM S { ?o <%1$sv> ?x . } OPTIONAL { ?o <%1$slabel> ?l } } GROUP BY ?o
@@ -763,7 +832,112 @@ public class CapabilityProbe {
                     + "\n      the aggregate route itself is failing; the empty-group verdict is meaningless");
         }
         List<Object> rows = run(null, query, one);
-        return !rows.isEmpty() && isNumber(((Map<?, ?>) rows.get(rows.size() - 1)).get("a"), 0);
+        if (rows.isEmpty()) {
+            return "no row";
+        }
+        Object a = ((Map<?, ?>) rows.get(rows.size() - 1)).get("a");
+        return a == null ? "null" : (isNumber(a, 0) ? "0" : String.valueOf(a));
+    }
+
+    /**
+     * Upstream lists it as a known issue of 2.0.0-alpha.22: on the windowed hash join a solution whose
+     * projection is empty is dropped before aggregation, so an aggregate whose argument no solution
+     * binds reports no row instead of {@code COUNT} 0. Measured: {@code COUNT(?missing)}, with
+     * {@code ?missing} in no pattern, over one matching element under {@code [TRIPLES 3]} reports
+     * nothing.
+     *
+     * <p>The control is {@code COUNT(*)} over the same element: it must report 1, or the aggregate
+     * route itself is failing.
+     *
+     * <p>Returns {@code no row} as documented, {@code 0} once fixed, or what was reported.
+     */
+    private static String countOfNeverBoundArgument() throws Exception {
+        Pusher one = s -> s.push(VF.createStatement(VF.createIRI(C + "o1"), VF.createIRI(C + "v"),
+                VF.createLiteral(1)), 1000L);
+        List<Object> control = run(null, """
+            SELECT (COUNT(*) AS ?n) FROM STREAM S [TRIPLES 3] WHERE { STREAM S { ?o <%sv> ?x . } }
+            """.formatted(C), one);
+        if (control.isEmpty() || !isNumber(((Map<?, ?>) control.get(control.size() - 1)).get("n"), 1)) {
+            DIVERGENCES.add("REGRESSED — the control (COUNT(*) over one element) reported " + control
+                    + "\n      the aggregate route itself is failing; the unbound-argument verdict is meaningless");
+        }
+        List<Object> rows = run(null, """
+            SELECT (COUNT(?missing) AS ?n) FROM STREAM S [TRIPLES 3] WHERE { STREAM S { ?o <%sv> ?x . } }
+            """.formatted(C), one);
+        if (rows.isEmpty()) {
+            return "no row";
+        }
+        Object n = ((Map<?, ?>) rows.get(rows.size() - 1)).get("n");
+        return isNumber(n, 0) ? "0" : String.valueOf(n);
+    }
+
+    /**
+     * Upstream lists it as a known issue of 2.0.0-alpha.22: a {@code GROUP BY} key holds a literal's
+     * label without its language tag or datatype. Measured: {@code "cat"@en} then {@code "cat"@fr}
+     * under {@code [TRIPLES 3]}, grouped by the literal, end in one group of 2.
+     *
+     * <p>The control is the documented workaround — {@code BIND(LANG(?l) AS ?lang)} and
+     * {@code GROUP BY ?l ?lang} — which must report both tags, or grouping itself is failing.
+     *
+     * <p>Returns {@code 1 group} as documented (the largest count is 2), {@code 2 groups} once fixed
+     * (every count is 1), or what was reported.
+     */
+    private static String groupsOverLanguageTaggedKey() throws Exception {
+        Pusher twoTags = s -> {
+            s.push(VF.createStatement(VF.createIRI(C + "o1"), VF.createIRI(C + "l"), VF.createLiteral("cat", "en")), 1000L);
+            Thread.sleep(100);
+            s.push(VF.createStatement(VF.createIRI(C + "o2"), VF.createIRI(C + "l"), VF.createLiteral("cat", "fr")), 1100L);
+        };
+        List<Object> control = run(null, """
+            SELECT ?l ?lang (COUNT(*) AS ?n) FROM STREAM S [TRIPLES 3]
+            WHERE { STREAM S { ?o <%sl> ?l . } BIND(LANG(?l) AS ?lang) } GROUP BY ?l ?lang
+            """.formatted(C), twoTags);
+        Set<String> tags = new TreeSet<>();
+        control.forEach(row -> tags.add(String.valueOf(((Map<?, ?>) row).get("lang"))));
+        if (!tags.equals(Set.of("en", "fr"))) {
+            DIVERGENCES.add("REGRESSED — the documented workaround (GROUP BY ?l ?lang) reported tags " + tags
+                    + ", not [en, fr]\n      fix the workaround in GETTING_STARTED.md before trusting the verdict");
+        }
+        List<Object> rows = run(null, """
+            SELECT ?l (COUNT(*) AS ?n) FROM STREAM S [TRIPLES 3]
+            WHERE { STREAM S { ?o <%sl> ?l . } } GROUP BY ?l
+            """.formatted(C), twoTags);
+        if (rows.isEmpty()) {
+            return "no row";
+        }
+        boolean anyTwo = rows.stream().anyMatch(row -> isNumber(((Map<?, ?>) row).get("n"), 2));
+        boolean allOne = rows.stream().allMatch(row -> isNumber(((Map<?, ?>) row).get("n"), 1));
+        return anyTwo ? "1 group" : allOne ? "2 groups" : String.valueOf(rows);
+    }
+
+    /**
+     * Upstream lists it as a known issue of 2.0.0-alpha.22: a static {@code UNION} joined to a stream
+     * pattern drops every row on the flat paths when the variable joining it is not projected.
+     * Measured under {@code [NOW]}: {@code SELECT ?r ?city} answers nothing; the control, the same
+     * query also projecting {@code ?p}, answers the one row.
+     *
+     * <p>Returns {@code 0 rows} as documented, {@code 1 row} once fixed, or the count.
+     */
+    private static String unionWithUnprojectedJoinVariable() throws Exception {
+        Seeder seeded = engine -> {
+            try (RepositoryConnection conn = engine.getRepository().getConnection()) {
+                conn.add(VF.createIRI(C + "p1"), VF.createIRI(C + "city"), VF.createLiteral("Berlin"));
+            }
+        };
+        String shape = """
+            SELECT %2$s FROM STREAM S [NOW]
+            WHERE { STREAM S { ?r <%1$sperson> ?p . }
+                    { ?p <%1$scity> ?city } UNION { ?p <%1$stown> ?city } }
+            """;
+        Pusher request = s -> s.push(VF.createStatement(VF.createIRI(C + "r1"), VF.createIRI(C + "person"),
+                VF.createIRI(C + "p1")));
+        List<Object> control = run(seeded, shape.formatted(C, "?r ?p ?city"), request);
+        if (control.size() != 1) {
+            DIVERGENCES.add("REGRESSED — the control (UNION with ?p projected) returned " + control
+                    + ", not one row\n      the static UNION itself is failing; the projection verdict is meaningless");
+        }
+        int n = run(seeded, shape.formatted(C, "?r ?city"), request).size();
+        return n == 0 ? "0 rows" : n == 1 ? "1 row" : n + " rows";
     }
 
     /** True when {@code value} is a number (or numeric literal) equal to {@code n}. */
@@ -797,7 +971,9 @@ public class CapabilityProbe {
      * keyed on an IRI answers — that is the control, and if it stops answering the comparison means
      * nothing.
      *
-     * <p>Returns true when the literal-keyed row appears.
+     * <p>Returns true when the literal-keyed row carries {@code ?item = item1}, and a literal key
+     * with no static match ({@code "ZZ"}) answers nothing. A non-empty result alone would also pass
+     * if the static join were skipped (codex, review of #116).
      */
     private static boolean literalJoinKeyAdmits() throws Exception {
         Seeder seeded = engine -> {
@@ -813,6 +989,12 @@ public class CapabilityProbe {
             """.formatted(C), s -> s.push(List.of(
                 VF.createStatement(o, VF.createIRI(C + "code"), VF.createLiteral("A1")),
                 VF.createStatement(o, VF.createIRI(C + "tag"), VF.createLiteral("t")))));
+        List<Object> unmatched = run(seeded, """
+            SELECT ?o ?item FROM STREAM S [TRIPLES 1]
+            WHERE { STREAM S { ?o <%1$scode> ?k . ?o <%1$stag> ?t . } ?item <%1$sitemCode> ?k . }
+            """.formatted(C), s -> s.push(List.of(
+                VF.createStatement(o, VF.createIRI(C + "code"), VF.createLiteral("ZZ")),
+                VF.createStatement(o, VF.createIRI(C + "tag"), VF.createLiteral("t")))));
         List<Object> iri = run(seeded, """
             SELECT ?o ?item FROM STREAM S [TRIPLES 1]
             WHERE { STREAM S { ?o <%1$scodeIri> ?k . ?o <%1$stag> ?t . } ?item <%1$sitemCodeIri> ?k . }
@@ -824,7 +1006,7 @@ public class CapabilityProbe {
                     + "answers\n      the composed route now drops IRI-keyed rows too; the literal "
                     + "verdict is meaningless until that is understood");
         }
-        return !literal.isEmpty();
+        return C.concat("item1").equals(firstValue(literal, "item")) && unmatched.isEmpty();
     }
 
     /**
@@ -839,27 +1021,32 @@ public class CapabilityProbe {
      * <p>The control filters on the variable the {@code BIND} reads instead, which answers; if it
      * stops answering, the static lookup itself has broken and this verdict means nothing.
      *
-     * <p>Returns true when the {@code FILTER} over the {@code BIND} target admits the row.
+     * <p>Two subjects arrive: {@code o1} with {@code ?x} 4 ({@code ?y} 8) and {@code o2} with 2
+     * ({@code ?y} 4). {@code FILTER(?y > 5)} must keep exactly {@code o1}: a check that only looks
+     * for a surviving row also passes when the {@code FILTER} is ignored (codex, review of #116).
      */
     private static boolean filterSeesBindTargetBesideStaticPattern() throws Exception {
         Seeder seeded = engine -> {
             try (RepositoryConnection conn = engine.getRepository().getConnection()) {
                 conn.add(VF.createIRI(C + "o1"), VF.createIRI(C + "kind"), VF.createIRI(C + "K"));
+                conn.add(VF.createIRI(C + "o2"), VF.createIRI(C + "kind"), VF.createIRI(C + "K"));
             }
         };
-        Pusher four = s -> s.push(VF.createStatement(VF.createIRI(C + "o1"), VF.createIRI(C + "v"),
-                VF.createLiteral(4.0)));
+        Pusher four = s -> {
+            s.push(VF.createStatement(VF.createIRI(C + "o1"), VF.createIRI(C + "v"), VF.createLiteral(4.0)));
+            s.push(VF.createStatement(VF.createIRI(C + "o2"), VF.createIRI(C + "v"), VF.createLiteral(2.0)));
+        };
         String shape = """
             SELECT ?o ?y FROM STREAM S [NOW]
             WHERE { STREAM S { ?o <%1$sv> ?x . } ?o <%1$skind> <%1$sK> . BIND(?x * 2 AS ?y) FILTER(%2$s) }
             """;
-        List<Object> onBindTarget = run(seeded, shape.formatted(C, "?y > 5"), four);
-        List<Object> onInput = run(seeded, shape.formatted(C, "?x > 2.5"), four);
-        if (onInput.isEmpty()) {
+        Set<String> onBindTarget = subjects(run(seeded, shape.formatted(C, "?y > 5"), four));
+        Set<String> onInput = subjects(run(seeded, shape.formatted(C, "?x > 2.5"), four));
+        if (!onInput.equals(Set.of("o1"))) {
             DIVERGENCES.add("REGRESSED — the control (a FILTER on the BIND's input) no longer answers\n"
                     + "      the static lookup itself is failing; the BIND/FILTER verdict is meaningless");
         }
-        return !onBindTarget.isEmpty();
+        return onBindTarget.equals(Set.of("o1"));
     }
 
     /**
@@ -970,7 +1157,14 @@ public class CapabilityProbe {
                 engine.registerCepQuery(withRegister("SELECT ?e1 FROM STREAM S [RANGE 30s]\nWHERE { " + body + " }\n"),
                         (PatternMatch<StreamElement> m) -> matches.add(m.getEvents().size()));
             } catch (Exception refused) {
-                return null;
+                // Only the documented refusal counts as one; anything else (an unrelated failure)
+                // must not read as the #74 validation (codex, review of #116).
+                if (String.valueOf(refused.getMessage()).contains("is not the subject of a stream triple pattern")) {
+                    return null;
+                }
+                DIVERGENCES.add("UNEXPECTED REFUSAL — a CEP query was refused for another reason: "
+                        + refused.getMessage() + "\n      the #74 check cannot tell what it measured");
+                return List.of();
             }
             engine.start();
             stream.push(VF.createStatement(VF.createIRI(C + "m1"), VF.createIRI(C + "hasAlert"),
