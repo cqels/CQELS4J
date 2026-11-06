@@ -397,8 +397,27 @@ public class CapabilityProbe {
                     + "matches\n      the sameTerm-vs-equality verdict is meaningless until that is understood");
         }
 
+        // Negative literal cases that vary ONE part of the term each: the datatype alone
+        // ("1"^^xsd:int vs "1"^^xsd:decimal) and the lexical form alone ("1" vs "01", both xsd:int).
+        // Each pair is value-equal, so = admits it (the control) while sameTerm must not. The
+        // int/decimal pair above changes both parts at once and could not tell which one sameTerm
+        // checks (codex, round 7 of #116).
+        boolean partsChecked = true;
+        Literal int1 = VF.createLiteral("1", org.eclipse.rdf4j.model.vocabulary.XSD.INT);
+        for (Literal other : List.of(VF.createLiteral("1", org.eclipse.rdf4j.model.vocabulary.XSD.DECIMAL),
+                VF.createLiteral("01", org.eclipse.rdf4j.model.vocabulary.XSD.INT))) {
+            Pusher differ = s -> s.push(List.of(
+                    VF.createStatement(iri("o1"), iri("a"), int1),
+                    VF.createStatement(iri("o1"), iri("b"), other)));
+            if (!exactRows(run(null, pair.formatted(C, "?x = ?y"), differ), o1)) {
+                DIVERGENCES.add("REGRESSED — the control (" + int1 + " = " + other + ") no longer matches"
+                        + "\n      the sameTerm verdict for that pair is meaningless until that is understood");
+            }
+            partsChecked &= run(null, pair.formatted(C, "sameTerm(?x, ?y)"), differ).isEmpty();
+        }
+
         return !same.isEmpty() && otherIri.isEmpty() && iriVsLiteral.isEmpty() && termEqual.isEmpty()
-                && literalsSame;
+                && literalsSame && partsChecked;
     }
 
     /**
