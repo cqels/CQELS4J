@@ -204,7 +204,7 @@ fault.
 | `AVG` of a group in which no row binds the argument | `null`, where SPARQL 1.1 gives `0` | Treat `null` as `0` in the result listener |
 | An aggregate whose argument no solution binds, such as `COUNT(?v)` with `?v` in no pattern | No row at all, where SPARQL 1.1 gives `COUNT` 0 — and a `COUNT(*)` beside it disappears too | Aggregate only arguments every solution binds, or bind them through an `OPTIONAL` (counted correctly) — see `CQELS-QL_SPEC.md` §9 |
 | `GROUP BY` on a language-tagged or typed literal | The key keeps the label only: `"cat"@en` and `"cat"@fr` form one group | Add `BIND(LANG(?l) AS ?lang)` (or `DATATYPE`) and `GROUP BY ?l ?lang` |
-| A static `UNION` joined to the stream in a non-aggregate query, when the join variable is not projected | Every row is dropped | Project the join variable — see `CQELS-QL_SPEC.md` §9 |
+| A static `UNION` joined to the stream in a non-aggregate query, when the join variable is not projected | Every row is dropped — under `[NOW]`, and under a window unless the query has `ORDER BY` or `LIMIT` | Project the join variable — see `CQELS-QL_SPEC.md` §9 |
 
 `2.0.0-alpha.22` fixed six rows that this table carried for alpha.21: `REPLACE()`, a `FILTER`
 over a `BIND` target ([#83](https://github.com/cqels/CQELS4J/issues/83)) or an `OPTIONAL`
