@@ -651,20 +651,6 @@ public class CapabilityProbe {
      * Hence <strong>timestamped</strong> pushes: event time, not the scheduler, decides which
      * bucket each element lands in, so the expected count is exact and the result deterministic.
      */
-    /**
-     * True when the row binds {@code ?n} to exactly 3.
-     *
-     * <p>Parsed rather than substring-matched: {@code contains("n=3")} also accepts {@code n=30},
-     * which a reviewer demonstrated by mutating the delivered count. The value is required to run to
-     * a delimiter, so {@code 3.5} and {@code 3E1} are rejected as well — {@code COUNT} returns an
-     * integral value today, and this should start failing rather than quietly passing if that
-     * changes.
-     */
-    private static boolean countIsThree(Object row) {
-        return java.util.regex.Pattern.compile("\\bn=3(?![\\d.eE+-])")
-                .matcher(String.valueOf(row)).find();
-    }
-
     private static boolean singlePatternRangeAggregatesAtWindowClose() throws Exception {
         try (CQELSEngine engine = CQELSEngine.builder().id("probe-range-agg").withMemoryStore().build()) {
             DataStream stream = engine.createStream("S");
@@ -688,11 +674,14 @@ public class CapabilityProbe {
             for (int i = 0; i < 40 && rows.isEmpty(); i++) {
                 Thread.sleep(100);
             }
+            Thread.sleep(500);   // let any further row arrive, so an extra one is seen, not missed
             // n=3 exactly: the closed bucket holds the three timestamped elements and not the
             // trigger. Asserting the value, not just non-emptiness, rejects a raw or mis-scoped
-            // result that happens to arrive at the right moment. Matched as a NUMBER: an earlier
-            // version used String.contains("n=3"), which a reviewer showed also accepts n=30.
-            return quietBeforeTrigger && rows.stream().anyMatch(CapabilityProbe::countIsThree);
+            // result that happens to arrive at the right moment. Matched as a typed NUMBER: an
+            // earlier version used String.contains("n=3"), which a reviewer showed accepts n=30.
+            // Exactly one row, n bound to the NUMBER 3: "any row matching n=3" accepted an extra
+            // {n=99} beside it, and the regex accepted "3wrong" (codex, round 4 of #116).
+            return quietBeforeTrigger && exactRows(rows, List.of(row("n", num(3))));
         }
     }
 
@@ -899,8 +888,8 @@ public class CapabilityProbe {
      *
      * <p>Both outputs are read <em>per arrival</em>: each arrival's rows are collected before the
      * next element is pushed, and compared exactly. The documented result is {@code {cat,1}} on the
-     * first arrival and {@code {cat,2}} on the second; a fix reports {@code {cat,1}}, then both tags
-     * at 1. The workaround control must be {@code en:1}, then {@code en:1} and {@code fr:1}. One
+     * first arrival and {@code {"cat"@en,2}} on the second; a fix reports {@code {"cat"@en,1}}, then
+     * both tags at 1. Keys are compared as RDF terms, language tag included. The workaround control must be {@code en:1}, then {@code en:1} and {@code fr:1}. One
      * flattened multiset accepted reversed or batched histories (codex, round 3 of #116).
      *
      * <p>Returns {@code 1 group} as documented, {@code 2 groups} once fixed, or the rows.
@@ -913,9 +902,11 @@ public class CapabilityProbe {
             SELECT ?l ?lang (COUNT(*) AS ?n) FROM STREAM S [TRIPLES 3]
             WHERE { STREAM S { ?o <%sl> ?l . } BIND(LANG(?l) AS ?lang) } GROUP BY ?l ?lang
             """.formatted(C), twoTags);
-        if (!(exactRows(control.get(0), List.of(row("l", "cat", "lang", "en", "n", num(1))))
-                && exactRows(control.get(1), List.of(row("l", "cat", "lang", "en", "n", num(1)),
-                        row("l", "cat", "lang", "fr", "n", num(1)))))) {
+        Literal en = VF.createLiteral("cat", "en");
+        Literal fr = VF.createLiteral("cat", "fr");
+        if (!(exactRows(control.get(0), List.of(row("l", en, "lang", "en", "n", num(1))))
+                && exactRows(control.get(1), List.of(row("l", en, "lang", "en", "n", num(1)),
+                        row("l", fr, "lang", "fr", "n", num(1)))))) {
             DIVERGENCES.add("REGRESSED — the documented workaround (GROUP BY ?l ?lang) reported " + control
                     + "\n      fix the workaround in GETTING_STARTED.md before trusting the verdict");
         }
@@ -923,11 +914,12 @@ public class CapabilityProbe {
             SELECT ?l (COUNT(*) AS ?n) FROM STREAM S [TRIPLES 3]
             WHERE { STREAM S { ?o <%sl> ?l . } } GROUP BY ?l
             """.formatted(C), twoTags);
-        boolean first = exactRows(rows.get(0), List.of(row("l", "cat", "n", num(1))));
-        if (first && exactRows(rows.get(1), List.of(row("l", "cat", "n", num(2))))) {
+        // Measured: the merged group keeps the first key it saw, "cat"@en, and counts 2.
+        boolean first = exactRows(rows.get(0), List.of(row("l", en, "n", num(1))));
+        if (first && exactRows(rows.get(1), List.of(row("l", en, "n", num(2))))) {
             return "1 group";
         }
-        if (first && exactRows(rows.get(1), List.of(row("l", "cat", "n", num(1)), row("l", "cat", "n", num(1))))) {
+        if (first && exactRows(rows.get(1), List.of(row("l", en, "n", num(1)), row("l", fr, "n", num(1))))) {
             return "2 groups";
         }
         return String.valueOf(rows);
@@ -1321,18 +1313,16 @@ public class CapabilityProbe {
                 for (int i = 0; i < 30 && rows.size() == before; i++) {
                     Thread.sleep(100);
                 }
-                if (rows.size() == before || !countIs(rows.get(rows.size() - 1), expected[k])) {
+                Thread.sleep(300);   // let any further row of this arrival land before judging it
+                // This arrival's rows must be exactly one {n = expected}: reading only the last row
+                // accepted an extra {n=99} before it (codex, round 4 of #116).
+                if (!exactRows(new ArrayList<>(rows.subList(before, rows.size())),
+                        List.of(row("n", num(expected[k]))))) {
                     return false;
                 }
             }
             return true;
         }
-    }
-
-    /** True when the row binds {@code ?n} to exactly {@code n} (parsed as in {@link #countIsThree}). */
-    private static boolean countIs(Object row, int n) {
-        return java.util.regex.Pattern.compile("\\bn=" + n + "(?![\\d.eE+-])")
-                .matcher(String.valueOf(row)).find();
     }
 
     /**
@@ -1465,7 +1455,11 @@ public class CapabilityProbe {
         return new Num(value);
     }
 
-    /** One expected row: alternating variable names and typed values ({@link IRI}, {@link Num}, String, {@link #UNBOUND}). */
+    /**
+     * One expected row: alternating variable names and typed values — {@link IRI}, {@link Num}, a
+     * plain String (a Java String or simple literal), an exact {@link Literal} (language-tagged or
+     * otherwise typed), or {@link #UNBOUND}.
+     */
     private static Map<String, Object> row(Object... kv) {
         Map<String, Object> m = new java.util.LinkedHashMap<>();
         for (int i = 0; i < kv.length; i += 2) {
@@ -1494,7 +1488,10 @@ public class CapabilityProbe {
             if (actual instanceof Number n) {
                 return n.doubleValue() == want.value();
             }
-            if (actual instanceof Literal l) {
+            // A literal counts as a number only with a numeric datatype: doubleValue() alone parses
+            // the label of "150.0"^^xsd:string too (codex, round 4 of #116).
+            if (actual instanceof Literal l && l.getLanguage().isEmpty()
+                    && org.eclipse.rdf4j.model.datatypes.XMLDatatypeUtil.isNumericDatatype(l.getDatatype())) {
                 try {
                     return l.doubleValue() == want.value();
                 } catch (NumberFormatException e) {
@@ -1503,10 +1500,19 @@ public class CapabilityProbe {
             }
             return false;
         }
-        if (actual instanceof IRI || actual instanceof Number) {
-            return false;
+        if (expected instanceof Literal want) {
+            // Term identity — label, language tag and datatype — whatever Literal class the engine uses.
+            return actual instanceof Literal got && got.getLabel().equals(want.getLabel())
+                    && got.getLanguage().equals(want.getLanguage()) && got.getDatatype().equals(want.getDatatype());
         }
-        return text(actual).equals(expected);
+        // A plain string: a Java String, or a simple literal (xsd:string, no language tag). "25"^^xsd:int
+        // and "25"@fr are other RDF terms (codex, round 4 of #116); expect them as a Literal instead.
+        if (actual instanceof String str) {
+            return str.equals(expected);
+        }
+        return actual instanceof Literal l && l.getLanguage().isEmpty()
+                && org.eclipse.rdf4j.model.vocabulary.XSD.STRING.equals(l.getDatatype())
+                && l.getLabel().equals(expected);
     }
 
     /**
