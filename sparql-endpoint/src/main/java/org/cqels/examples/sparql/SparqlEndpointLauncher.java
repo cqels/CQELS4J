@@ -28,6 +28,7 @@ import java.util.EnumSet;
 import java.util.List;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
 
 /**
  * Runs {@link SparqlProtocolServlet} on Jetty 12 over an embedded CQELS engine, configured
@@ -48,7 +49,8 @@ import java.util.concurrent.atomic.AtomicReference;
  *   CQELS_SPARQL_UPDATE_ENABLED           false
  *   CQELS_SPARQL_STORE_PATH               (memory)    NativeStore directory for a durable graph
  *   CQELS_SPARQL_SEED_FLEET               false       seed the examples' V2G fleet world
- *   CQELS_SPARQL_MAX_THREADS              200         Jetty request threads
+ *   CQELS_SPARQL_MAX_THREADS              200         Jetty request threads; must exceed the query
+ *                                                     slots plus the connector's threads plus spares
  *   CQELS_SPARQL_VIRTUAL_THREADS          false       JDK 21+ runtime only; ignored otherwise
  *   CQELS_SPARQL_ALLOW_UNAUTHENTICATED_REMOTE  false  see below
  * </pre>
@@ -153,8 +155,25 @@ public final class SparqlEndpointLauncher {
      */
     public static Server startServer(CQELSEngine engine, String host, int port, EndpointOptions options,
                                      int maxThreads, boolean virtualThreads) throws Exception {
+        return startServer(engine::getRepository, host, port, options, maxThreads, virtualThreads);
+    }
+
+    /**
+     * Request threads kept free beyond the query slots, so that a request finding every slot
+     * taken still gets a thread to be told 503, and {@code /health} still gets one to answer.
+     */
+    static final int SPARE_THREADS = 4;
+
+    /** The smallest pool that keeps the slot cap meaningful, given the threads Jetty's connector leases. */
+    static int minimumThreads(int maxConcurrentQueries, int leasedThreads) {
+        return maxConcurrentQueries + SPARE_THREADS + leasedThreads;
+    }
+
+    static Server startServer(Supplier<Repository> repository, String host, int port, EndpointOptions options,
+                              int maxThreads, boolean virtualThreads) throws Exception {
         QueuedThreadPool pool = new QueuedThreadPool(Math.max(maxThreads, 8));
         pool.setName("sparql-endpoint");
+        boolean onVirtualThreads = false;
         if (virtualThreads) {
             // Jetty 12 can run request handling on virtual threads when the runtime has them.
             // RDF4J evaluation blocks, so that is a real win under many slow clients; the
@@ -162,6 +181,7 @@ public final class SparqlEndpointLauncher {
             Executor vt = VirtualThreads.getDefaultVirtualThreadsExecutor();
             if (vt != null) {
                 pool.setVirtualThreadsExecutor(vt);
+                onVirtualThreads = true;
             } else {
                 log.warn("CQELS_SPARQL_VIRTUAL_THREADS=true but this runtime has no virtual threads; using platform threads");
             }
@@ -182,11 +202,29 @@ public final class SparqlEndpointLauncher {
             context.addFilter(new FilterHolder(new AccessFilters.BearerToken(options.authToken())),
                     options.path(), EnumSet.of(DispatcherType.REQUEST));
         }
-        context.addServlet(new ServletHolder(new SparqlProtocolServlet(engine::getRepository, options)), options.path());
+        context.addServlet(new ServletHolder(new SparqlProtocolServlet(repository, options)), options.path());
         context.addServlet(new ServletHolder(new TextServlet("ok")), "/health");
         context.addServlet(new ServletHolder(new TextServlet("ready")), "/ready");
         server.setHandler(context);
         server.start();
+
+        // The slots only bound anything if a request reaches them. With fewer request threads
+        // than slots, requests queue in Jetty for a thread instead: the 503 is no longer
+        // immediate and /health waits behind stuck queries (found reviewing #105: 8 threads,
+        // 16 slots, eight slow queries, and /health timed out). So refuse that configuration. The connector
+        // leases its acceptor and selector threads from the same pool, which is why the
+        // number is read after start. Virtual threads have no such ceiling.
+        if (!onVirtualThreads) {
+            int leased = pool.getThreadPoolBudget() == null ? 0 : pool.getThreadPoolBudget().getLeasedThreads();
+            int needed = minimumThreads(options.maxConcurrentQueries(), leased);
+            if (pool.getMaxThreads() < needed) {
+                server.stop();
+                throw new IllegalStateException("CQELS_SPARQL_MAX_THREADS=" + pool.getMaxThreads() + " is too few for "
+                        + options.maxConcurrentQueries() + " query slots: need at least " + needed + " ("
+                        + leased + " leased by the connector, " + SPARE_THREADS + " spare for rejections and "
+                        + "/health). Raise CQELS_SPARQL_MAX_THREADS or lower CQELS_SPARQL_MAX_CONCURRENT_QUERIES.");
+            }
+        }
         return server;
     }
 

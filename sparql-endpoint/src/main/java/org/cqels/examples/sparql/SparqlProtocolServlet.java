@@ -43,7 +43,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.URISyntaxException;
-import java.net.URLDecoder;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -463,17 +462,31 @@ public final class SparqlProtocolServlet extends HttpServlet {
         if (accept == null || accept.isBlank()) {
             return Optional.of(new Negotiated<>(dflt, dflt.getDefaultMIMEType()));
         }
-        record Range(String type, double q, int order) {
+        // A range's media parameters (those before q) narrow it further (RFC 9110 §12.5.1):
+        // text/csv;charset=UTF-8 is more specific than text/csv, and matches only a
+        // representation with those parameters. The only parameter these writers have is the
+        // charset of a text format, so any other parameter matches nothing here.
+        record Range(String type, Map<String, String> params, double q, int order) {
             int specificity() {
-                return type.equals("*/*") ? 1 : type.endsWith("/*") ? 2 : 3;
+                return type.equals("*/*") ? 1 : type.endsWith("/*") ? 2 : params.isEmpty() ? 3 : 4;
             }
 
-            boolean matches(String mime) {
-                return switch (specificity()) {
+            boolean matches(String mime, Charset charset) {
+                boolean typeMatches = switch (type.equals("*/*") ? 1 : type.endsWith("/*") ? 2 : 3) {
                     case 1 -> true;
                     case 2 -> mime.startsWith(type.substring(0, type.length() - 1));
                     default -> mime.equals(type);
                 };
+                if (!typeMatches) {
+                    return false;
+                }
+                for (Map.Entry<String, String> p : params.entrySet()) {
+                    if (!p.getKey().equals("charset") || charset == null
+                            || !charset.name().equalsIgnoreCase(p.getValue())) {
+                        return false;
+                    }
+                }
+                return true;
             }
 
             boolean beats(Range other) {
@@ -490,17 +503,25 @@ public final class SparqlProtocolServlet extends HttpServlet {
                 continue;
             }
             double q = 1.0;
+            Map<String, String> params = new LinkedHashMap<>();
             for (int i = 1; i < pieces.length; i++) {
                 String p = pieces[i].trim();
-                if (p.startsWith("q=")) {
+                int eq = p.indexOf('=');
+                String name = (eq < 0 ? p : p.substring(0, eq)).trim().toLowerCase(Locale.ROOT);   // names are case-insensitive
+                String value = eq < 0 ? "" : p.substring(eq + 1).trim().replace("\"", "");
+                if (name.equals("q")) {
                     try {
-                        q = Double.parseDouble(p.substring(2));
+                        q = Double.parseDouble(value);
                     } catch (NumberFormatException ignored) {
                         q = 0;
                     }
+                    break;   // what follows q is accept-ext, not media-type parameters
+                }
+                if (!name.isEmpty()) {
+                    params.put(name, value);
                 }
             }
-            ranges.add(new Range(type, q, order++));   // q=0 is kept: it is an exclusion
+            ranges.add(new Range(type, params, q, order++));   // q=0 is kept: it is an exclusion
         }
         List<F> candidates = new ArrayList<>();
         candidates.add(dflt);
@@ -512,11 +533,12 @@ public final class SparqlProtocolServlet extends HttpServlet {
         Negotiated<F> best = null;
         Range bestRange = null;
         for (F f : candidates) {
+            Charset charset = f.hasCharset() ? (f.getCharset() == null ? StandardCharsets.UTF_8 : f.getCharset()) : null;
             for (String mime : f.getMIMETypes()) {   // the format's primary type first
                 String m = mime.toLowerCase(Locale.ROOT);
                 Range match = null;   // the most specific range for this type, earliest on a tie
                 for (Range r : ranges) {
-                    if (r.matches(m) && (match == null || r.specificity() > match.specificity()
+                    if (r.matches(m, charset) && (match == null || r.specificity() > match.specificity()
                             || (r.specificity() == match.specificity() && r.order() < match.order()))) {
                         match = r;
                     }
@@ -678,12 +700,32 @@ public final class SparqlProtocolServlet extends HttpServlet {
             return new Params(m);
         }
 
+        /**
+         * Percent-decodes to bytes first and decodes those bytes once, in {@code cs}.
+         * {@code URLDecoder} decodes each run of escapes on its own, which breaks a multibyte
+         * character whose trailing byte is a plain ASCII letter — Shift_JIS テ is {@code %83e}.
+         */
         private static String decode(String s, Charset cs) {
-            try {
-                return URLDecoder.decode(s, cs);
-            } catch (IllegalArgumentException e) {
-                throw new IllegalArgumentException("malformed percent-encoding in request parameters");
+            java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream(s.length());
+            for (int i = 0; i < s.length(); i++) {
+                char c = s.charAt(i);
+                if (c == '+') {
+                    bytes.write(' ');
+                } else if (c == '%') {
+                    int hi = i + 2 < s.length() ? Character.digit(s.charAt(i + 1), 16) : -1;
+                    int lo = hi < 0 ? -1 : Character.digit(s.charAt(i + 2), 16);
+                    if (lo < 0) {
+                        throw new IllegalArgumentException("malformed percent-encoding in request parameters");
+                    }
+                    bytes.write((hi << 4) | lo);
+                    i += 2;
+                } else {
+                    int end = Character.isHighSurrogate(c) && i + 1 < s.length() ? i + 2 : i + 1;
+                    bytes.writeBytes(s.substring(i, end).getBytes(cs));
+                    i = end - 1;
+                }
             }
+            return bytes.toString(cs);
         }
 
         Params and(Params other) {
