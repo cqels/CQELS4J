@@ -63,7 +63,9 @@ public final class AccessFilters {
      * passes untouched. A request whose {@code Origin} is on the allow-list (or the list is
      * {@code *}) gets the CORS headers, including {@code Access-Control-Expose-Headers} for
      * {@code X-CQELS-Truncated} and {@code Retry-After}, which a browser hides otherwise. A
-     * request from any <em>other</em> origin is refused with 403 before it reaches the servlet.
+     * request from any <em>other</em> origin is refused with 403 before it reaches the servlet, and
+ * so is a request with no {@code Origin} that the browser's Fetch Metadata
+ * ({@code Sec-Fetch-Site: cross-site} or {@code same-site}) marks as sent by another site's page.
      *
      * <p>Why refuse rather than merely withhold the CORS headers: a cross-origin
      * {@code application/x-www-form-urlencoded} POST is a "simple" request — the browser sends
@@ -88,13 +90,20 @@ public final class AccessFilters {
             HttpServletResponse resp = (HttpServletResponse) response;
             String origin = req.getHeader("Origin");
             if (origin == null) {
+                // No Origin is not proof of a non-browser client: a cross-site <img> or link is a
+                // GET without one. Browsers do label it with Fetch Metadata, so refuse what they
+                // mark as coming from another site. "none" (typed into the address bar) and
+                // "same-origin" pass, as does every client that sends no Sec-Fetch-Site at all.
+                String site = req.getHeader("Sec-Fetch-Site");
+                if ("cross-site".equalsIgnoreCase(site) || "same-site".equalsIgnoreCase(site)) {
+                    refuse(resp, "a " + site + " browser request without an allowed Origin is refused");
+                    return;
+                }
                 chain.doFilter(request, response);
                 return;
             }
             if (!allowed.contains("*") && !allowed.contains(origin)) {
-                resp.setStatus(HttpServletResponse.SC_FORBIDDEN);
-                resp.setContentType("text/plain; charset=UTF-8");
-                resp.getWriter().write("origin " + origin + " is not allowed (CQELS_SPARQL_ALLOWED_ORIGINS)\n");
+                refuse(resp, "origin " + origin + " is not allowed (CQELS_SPARQL_ALLOWED_ORIGINS)");
                 return;
             }
             resp.setHeader("Access-Control-Allow-Origin", origin);
@@ -108,6 +117,12 @@ public final class AccessFilters {
                 return;
             }
             chain.doFilter(request, response);
+        }
+
+        private static void refuse(HttpServletResponse resp, String message) throws IOException {
+            resp.setStatus(HttpServletResponse.SC_FORBIDDEN);
+            resp.setContentType("text/plain; charset=UTF-8");
+            resp.getWriter().write(message + "\n");
         }
     }
 }
