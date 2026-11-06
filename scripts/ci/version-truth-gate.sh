@@ -1682,29 +1682,42 @@ PY
   # and a 400, for the reader — and Python's shlex keeps the backslash in a
   # double-quoted \$v, which bash removes. The tokenizer below implements the
   # bash rules (single quotes literal; double quotes honour \$ \` \" \\ and
-  # \<newline>; unquoted \x is x; \<newline> joins lines) and REFUSES a query
-  # that depends on $ or ` expansion rather than guessing it: the gate never
-  # executes README text. Once the example is found, an unparseable one is a
-  # defect; it does not fall through to a later, valid block.
+  # \<newline>; unquoted \x is x; \<newline> joins lines; a bare newline or an
+  # operator ends the command) and REFUSES a query that depends on $ or `
+  # expansion rather than guessing it: the gate never executes README text. The
+  # query must be an argument of the curl command itself — a missing \ leaves
+  # it on a line bash runs as a separate (failing) command. Once a block with
+  # --data-urlencode is found it IS the example: anything wrong with it is a
+  # defect, never a reason to fall through to a later block.
   # Written to a file and run from there, never as a heredoc inside $( ): bash
   # 3.2 (macOS's /bin/bash) still scans such a heredoc for quotes and backticks,
   # and this one is full of both.
   cat > "$WORK/extract-example.py" <<'PY'
 import re, sys
 
-def bash_words(src):
-    """Words of a shell command list, as (text, expanded) pairs. Operators end words."""
-    words, cur, have, tainted, i, n = [], [], False, False, 0, len(src)
+EXPANDS = set('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_0123456789{(@*#?$!-')
+
+def bash_commands(src):
+    """Simple commands of a shell script: lists of (word, expanded). Newlines and operators end a command."""
+    commands, words, cur, have, tainted, i, n = [], [], [], False, False, 0, len(src)
     def flush():
         nonlocal cur, have, tainted
         if have:
             words.append((''.join(cur), tainted))
         cur, have, tainted = [], False, False
+    def end_command():
+        nonlocal words
+        flush()
+        if words:
+            commands.append(words)
+        words = []
     while i < n:
         c = src[i]
-        if c in ' \t\n':
+        if c in ' \t':
             flush(); i += 1
-        elif c in ';&|<>()':
+        elif c in '\n;&|()':
+            end_command(); i += 1
+        elif c in '<>':
             flush(); i += 1
         elif c == '#' and not have:
             j = src.find('\n', i)
@@ -1726,43 +1739,54 @@ def bash_words(src):
                     if src[i + 1] != '\n':
                         cur.append(src[i + 1])
                     i += 2; continue
-                if c in '$`':
+                # Inside double quotes $ expands only before a name, a digit, {, ( or a
+                # special parameter; a lone '$' (say before a quote) is literal.
+                if c == '`' or (c == '$' and i + 1 < n and src[i + 1] in EXPANDS):
                     tainted = True
                 cur.append(c); i += 1
         elif c == '\\':
             if i + 1 < n and src[i + 1] == '\n':
-                i += 2                      # line continuation
+                i += 2                      # line continuation: the same command goes on
             else:
                 if i + 1 < n:
                     cur.append(src[i + 1])
                 have = True; i += 2
         else:
-            if c in '$`':
+            # Unquoted, $ also starts $'…' and $"…" quoting; refuse those too.
+            if c == '`' or (c == '$' and i + 1 < n and (src[i + 1] in EXPANDS or src[i + 1] in '\'"')):
                 tainted = True
             cur.append(c); have = True; i += 1
-    flush()
-    return words
+    end_command()
+    return commands
 
 try:
     text = open(sys.argv[1], encoding='utf-8').read()
 except OSError:
     sys.exit(0)
 for block in re.findall(r'^```[a-z]*\n(.*?)^```', text, re.S | re.M):
-    if '--data-urlencode' not in block or 'query=' not in block:
+    if '--data-urlencode' not in block:
         continue
+    # This block is the example. Whatever is wrong with it is reported here; it
+    # never yields to a later block, which would leave the broken one unchecked.
     try:
-        words = bash_words(block)
+        commands = bash_commands(block)
     except ValueError as e:
         print('the curl example is not a well-formed shell command (%s)' % e)
         sys.exit(4)
-    for k, (w, _) in enumerate(words[:-1]):
-        nxt, expanded = words[k + 1]
-        if w == '--data-urlencode' and nxt.startswith('query='):
-            if expanded:
-                print('the curl example\'s query depends on shell expansion ($ or `), which this gate will not evaluate')
-                sys.exit(4)
-            sys.stdout.write(nxt[len('query='):])
-            sys.exit(0)
+    for words in commands:
+        if not words or words[0][0] != 'curl':
+            continue
+        for k, (w, _) in enumerate(words[:-1]):
+            nxt, expanded = words[k + 1]
+            if w == '--data-urlencode' and nxt.startswith('query='):
+                if expanded:
+                    print("the curl example's query depends on shell expansion ($ or `), which this gate will not evaluate")
+                    sys.exit(4)
+                sys.stdout.write(nxt[len('query='):])
+                sys.exit(0)
+    print("the block holding the curl example has no curl command passing --data-urlencode 'query=…' "
+          "(a missing \\ continuation splits the command; a misspelt parameter sends no query)")
+    sys.exit(4)
 PY
   EXAMPLE=$("$PY3" "$WORK/extract-example.py" "$SPDOC" 2>/dev/null)
   exrc=$?
@@ -1855,18 +1879,22 @@ def load(name):
 TYPES = {'uri', 'literal', 'bnode', 'triple'}
 def term(t):
     # SPARQL 1.1 Query Results JSON §3.2.2 (plus RDF-star's 'triple', which RDF4J writes).
-    return (isinstance(t, dict) and t.get('type') in TYPES
-            and (isinstance(t.get('value'), str) or (t.get('type') == 'triple' and isinstance(t.get('value'), dict))))
-def head_vars(doc):
+    # type is checked to be a string BEFORE the set lookup: a list there raised
+    # TypeError and turned the endpoint's defect into an INCONCLUSIVE (round 3).
+    if not isinstance(t, dict) or not isinstance(t.get('type'), str) or t['type'] not in TYPES:
+        return False
+    return isinstance(t.get('value'), str) or (t['type'] == 'triple' and isinstance(t.get('value'), dict))
+def head_vars(doc, required):
+    # SELECT results MUST declare head.vars (§3.1); an ASK head may be empty.
     h = doc.get('head') if isinstance(doc, dict) else None
-    if not isinstance(h, dict):
+    if not isinstance(h, dict) or (required and 'vars' not in h):
         return None
     v = h.get('vars', [])
     return v if isinstance(v, list) and all(isinstance(x, str) for x in v) else None
 ask, example = load('ask'), load('example')
-ask_ok = isinstance(ask, dict) and head_vars(ask) is not None and ask.get('boolean') is True
+ask_ok = isinstance(ask, dict) and head_vars(ask, False) is not None and ask.get('boolean') is True
 rows = -1   # -1 = not a well-formed SPARQL JSON SELECT result
-vars_ = head_vars(example)
+vars_ = head_vars(example, True)
 if vars_ is not None and isinstance(example.get('results'), dict):
     b = example['results'].get('bindings')
     # A row is an object whose keys are declared variables bound to RDF terms.

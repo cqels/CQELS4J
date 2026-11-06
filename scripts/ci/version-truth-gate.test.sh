@@ -1771,6 +1771,51 @@ EOF
 VTG_DEEP_CAPTURE="$WORK/t-good" checkmsg 1 "an unterminated first example fails instead of yielding to the next" \
   "not a well-formed shell command" "$d" --deep
 
+# Round 3. A missing \ continuation leaves --data-urlencode on a line bash
+# runs as its own (failing) command, so curl sends no query at all.
+d=$(newfix)
+cat > "$d/sparql-endpoint/README.md" <<'EOF'
+```bash
+curl -G http://127.0.0.1:8089/sparql
+  --data-urlencode 'query=SELECT ?v WHERE { ?v ?p ?o }'
+```
+EOF
+VTG_DEEP_CAPTURE="$WORK/t-good" checkmsg 1 "a missing line continuation fails (the query is not curl's argument)" \
+  "no curl command passing" "$d" --deep
+
+# The block holding --data-urlencode IS the example: a misspelt parameter in it
+# fails rather than yielding to a later, valid block.
+d=$(newfix)
+cat > "$d/sparql-endpoint/README.md" <<'EOF'
+```bash
+curl -G http://127.0.0.1:8089/sparql --data-urlencode 'xquery=SELEKT ?v WHERE { ?v ?p ?o }'
+```
+
+```bash
+curl -G http://127.0.0.1:8089/sparql --data-urlencode 'query=SELECT ?v WHERE { ?v ?p ?o }'
+```
+EOF
+VTG_DEEP_CAPTURE="$WORK/t-good" checkmsg 1 "a first example sending no query fails instead of yielding" \
+  "no curl command passing" "$d" --deep
+
+# A $ that bash does not expand (before a quote) is literal, not refused.
+d=$(newfix)
+cat > "$d/sparql-endpoint/README.md" <<'EOF'
+```bash
+curl -G http://127.0.0.1:8089/sparql --data-urlencode "query=SELECT ?v WHERE { ?v ?p ?o FILTER ('$' = '$') }"
+```
+EOF
+VTG_DEEP_CAPTURE="$WORK/t-good" checkmsg 0 "a literal \$ bash leaves alone is sent as is" \
+  "FILTER ('\$' = '\$')" "$d" --deep
+
+for bad in '{"head":{"vars":["v"]},"results":{"bindings":[{"v":{"type":[],"value":"x"}}]}}' \
+           '{"head":{"vars":["v"]},"results":{"bindings":[{"v":{"type":{},"value":"x"}}]}}' \
+           '{"head":{},"results":{"bindings":[{}]}}'; do
+  spcap s-bad3 '{"head":{},"boolean":true}' "$bad" 12.0.16
+  d=$(newfix); VTG_DEEP_CAPTURE="$WORK/t-good" VTG_SPARQL_CAPTURE="$WORK/s-bad3" checkmsg 1 \
+    "malformed SPARQL JSON is a defect, never INCONCLUSIVE: $bad" "did not return SPARQL JSON results" "$d" --deep
+done
+
 # {} is a valid row — every variable unbound — and must count (round 2).
 spcap s-emptyrow '{"head":{},"boolean":true}' '{"head":{"vars":["v"]},"results":{"bindings":[{}]}}' 12.0.16
 d=$(newfix); VTG_DEEP_CAPTURE="$WORK/t-good" VTG_SPARQL_CAPTURE="$WORK/s-emptyrow" checkmsg 0 \
