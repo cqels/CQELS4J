@@ -1,0 +1,167 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>org.cqels.examples</groupId>
+    <artifactId>cqels-sparql-endpoint</artifactId>
+    <version>0.1.0</version>
+    <packaging>jar</packaging>
+    <name>CQELS Engine — SPARQL 1.1 Protocol endpoint</name>
+    <description>A SPARQL 1.1 Protocol endpoint over an embedded CQELS engine's background graph:
+        a plain jakarta.servlet on Jetty 12, serving engine.getRepository(). Standard SPARQL
+        clients query the graph the engine joins its streams against. Continuous queries are
+        not exposed over HTTP here (see the README); the servlet is written so it can later
+        be mounted into the Jetty that org.cqels:cqels-mcp embeds.</description>
+    <properties>
+        <maven.compiler.release>17</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <cqels.version>2.0.0-alpha.21</cqels.version>
+        <!-- Must equal the Jetty that org.cqels:cqels-mcp embeds at the pinned engine version
+             (12.0.16 at 2.0.0-alpha.21), so the servlet can mount into the MCP server's Jetty
+             unchanged once upstream exposes a mount point (cqels/claude#1387). Two Jetty
+             versions in one JVM would split silently; the gate's deep tier is meant to compare
+             this property with the resolved cqels-mcp pom (tracking: cqels/CQELS4J#104). -->
+        <jetty.version>12.0.16</jetty.version>
+        <!-- The RDF4J the engine is built on. Any RDF4J module declared here must be this
+             version so there is exactly one RDF4J on the classpath. -->
+        <rdf4j.version>4.3.8</rdf4j.version>
+        <mainClass>org.cqels.examples.sparql.SparqlEndpointLauncher</mainClass>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <!-- The trap, measured 2026-11-06 with dependency:tree -Dverbose: an RDF4J module
+                 declared DIRECTLY here (rdf4j-queryresultio-sparqljson, rdf4j-sail-nativerdf)
+                 carries jackson-core 2.13.5 and slf4j-api 1.7.36 one level NEARER than the
+                 engine's jackson 2.17.0 and slf4j-api 2.0.9, which arrive through cqels-core.
+                 Maven's nearest-wins mediation then picks the OLD ones, and the result is a
+                 jackson-databind 2.17 running on jackson-core 2.13 — which fails at runtime,
+                 not at compile time. Pin both to the engine's versions. If the engine moves,
+                 move these with it (the pin must follow the engine, not the other way round). -->
+            <dependency>
+                <groupId>com.fasterxml.jackson</groupId>
+                <artifactId>jackson-bom</artifactId>
+                <version>2.17.0</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.slf4j</groupId>
+                <artifactId>slf4j-api</artifactId>
+                <version>2.0.9</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <dependencies>
+        <!-- The engine: brings cqels-core, RDF4J 4.3.8 (model, query, sail-memory, the XML and
+             binary result writers), Reactor and SLF4J 2 transitively. -->
+        <dependency>
+            <groupId>org.cqels</groupId>
+            <artifactId>cqels-engine</artifactId>
+            <version>${cqels.version}</version>
+        </dependency>
+
+        <!-- Jetty 12, ee10 (jakarta.servlet 6): the stack cqels-mcp embeds. -->
+        <dependency>
+            <groupId>org.eclipse.jetty</groupId>
+            <artifactId>jetty-server</artifactId>
+            <version>${jetty.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.jetty.ee10</groupId>
+            <artifactId>jetty-ee10-servlet</artifactId>
+            <version>${jetty.version}</version>
+        </dependency>
+
+        <!-- Result formats the engine does not already carry: SPARQL JSON (the usual default
+             for SELECT/ASK) and CSV/TSV. XML and binary come with the engine. -->
+        <dependency>
+            <groupId>org.eclipse.rdf4j</groupId>
+            <artifactId>rdf4j-queryresultio-sparqljson</artifactId>
+            <version>${rdf4j.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.rdf4j</groupId>
+            <artifactId>rdf4j-queryresultio-text</artifactId>
+            <version>${rdf4j.version}</version>
+        </dependency>
+        <!-- A durable background graph (CQELS_SPARQL_STORE_PATH). The engine itself only
+             carries the memory store. -->
+        <dependency>
+            <groupId>org.eclipse.rdf4j</groupId>
+            <artifactId>rdf4j-sail-nativerdf</artifactId>
+            <version>${rdf4j.version}</version>
+        </dependency>
+
+        <!-- Logs to stderr; stdout carries only the one "listening on" line that scripts parse. -->
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-simple</artifactId>
+            <version>2.0.9</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>5.10.2</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <!-- Served anonymously: no account, no token, no ~/.m2/settings.xml. -->
+    <repositories>
+        <repository>
+            <id>cqels</id>
+            <name>CQELS Releases</name>
+            <url>https://raw.githubusercontent.com/cqels/maven/main/releases</url>
+            <releases><enabled>true</enabled></releases>
+            <snapshots><enabled>false</enabled></snapshots>
+        </repository>
+    </repositories>
+
+    <build>
+        <finalName>cqels-sparql-endpoint</finalName>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.2.5</version>
+            </plugin>
+            <!-- One runnable jar, as mcp-server builds: `java -jar target/cqels-sparql-endpoint.jar`. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>3.5.3</version>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals><goal>shade</goal></goals>
+                        <configuration>
+                            <transformers>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                    <mainClass>${mainClass}</mainClass>
+                                </transformer>
+                                <!-- RDF4J discovers its result writers through ServiceLoader;
+                                     without merging META-INF/services the shaded jar would
+                                     negotiate every Accept header down to 406. -->
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                            </transformers>
+                            <filters>
+                                <filter>
+                                    <artifact>*:*</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/*.SF</exclude>
+                                        <exclude>META-INF/*.DSA</exclude>
+                                        <exclude>META-INF/*.RSA</exclude>
+                                    </excludes>
+                                </filter>
+                            </filters>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>
