@@ -23,7 +23,9 @@ import java.util.List;
  * @param updateEnabled        whether SPARQL Update is accepted at all; off by default because
  *                             an update rewrites the graph the engine joins its streams against
  * @param authToken            bearer token, or {@code null} for no authentication
- * @param allowedOrigins       CORS allow-list; empty = no CORS headers at all
+ * @param allowedOrigins       browser origins allowed to call the endpoint, or {@code *}; they get
+ *                             CORS headers. Enforced by {@link AccessFilters.Origins}, which
+ *                             refuses any other {@code Origin} with 403 — the servlet itself does not
  * @param maxRequestBytes      bodies larger than this answer 413 before being parsed
  */
 public record EndpointOptions(

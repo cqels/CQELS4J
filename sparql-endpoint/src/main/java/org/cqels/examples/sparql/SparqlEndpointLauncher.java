@@ -27,6 +27,7 @@ import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Runs {@link SparqlProtocolServlet} on Jetty 12 over an embedded CQELS engine, configured
@@ -38,7 +39,8 @@ import java.util.concurrent.Executor;
  *   CQELS_SPARQL_PORT                     8089        0 = ephemeral, printed on stdout
  *   CQELS_SPARQL_PATH                     /sparql
  *   CQELS_SPARQL_AUTH_TOKEN               (none)      bearer token
- *   CQELS_SPARQL_ALLOWED_ORIGINS          (none)      comma-separated CORS allow-list, or *
+ *   CQELS_SPARQL_ALLOWED_ORIGINS          (none)      comma-separated browser origins, or *; any
+ *                                                     other Origin is refused with 403
  *   CQELS_SPARQL_MAX_REQUEST_BYTES        1048576
  *   CQELS_SPARQL_MAX_EXECUTION_SECONDS    30          0 = unlimited; best effort, see the servlet
  *   CQELS_SPARQL_MAX_CONCURRENT_QUERIES   16          beyond it: 503 + Retry-After at once
@@ -95,25 +97,45 @@ public final class SparqlEndpointLauncher {
             return;
         }
 
-        CQELSEngine engine = buildEngine(storePath);
-        if (seedFleet) {
-            int n = FleetSeed.seed(engine.getRepository());
-            log.info("seeded {} fleet facts into <{}>", n, FleetSeed.LONGTERM_GRAPH);
-        }
-        engine.start();
-
-        Server server = startServer(engine, host, port, options, maxThreads, virtualThreads);
-        int bound = ((ServerConnector) server.getConnectors()[0]).getLocalPort();
-
-        // Jetty first (no new requests), then the engine (its repository closes with it).
+        // A NativeStore handed to the builder is the caller's to shut down: engine.close() leaves
+        // a supplied repository initialized (measured on 2.0.0-alpha.21). The memory store the
+        // builder creates itself is closed with the engine.
+        Repository store = openNativeStore(storePath);
+        CQELSEngine engine = buildEngine(store);
+        AtomicReference<Server> serverRef = new AtomicReference<>();
+        // Registered before anything can fail, and every failure below exits through
+        // System.exit, so the hook also runs when Jetty cannot bind: Jetty first (no new
+        // requests), then the engine, then the store it was reading.
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            try {
-                server.stop();
-            } catch (Exception e) {
-                log.warn("Jetty did not stop cleanly: {}", e.toString());
+            Server s = serverRef.get();
+            if (s != null) {
+                try {
+                    s.stop();
+                } catch (Exception e) {
+                    log.warn("Jetty did not stop cleanly: {}", e.toString());
+                }
             }
             engine.close();
+            if (store != null) {
+                store.shutDown();
+            }
         }, "sparql-endpoint-shutdown"));
+
+        Server server;
+        try {
+            if (seedFleet) {
+                int n = FleetSeed.seed(engine.getRepository());
+                log.info("seeded {} fleet facts into <{}>", n, FleetSeed.LONGTERM_GRAPH);
+            }
+            engine.start();
+            server = startServer(engine, host, port, options, maxThreads, virtualThreads);
+            serverRef.set(server);
+        } catch (Exception e) {
+            log.error("failed to start: {}", e.toString(), e);
+            System.exit(1);
+            return;
+        }
+        int bound = ((ServerConnector) server.getConnectors()[0]).getLocalPort();
 
         System.out.println("listening on http://" + host + ":" + bound + options.path());
         System.out.flush();
@@ -152,11 +174,10 @@ public final class SparqlEndpointLauncher {
 
         ServletContextHandler context = new ServletContextHandler();
         context.setContextPath("/");
-        context.setMaxFormContentSize((int) Math.min(options.maxRequestBytes(), Integer.MAX_VALUE));
-        if (!options.allowedOrigins().isEmpty()) {
-            context.addFilter(new FilterHolder(new AccessFilters.Cors(options.allowedOrigins())),
-                    options.path(), EnumSet.of(DispatcherType.REQUEST));
-        }
+        // Always installed, even with an empty allow-list: that is what refuses a cross-origin
+        // form POST, which a browser sends without a preflight (see AccessFilters.Origins).
+        context.addFilter(new FilterHolder(new AccessFilters.Origins(options.allowedOrigins())),
+                options.path(), EnumSet.of(DispatcherType.REQUEST));
         if (options.authToken() != null) {
             context.addFilter(new FilterHolder(new AccessFilters.BearerToken(options.authToken())),
                     options.path(), EnumSet.of(DispatcherType.REQUEST));
@@ -169,16 +190,21 @@ public final class SparqlEndpointLauncher {
         return server;
     }
 
-    /** Memory store by default; a NativeStore at {@code storePath} for a graph that survives restarts. */
-    static CQELSEngine buildEngine(String storePath) throws IOException {
-        CQELSEngine.Builder builder = CQELSEngine.builder().id("sparql-endpoint");
+    /** A NativeStore at {@code storePath} for a graph that survives restarts, or {@code null} for memory. */
+    static Repository openNativeStore(String storePath) throws IOException {
         if (storePath == null || storePath.isBlank()) {
-            return builder.withMemoryStore().build();
+            return null;
         }
         Path dir = Files.createDirectories(Path.of(storePath.strip()));
         Repository repo = new SailRepository(new NativeStore(dir.toFile()));
         repo.init();
-        return builder.repository(repo).build();
+        return repo;
+    }
+
+    /** Over {@code store} when given (the caller keeps ownership), else over a memory store the engine owns. */
+    static CQELSEngine buildEngine(Repository store) {
+        CQELSEngine.Builder builder = CQELSEngine.builder().id("sparql-endpoint");
+        return store == null ? builder.withMemoryStore().build() : builder.repository(store).build();
     }
 
     /** The start-up refusal described in the class comment. */

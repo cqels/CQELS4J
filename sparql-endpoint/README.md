@@ -43,9 +43,9 @@ All settings are environment variables, named like the MCP server's `CQELS_MCP_H
 | `CQELS_SPARQL_PORT` | `8089` | `0` picks an ephemeral port, printed in the `listening on` line. |
 | `CQELS_SPARQL_PATH` | `/sparql` | |
 | `CQELS_SPARQL_AUTH_TOKEN` | unset | Bearer token. Missing or wrong → `401` with `WWW-Authenticate: Bearer`. |
-| `CQELS_SPARQL_ALLOWED_ORIGINS` | unset | Comma-separated CORS allow-list (or `*`). Unset = no CORS headers. |
-| `CQELS_SPARQL_MAX_REQUEST_BYTES` | `1048576` | Larger bodies → `413`. |
-| `CQELS_SPARQL_MAX_EXECUTION_SECONDS` | `30` | `Query.setMaxExecutionTime`; exceeding it → `503`. `0` = unlimited. **Best effort** — see *The execution limit*. |
+| `CQELS_SPARQL_ALLOWED_ORIGINS` | unset | Comma-separated browser origins allowed to call the endpoint (or `*`); they get CORS headers. A request carrying any **other** `Origin` is refused with `403` (see *Security*). Requests without `Origin` — curl, rdflib, Jena — are unaffected. |
+| `CQELS_SPARQL_MAX_REQUEST_BYTES` | `1048576` | Larger bodies → `413`, form bodies and chunked bodies included. |
+| `CQELS_SPARQL_MAX_EXECUTION_SECONDS` | `30` | `Query.setMaxExecutionTime`; exceeding it → `503`, or an aborted response if rows were already sent. `0` = unlimited. **Best effort** — see *The execution limit*. |
 | `CQELS_SPARQL_MAX_CONCURRENT_QUERIES` | `16` | Queries and updates evaluating at once. Beyond it the request is answered `503` with `Retry-After: 1` immediately, not queued. |
 | `CQELS_SPARQL_MAX_ROWS` | `0` | SELECT rows beyond this are dropped and `X-CQELS-Truncated: true` is set. `0` = unlimited. |
 | `CQELS_SPARQL_UPDATE_ENABLED` | `false` | Accept SPARQL Update. |
@@ -63,21 +63,33 @@ All settings are environment variables, named like the MCP server's `CQELS_MCP_H
 | `POST /sparql` — `application/x-www-form-urlencoded`, `query=` or `update=` | query / update |
 | `POST /sparql` — `application/sparql-query` | query, body is the query |
 | `POST /sparql` — `application/sparql-update` | update, body is the update |
-| `default-graph-uri`, `named-graph-uri` | query dataset |
-| `using-graph-uri`, `using-named-graph-uri` | update dataset |
+| `default-graph-uri`, `named-graph-uri` | query dataset; overrides `FROM` / `FROM NAMED` in the query |
+| `using-graph-uri`, `using-named-graph-uri` | update dataset; together with `USING`, `USING NAMED` or `WITH` in the update → `400` (§2.2.3) |
+| relative IRIs | resolved against the request URL, the service-defined base of §2.3 |
 | `Accept` | negotiated through RDF4J's writer registries, `q` values honoured. Defaults: SPARQL JSON for SELECT/ASK, Turtle for CONSTRUCT/DESCRIBE. Also XML, CSV, TSV, binary; N-Triples, N-Quads, TriG, JSON-LD, RDF/XML as far as the RDF4J Rio modules on the classpath go. |
 | `GET /health`, `GET /ready` | `200` once the engine has started and Jetty is bound (never behind the token). |
 
 | Status | When |
 |---|---|
-| `400` | malformed query or update, graph parameter that is not an absolute IRI, missing `query` |
-| `403` | update while `CQELS_SPARQL_UPDATE_ENABLED` is false |
+| `400` | malformed query or update, graph parameter that is not an absolute IRI, missing `query`, update dataset parameters plus `USING`/`WITH`, malformed percent-encoding |
+| `401` | token set and missing or wrong |
+| `403` | update while `CQELS_SPARQL_UPDATE_ENABLED` is false; `Origin` not in `CQELS_SPARQL_ALLOWED_ORIGINS` |
 | `405` | update sent via GET |
 | `406` | nothing in `Accept` matches a registered writer |
 | `413` | body over `CQELS_SPARQL_MAX_REQUEST_BYTES` |
-| `415` | unknown POST `Content-Type` |
+| `415` | unknown POST `Content-Type` or charset |
 | `500` | evaluation failed |
 | `503` | execution limit exceeded (as Fuseki answers), or every query slot busy (then with `Retry-After: 1`) |
+
+A result streams as it is produced, so the status is sent with the first buffer. If the
+execution limit trips **after** that, the response is aborted — the connection closes without
+the final chunk, and curl reports `(18) transfer closed with outstanding read data` — rather
+than ending as a short `200` that a client would take for the whole answer.
+`CQELS_SPARQL_MAX_ROWS` avoids that for SELECT: with a row cap the result is buffered (up to
+the cap) before anything is sent, so a timeout is a clean `503`.
+
+Error responses to an allowed origin keep their CORS headers, and `X-CQELS-Truncated` and
+`Retry-After` are exposed to it, so a browser client can read all of them.
 
 A query with no dataset parameters sees **every graph** in the store, which is RDF4J's rule and
 why the fleet seed, written to the MCP server's long-term memory graph, answers a plain `SELECT`.
@@ -131,7 +143,13 @@ requested upstream as cqels/claude#1387; the Jetty version here is pinned to the
 
 ## Security
 
-- Defaults are loopback, read-only, no CORS, 30-second execution limit, 1 MiB bodies.
+- Defaults are loopback, read-only, no browser origins, 30-second execution limit, 1 MiB bodies.
+- **Browser requests from other origins are refused (`403`).** Loopback is not a boundary
+  against a browser: any page the user visits can submit a cross-origin form POST — a CORS
+  "simple" request, sent without a preflight — to `127.0.0.1:8089`. Withholding CORS headers
+  only hides the response; the update would still run. Browsers attach `Origin` to every
+  cross-origin POST, so the endpoint refuses any `Origin` not on `CQELS_SPARQL_ALLOWED_ORIGINS`.
+  Setting that to `*` with update enabled and no token undoes this; don't.
 - Binding anything but a loopback address with no `CQELS_SPARQL_AUTH_TOKEN` is refused at
   start-up, unless `CQELS_SPARQL_ALLOW_UNAUTHENTICATED_REMOTE=true`.
 - TLS is not terminated here. Front the endpoint with a TLS-terminating proxy, as the MCP
@@ -149,21 +167,27 @@ requested upstream as cqels/claude#1387; the Jetty version here is pinned to the
 - **RDF4J's own Spring Boot endpoint** (`rdf4j-spring-boot-sparql-web`) works over
   `engine.getRepository()` too, but at RDF4J 4.3.8 it is Spring Boot 2.7 on `javax.servlet`,
   read-only, and its BOM downgrades the engine's Reactor, Jackson and SLF4J unless you fight
-  it. This project reuses RDF4J's protocol library layer instead and writes the ~200-line HTTP
-  adapter itself.
+  it. This project reuses RDF4J's protocol library layer instead and writes the HTTP adapter
+  (a few hundred lines) itself.
 
 ## Embedding the servlet
 
 `SparqlProtocolServlet` depends only on `jakarta.servlet` and RDF4J. Mount it in any Servlet 6
-container:
+container. It parses its own parameters and enforces `maxRequestBytes` itself, so the
+container's form limit does not matter. It checks **neither tokens nor origins**: install
+`AccessFilters.Origins` (always) and `AccessFilters.BearerToken` (when exposed) in front of it,
+as the launcher does, or your container's equivalents:
 
 ```java
 EndpointOptions options = EndpointOptions.defaults().withMaxRows(10_000);
+context.addFilter(new FilterHolder(new AccessFilters.Origins(List.of())), "/sparql", EnumSet.of(DispatcherType.REQUEST));
 context.addServlet(new ServletHolder(new SparqlProtocolServlet(engine::getRepository, options)), "/sparql");
 ```
 
 Give it the engine's `Repository` object, never a store path: a NativeStore holds a directory
-lock, and a second open on the same path fails.
+lock, and a second open on the same path fails. A repository you hand to
+`CQELSEngine.builder().repository(…)` stays yours to shut down — `engine.close()` leaves it
+initialized (measured on `2.0.0-alpha.21`), so the launcher shuts its NativeStore down itself.
 
 ## Dependency notes
 
