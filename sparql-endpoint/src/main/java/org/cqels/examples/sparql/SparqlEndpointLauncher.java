@@ -243,21 +243,20 @@ public final class SparqlEndpointLauncher {
     /**
      * The {@code Host} names to accept, or empty for no check: none when {@code *} is listed, or
      * when a token is set and no list was given (the token already defeats DNS rebinding).
-     * Otherwise the list given, or by default the loopback names plus the bind host.
+     * Otherwise the loopback names and the bind host, <em>plus</em> any names given — adding a
+     * public name must not lock out a curl on the machine itself.
      */
     static List<String> allowedHosts(String bindHost, EndpointOptions options) {
         List<String> given = options.allowedHosts();
         if (given.contains("*") || (given.isEmpty() && options.authToken() != null)) {
             return List.of();
         }
-        if (!given.isEmpty()) {
-            return given;
+        List<String> hosts = new java.util.ArrayList<>(List.of("localhost", "127.0.0.1", "::1"));
+        if (bindHost != null && !bindHost.isBlank()) {
+            hosts.add(bindHost);
         }
-        List<String> defaults = new java.util.ArrayList<>(List.of("localhost", "127.0.0.1", "::1"));
-        if (bindHost != null && !bindHost.isBlank() && !defaults.contains(AccessFilters.Hosts.normalise(bindHost))) {
-            defaults.add(bindHost);
-        }
-        return defaults;
+        hosts.addAll(given);
+        return hosts.stream().map(AccessFilters.Hosts::normalise).distinct().toList();
     }
 
     /** A NativeStore at {@code storePath} for a graph that survives restarts, or {@code null} for memory. */

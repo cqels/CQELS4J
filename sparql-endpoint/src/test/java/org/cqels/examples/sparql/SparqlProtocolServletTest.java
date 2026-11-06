@@ -370,7 +370,8 @@ class SparqlProtocolServletTest {
         }
         try (Endpoint named = Endpoint.start(EndpointOptions.defaults().withAllowedHosts(List.of("sparql.fleet.example")), 0)) {
             assertEquals(200, statusWithHost(named.url(), "sparql.fleet.example"));
-            assertEquals(403, statusWithHost(named.url(), "localhost"));
+            assertEquals(200, statusWithHost(named.url(), "localhost"));   // listed names add to the defaults
+            assertEquals(403, statusWithHost(named.url(), "rebind.attacker.example"));
         }
         assertTrue(SparqlEndpointLauncher.allowedHosts("127.0.0.1",
                 EndpointOptions.defaults().withAllowedHosts(List.of("*"))).isEmpty());

@@ -43,7 +43,7 @@ All settings are environment variables, named like the MCP server's `CQELS_MCP_H
 | `CQELS_SPARQL_PORT` | `8089` | `0` picks an ephemeral port, printed in the `listening on` line. |
 | `CQELS_SPARQL_PATH` | `/sparql` | |
 | `CQELS_SPARQL_AUTH_TOKEN` | unset | Bearer token. Missing or wrong → `401` with `WWW-Authenticate: Bearer`. |
-| `CQELS_SPARQL_ALLOWED_HOSTS` | loopback names + bind host | Comma-separated host names a request's `Host` header may carry (or `*`). Checked whenever no token is set, as the defence against DNS rebinding; behind a proxy or under a DNS name, list the name clients use. |
+| `CQELS_SPARQL_ALLOWED_HOSTS` | unset | Comma-separated host names a request's `Host` header may carry **in addition to** `localhost`, `127.0.0.1`, `::1` and the bind host (or `*` for any). Checked whenever no token is set, as the defence against DNS rebinding; behind a proxy or under a DNS name, list the name clients use. |
 | `CQELS_SPARQL_ALLOWED_ORIGINS` | unset | Comma-separated browser origins allowed to call the endpoint (or `*`); they get CORS headers. A request carrying any **other** `Origin` is refused with `403` (see *Security*). Requests without `Origin` — curl, rdflib, Jena — are unaffected. |
 | `CQELS_SPARQL_MAX_REQUEST_BYTES` | `1048576` | Larger bodies → `413`, form bodies and chunked bodies included. |
 | `CQELS_SPARQL_MAX_EXECUTION_SECONDS` | `30` | `Query.setMaxExecutionTime`; exceeding it → `503`, or an aborted response if rows were already sent. `0` = unlimited. **Best effort** — see *The execution limit*. |
@@ -205,7 +205,10 @@ container's equivalents:
 
 ```java
 EndpointOptions options = EndpointOptions.defaults().withMaxRows(10_000);
-context.addFilter(new FilterHolder(new AccessFilters.Origins(List.of())), "/sparql", EnumSet.of(DispatcherType.REQUEST));
+var requests = EnumSet.of(DispatcherType.REQUEST);
+// without a token, Hosts is what stops DNS rebinding: list every name clients reach you by
+context.addFilter(new FilterHolder(new AccessFilters.Hosts(List.of("localhost", "127.0.0.1", "::1"))), "/sparql", requests);
+context.addFilter(new FilterHolder(new AccessFilters.Origins(List.of())), "/sparql", requests);
 context.addServlet(new ServletHolder(new SparqlProtocolServlet(engine::getRepository, options)), "/sparql");
 ```
 
