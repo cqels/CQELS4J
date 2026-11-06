@@ -220,7 +220,51 @@ the reasoner rows — and fails the moment one of them stops being true.
 
 ---
 
-## 7. Where to go next
+## 7. Reaching the engine over HTTP
+
+Everything above embeds the engine in your own JVM. To reach it from another process or
+language, there are two routes today. Which one you need depends on whether the query should
+**answer once** or **keep running**.
+
+**One-shot SPARQL over the background graph:** [`sparql-endpoint/`](sparql-endpoint/). A SPARQL
+1.1 Protocol endpoint over the graph the engine joins its streams against. curl, YASGUI, rdflib,
+Jena and RDF4J's `SPARQLRepository` work as they do against any other endpoint:
+
+```bash
+cd sparql-endpoint && mvn -q package
+CQELS_SPARQL_SEED_FLEET=true java -jar target/cqels-sparql-endpoint.jar
+# prints: listening on http://127.0.0.1:8089/sparql
+```
+
+```bash
+curl -G http://127.0.0.1:8089/sparql --data-urlencode 'query=SELECT (COUNT(*) AS ?n) WHERE { ?s ?p ?o }'
+```
+
+It starts loopback-only, read-only and without federation. Binding any other address
+requires a bearer token (`CQELS_SPARQL_AUTH_TOKEN`), or start-up is refused. SPARQL Update is off
+until `CQELS_SPARQL_UPDATE_ENABLED=true`. An update made through it reaches the running continuous
+queries on their next element, even under `FROM <g> CACHE 5m`. In your own Servlet 6 container,
+mount `SparqlProtocolServlet` over `engine::getRepository` instead of running the jar. The
+endpoint's [README](sparql-endpoint/README.md) has the configuration, the protocol and status
+tables, and the security model.
+
+**Continuous queries:** the published MCP server. The SPARQL Protocol has no shape for a query
+that keeps running, so registering one and reading its results over HTTP goes through
+`org.cqels:cqels-mcp` and its Streamable-HTTP transport (`CQELS_MCP_TRANSPORT=http`):
+`register_stream_query`, `push_stream_events`, bounded result buffers, per-client limits. See
+[`mcp-server/README.md`](mcp-server/README.md), *ChatGPT and other remote (URL) clients*.
+
+To serve continuous results to a plain SPARQL client instead, have the query's listener write
+each row into the repository. The endpoint then serves those rows like any other triples.
+`SparqlProtocolServletTest.continuousResultsWrittenBackAreQueryable` shows the shape.
+
+Serving both on one port, one token and one engine is planned: the endpoint's servlet mounted
+inside the MCP server's own Jetty. That needs a mount point in `cqels-mcp`, requested upstream;
+progress is tracked in [#104](https://github.com/cqels/CQELS4J/issues/104).
+
+---
+
+## 8. Where to go next
 
 - **Examples:** [`examples/`](examples/) — the runnable scenarios above are the
   fastest way to learn the query shapes.

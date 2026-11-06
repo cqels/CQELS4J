@@ -33,6 +33,9 @@ rebuilt for edge-to-cloud deployments — code name **COSMO**.
   semantics; works out of the box with standard vocabularies such as W3C
   [SOSA/SSN](https://www.w3.org/TR/vocab-ssn/) (sensor observations) and
   [COVESA VSS](https://covesa.global/) (connected-vehicle signals).
+- **Reachable over HTTP**: a [SPARQL 1.1 Protocol endpoint](#query-the-engine-over-http) over
+  the engine's background graph for one-shot queries, and the MCP server's Streamable-HTTP
+  transport for continuous ones.
 
 See **[Query language and standards](#query-language-and-standards)** for the full list of
 specifications CQELS builds on and aligns with.
@@ -223,6 +226,28 @@ mvn -q package          # -> target/cqels-mcp-server.jar
 Then point your MCP client at `java -jar …/cqels-mcp-server.jar` — see
 [`mcp-server/README.md`](mcp-server/README.md) for the Claude Desktop configuration and a
 smoke test.
+
+---
+
+## Query the engine over HTTP
+
+[`sparql-endpoint/`](sparql-endpoint/) serves the engine's **background graph**, the graph its
+streams join against, as a standard
+[SPARQL 1.1 Protocol](https://www.w3.org/TR/sparql11-protocol/) endpoint. Any SPARQL client
+(curl, YASGUI, rdflib, Jena, RDF4J) can query it. It is a thin launcher over the published
+`org.cqels:cqels-engine`, like `mcp-server/`, and can seed the same EV-fleet world:
+
+```bash
+cd sparql-endpoint
+mvn -q package          # -> target/cqels-sparql-endpoint.jar
+CQELS_SPARQL_SEED_FLEET=true java -jar target/cqels-sparql-endpoint.jar
+```
+
+Defaults are loopback-only, read-only, with no federation (`SERVICE`/`LOAD`) and a
+30-second execution limit. A non-loopback bind without a token refuses to start. Continuous
+queries need the MCP server above; [GETTING_STARTED.md §7](GETTING_STARTED.md#7-reaching-the-engine-over-http)
+explains which route fits which job, and
+[`sparql-endpoint/README.md`](sparql-endpoint/README.md) has the configuration and security model.
 
 ---
 

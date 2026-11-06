@@ -211,6 +211,11 @@ Two options:
 Either way, front the endpoint with **TLS + authentication** and do not expose it directly to
 the internet.
 
+A client that only needs to **query the graph**, without MCP, can use plain SPARQL over HTTP
+instead: [`../sparql-endpoint/`](../sparql-endpoint/) is a SPARQL 1.1 Protocol endpoint over
+the same kind of embedded engine and the same fleet seed. It answers one-shot queries only;
+continuous queries stay here.
+
 ### Try it
 
 > *Memory:* "What do we know about vehicle EV-7Q2?" → the assistant calls `recall_memory` (or
