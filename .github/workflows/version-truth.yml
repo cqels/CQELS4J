@@ -7,7 +7,7 @@
 # (The examples DO compile, and capability-truth builds and runs them; but a
 # compiling example proves nothing about whether the prose describing it is true.)
 #
-# Five jobs, split by cost and by what a red means:
+# Six jobs, split by cost and by what a red means:
 #   version-truth   offline, seconds. Red = a claim in this repo is false.
 #   links           ~6 HEAD requests. Red = a channel this repo names is gone.
 #                   Kept separate so a network red is never confused for the
@@ -15,8 +15,13 @@
 #   capability-truth builds examples/ and asserts the engine behaviour this repo
 #                   documents. Red = a caveat is no longer true (upstream fixed
 #                   it and the prose now lies), or a relied-on feature regressed.
-#   tools-reality   builds the server. Red = the docs describe a surface the
-#                   server does not have. Too slow for every PR.
+#   sparql-endpoint builds sparql-endpoint/ with its tests, then drives the shaded
+#                   jar with curl. Red = the endpoint is broken. The only job
+#                   that runs its unit tests at all.
+#   tools-reality   builds the server and the SPARQL endpoint. Red = the docs
+#                   describe a surface the server does not have, the endpoint
+#                   README's own example does not work, or the endpoint's Jetty
+#                   drifted from cqels-mcp's. Too slow for every PR.
 #   schedule-health independent of all three. Red = the nightly below is not
 #                   running, so nothing is watching the world any more.
 #
@@ -181,6 +186,29 @@ jobs:
       # Exit 3 means "could not run" (toolchain or mirror unreachable), not "the docs are
       # wrong" -- same convention as the gate's --online tier. Still fails, log says re-run.
       - run: scripts/ci/capability-probe.sh
+
+  # The SPARQL endpoint is the one project here with real product code — a servlet
+  # with security filters (origin, Host, token) and protocol handling, 38 tests on a
+  # real Jetty and engine. Until this job existed they ran on nobody's machine but
+  # the author's: version-truth never builds Java, capability-truth builds examples/
+  # only, and tools-reality's deep tier packages the jar with -DskipTests because its
+  # question is the README, not the servlet. Runs on PRs because a PR is where a
+  # regression lands; ~1-2 min, cheap enough. smoke.sh then drives the shaded jar the
+  # README tells people to run, which the unit tests (port 0, in-process) do not.
+  sparql-endpoint:
+    needs: version-truth
+    if: github.event_name != 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-java@3a4f6e1af504cf6a31855fa899c6aa5355ba6c12 # v4.7.0
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+      - run: mvn -B -f sparql-endpoint/pom.xml package
+      - run: sparql-endpoint/scripts/smoke.sh
 
   tools-reality:
     needs: version-truth

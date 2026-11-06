@@ -103,7 +103,12 @@
 #                        without waiting for a commit.
 #   --deep      + C1     builds mcp-server and drives one stdio JSON-RPC session
 #                        (needs java, maven and python3).
-#                        ~62 MB + a JVM, minutes. Schedule/dispatch only.
+#               + C2     builds sparql-endpoint, starts it on port 0 over the
+#                        seeded fleet, and runs ASK {} and its README's own
+#                        example query against it.
+#               + C3     the Jetty cqels-mcp resolves at the pin == the Jetty
+#                        sparql-endpoint pins.
+#                        ~62 MB + two JVMs, minutes. Schedule/dispatch only.
 #
 # Exit codes
 # ----------
@@ -111,8 +116,8 @@
 #   1  a documentation defect — a claim in this repo is false
 #   2  usage error, or the pin itself is unusable (see A1)
 #   3  INCONCLUSIVE — the check could not be MADE: the network was unreachable,
-#      mcp-server would not build, or a tool the tier needs (python3) is not
-#      installed. Never mapped to pass (a gate that can pass having checked
+#      mcp-server or sparql-endpoint would not build or resolve, or a tool the
+#      tier needs (python3) is not installed. Never mapped to pass (a gate that can pass having checked
 #      nothing is not a gate) and never worded as a defect (a gate that cries
 #      wolf on a GitHub hiccup gets ignored, which comes to the same thing).
 #      The message says WHICH of those it was, because "re-run" is useless
@@ -186,7 +191,11 @@ ok()  { echo "ok:   $*"; }
 # against a typo and reporting them all stale is how a gate teaches people to
 # ignore it.
 # ---------------------------------------------------------------------------
-POMS="examples/pom.xml mcp-server/pom.xml"
+# Every pom that pins the engine. sparql-endpoint/ joined as the third
+# independent project (cqels/CQELS4J#104); before it was listed here a bump
+# could move two poms and leave the endpoint on the old release with this gate
+# still reporting "identical" — the half-bump A1 exists to catch, one pom wide.
+POMS="examples/pom.xml mcp-server/pom.xml sparql-endpoint/pom.xml"
 PIN=""
 for pom in $POMS; do
   if [ ! -f "$pom" ]; then
@@ -211,7 +220,7 @@ for pom in $POMS; do
   if [ -z "$PIN" ]; then
     PIN="$v"
   elif [ "$PIN" != "$v" ]; then
-    echo "::error::the two poms disagree about the pin: examples/pom.xml says '$PIN', $pom says '$v'. Half a bump landed." >&2
+    echo "::error::the poms disagree about the pin: examples/pom.xml says '$PIN', $pom says '$v'. Half a bump landed." >&2
     exit 2
   fi
 done
@@ -226,7 +235,7 @@ if ! printf '%s' "$PIN" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+-(alpha|beta|rc)\.[0-
   echo "::error::If the scheme changed on purpose (a final release, say), extend the grammar in A1 — do NOT delete the check, which would silently un-scope every version token in the repo." >&2
   exit 2
 fi
-ok "pin is $PIN, identical in both poms"
+ok "pin is $PIN, identical in all $(echo $POMS | wc -w | tr -d ' ') poms"
 
 # ---------------------------------------------------------------------------
 # The scanner.
@@ -1227,7 +1236,7 @@ done < "$RECORDS"
 # ---------------------------------------------------------------------------
 # examples/README.md is deliberately absent: it is provenance-only today, and
 # demanding a current stamp there would be demanding a stamp nobody wants.
-REQUIRED="README.md GETTING_STARTED.md CQELS-QL_SPEC.md SUPPLY_CHAIN.md mcp-server/README.md examples/pom.xml mcp-server/pom.xml"
+REQUIRED="README.md GETTING_STARTED.md CQELS-QL_SPEC.md SUPPLY_CHAIN.md mcp-server/README.md examples/pom.xml mcp-server/pom.xml sparql-endpoint/pom.xml"
 for f in $REQUIRED; do
   if [ ! -f "$f" ]; then
     err "$f is required to state the current version and is missing — refusing to skip it silently."
@@ -1617,6 +1626,146 @@ PY
   compare_set prompts "$WORK/adv-prompts" "$WORK/doc-prompts"
 
   [ "$fail" -eq 0 ] || exit 1
+
+  # -------------------------------------------------------------------------
+  # C2 — the SPARQL endpoint does what sparql-endpoint/README.md says.
+  # C3 — and it runs on the Jetty cqels-mcp embeds.
+  #
+  # C2 is defect 3 again, for the third project: the README tells a reader to
+  # start the jar with CQELS_SPARQL_SEED_FLEET=true and paste one curl query.
+  # Unit tests (the sparql-endpoint CI job) prove the servlet; only running the
+  # shaded jar the README names, and the query the README prints, proves the
+  # README. The query is READ OUT OF the README, not copied here, so editing
+  # the example cannot leave the gate checking the old one — and a README with
+  # no example left fails rather than passing vacuously.
+  #
+  # C3 holds a claim nothing else can see: the endpoint pins jetty.version by
+  # hand, and the README says it must equal the Jetty org.cqels:cqels-mcp
+  # brings at the pin, so the servlet can mount into the MCP server's own
+  # Jetty (phase 2, cqels/claude#1387) without two Jettys on one classpath. A
+  # bump can move cqels-mcp to a new Jetty while every unit test stays green.
+  # It is measured on what Maven RESOLVES for mcp-server — whose only
+  # dependency is cqels-mcp — not on a pom read by eye, because a parent or BOM
+  # import is where such a version actually comes from.
+  #
+  # VTG_SPARQL_CAPTURE, like VTG_DEEP_CAPTURE, lets the self-test drive these
+  # comparisons from recorded answers without a JVM: a directory holding
+  # `ask` and `example` (the endpoint's JSON answers) and `jetty-mcp` (the
+  # resolved version). CI never sets it.
+  # -------------------------------------------------------------------------
+  echo "-- deep: sparql endpoint --"
+  SPDOC=sparql-endpoint/README.md
+  SPPOM=sparql-endpoint/pom.xml
+  EXAMPLE=$(sed -n "s/.*--data-urlencode 'query=\(.*\)'.*/\1/p" "$SPDOC" 2>/dev/null | head -1)
+  JETTY_PIN=$(sed -n 's|.*<jetty\.version>\(.*\)</jetty\.version>.*|\1|p' "$SPPOM" | head -1)
+  if [ -z "$EXAMPLE" ]; then
+    err "$SPDOC no longer carries a curl example (--data-urlencode 'query=…') — the deep tier would have nothing of the README's to run, so it would pass vacuously."
+  fi
+  if [ -z "$JETTY_PIN" ]; then
+    err "$SPPOM declares no readable <jetty.version> on one line — the Jetty the endpoint runs on can no longer be compared with cqels-mcp's."
+  fi
+  [ "$fail" -eq 0 ] || exit 1
+
+  SPW="$WORK/sparql"
+  mkdir -p "$SPW"
+  if [ -n "${VTG_SPARQL_CAPTURE:-}" ]; then
+    cp "$VTG_SPARQL_CAPTURE"/ask "$VTG_SPARQL_CAPTURE"/example "$VTG_SPARQL_CAPTURE"/jetty-mcp "$SPW"/ 2>/dev/null
+    echo "note: using recorded endpoint answers $VTG_SPARQL_CAPTURE (self-test path)"
+  else
+    ( cd mcp-server && mvn -q -B dependency:list -DincludeGroupIds=org.eclipse.jetty \
+        -DincludeArtifactIds=jetty-server -DoutputFile="$SPW/jetty.list" ) >/dev/null 2>&1 || {
+      echo "??:   INCONCLUSIVE — Maven could not resolve mcp-server's dependencies at $PIN. Not a documentation defect; re-run."
+      exit 3
+    }
+    grep -o 'jetty-server:jar:[^:]*' "$SPW/jetty.list" | head -1 | sed 's/.*://' > "$SPW/jetty-mcp"
+    ( cd sparql-endpoint && mvn -q -B package -DskipTests ) || {
+      echo "??:   INCONCLUSIVE — sparql-endpoint would not build against $PIN. That is a build or artifact-resolution problem, not a documentation defect. Re-run."
+      exit 3
+    }
+    # Port 0, so a busy 8089 on the runner can never be mistaken for a defect;
+    # the one stdout line the README promises says which port was taken.
+    CQELS_SPARQL_PORT=0 CQELS_SPARQL_SEED_FLEET=true \
+      java -jar sparql-endpoint/target/cqels-sparql-endpoint.jar > "$SPW/stdout" 2> "$SPW/stderr" &
+    SPSRV=$!
+    URL=""
+    for _ in $(seq 1 90); do
+      URL=$(sed -n 's/^listening on //p' "$SPW/stdout" 2>/dev/null | head -1)
+      [ -n "$URL" ] && break
+      kill -0 "$SPSRV" 2>/dev/null || break
+      sleep 1
+    done
+    if [ -z "$URL" ]; then
+      # Dead before the line = the README's Run section does not work. Alive but
+      # silent after 90 s = a slow runner, which is not a finding.
+      if kill -0 "$SPSRV" 2>/dev/null; then
+        kill "$SPSRV" 2>/dev/null; wait "$SPSRV" 2>/dev/null
+        echo "??:   INCONCLUSIVE — sparql-endpoint did not print its 'listening on' line within 90 s. Not a documentation defect; re-run."
+        exit 3
+      fi
+      err "$SPDOC says the jar prints 'listening on …' once started, but it exited first: $(tail -3 "$SPW/stderr" | tr '\n' ' ')"
+      exit 1
+    fi
+    curl -sS -G "$URL" -H 'Accept: application/sparql-results+json' --data-urlencode 'query=ASK {}' \
+      -o "$SPW/ask" 2>/dev/null
+    rc1=$?
+    curl -sS -G "$URL" -H 'Accept: application/sparql-results+json' --data-urlencode "query=$EXAMPLE" \
+      -o "$SPW/example" 2>/dev/null
+    rc2=$?
+    kill "$SPSRV" 2>/dev/null; wait "$SPSRV" 2>/dev/null
+    if [ "$rc1" -ne 0 ] || [ "$rc2" -ne 0 ]; then
+      echo "??:   INCONCLUSIVE — the endpoint at $URL started but a request to it failed at the transport level. Not a documentation defect; re-run."
+      exit 3
+    fi
+  fi
+
+  SPV=$("$PY3" - "$SPW" <<'PY'
+import json, os, sys
+d = sys.argv[1]
+def load(name):
+    try:
+        with open(os.path.join(d, name), encoding='utf-8') as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return None
+ask, example = load('ask'), load('example')
+rows = -1
+if isinstance(example, dict):
+    b = (example.get('results') or {}).get('bindings')
+    if isinstance(b, list):
+        rows = len(b)
+print('%s %d' % ('true' if isinstance(ask, dict) and ask.get('boolean') is True else 'bad', rows))
+PY
+)
+  if [ $? -ne 0 ] || [ -z "$SPV" ]; then
+    echo "??:   INCONCLUSIVE — the endpoint-answer parser failed. Not a documentation defect; re-run."
+    exit 3
+  fi
+  ASKV=${SPV%% *}
+  ROWS=${SPV##* }
+  if [ "$ASKV" = true ]; then
+    ok "sparql-endpoint answers ASK {} with true"
+  else
+    err "sparql-endpoint did not answer ASK {} with a SPARQL JSON true: $(head -c 200 "$SPW/ask" 2>/dev/null)"
+  fi
+  if [ "${ROWS:--1}" -gt 0 ] 2>/dev/null; then
+    ok "$SPDOC's example query returns $ROWS row(s) over the seeded fleet"
+  elif [ "${ROWS:--1}" -eq 0 ] 2>/dev/null; then
+    err "$SPDOC's example query returns NO rows over the seeded fleet (CQELS_SPARQL_SEED_FLEET=true), so a reader pasting it sees an empty answer. Query: $EXAMPLE"
+  else
+    err "$SPDOC's example query did not return SPARQL JSON results: $(head -c 200 "$SPW/example" 2>/dev/null)"
+  fi
+
+  JETTY_MCP=$(head -1 "$SPW/jetty-mcp" 2>/dev/null | tr -d '[:space:]')
+  if [ -z "$JETTY_MCP" ]; then
+    echo "??:   INCONCLUSIVE — could not read which jetty-server mcp-server resolves at $PIN. Not a documentation defect; re-run."
+    exit 3
+  elif [ "$JETTY_MCP" = "$JETTY_PIN" ]; then
+    ok "sparql-endpoint's Jetty $JETTY_PIN is the one cqels-mcp $PIN resolves"
+  else
+    err "$SPPOM pins jetty.version $JETTY_PIN, but org.cqels:cqels-mcp $PIN resolves jetty-server $JETTY_MCP. $SPDOC says the two must be equal (one Jetty when the servlet mounts into the MCP server). Move jetty.version to $JETTY_MCP."
+  fi
+
+  [ "$fail" -eq 0 ] || exit 1
 fi
 
-echo "OK: every version claim in this repository is true$([ "$ONLINE" -eq 1 ] && echo ", and every channel it names resolves")$([ "$DEEP" -eq 1 ] && echo ", and the documented surface is the advertised one")."
+echo "OK: every version claim in this repository is true$([ "$ONLINE" -eq 1 ] && echo ", and every channel it names resolves")$([ "$DEEP" -eq 1 ] && echo ", and the documented surface is the advertised one, and the SPARQL endpoint does what its README says")."

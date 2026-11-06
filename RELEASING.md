@@ -24,11 +24,14 @@ this automatically. This checklist covers the parts it cannot.
    checks the release you are moving *away* from and says nothing about the
    target. It becomes the real check at step 4, after the pin has moved.
 
-2. **Bump the pin** in `examples/pom.xml` and `mcp-server/pom.xml` (the gate
-   fails if they disagree), then update the current-version stamps the offline
-   gate reports. Do **not** touch lines the gate classifies as provenance
-   ("since `X`", "from `X` onward", "`X` is the first release …") — those are
-   history, and bumping them makes them false.
+2. **Bump the pin** in `examples/pom.xml`, `mcp-server/pom.xml` and
+   `sparql-endpoint/pom.xml` (the gate fails if any two disagree), then update
+   the current-version stamps the offline gate reports. Do **not** touch lines
+   the gate classifies as provenance ("since `X`", "from `X` onward", "`X` is
+   the first release …") — those are history, and bumping them makes them false.
+   `sparql-endpoint/pom.xml` also pins `jetty.version` by hand; if `--deep`
+   (step 4) reports that cqels-mcp now resolves a different Jetty, move it to
+   the version the gate names.
 
 3. **Run the demos.** Every example must run with 0 exceptions and its expected
    emissions on the new version, not merely compile. Capture output before and
