@@ -47,7 +47,7 @@ the next, so a pin is still the safer choice.
 > Every release is published from a cosign-signed manifest — see
 > [SUPPLY_CHAIN.md](SUPPLY_CHAIN.md) to verify what you downloaded. The one artifact not served
 > here is the runnable shaded `cqels-mcp` jar, which is attached to the
-> [GitHub release](https://github.com/cqels/CQELS4J/releases/latest) instead.
+> [GitHub release](https://github.com/cqels/CQELS4J/releases/tag/v2.0.0-alpha.21) instead.
 
 ---
 
@@ -84,7 +84,7 @@ same way, swapping `-Dexec.mainClass`. A few representative ones — the full ca
 | Class | What it shows |
 |-------|---------------|
 | `org.cqels.examples.HelloCqels` | `[NOW]` window + `FILTER` — low-battery alert (SoC < 20 %), the minimal continuous query |
-| `org.cqels.examples.WindowedAggregation` | `[RANGE 3s]` tumbling window + `GROUP BY` — per-vehicle avg/peak speed |
+| `org.cqels.examples.WindowedAggregation` | `[RANGE 3s]` rolling window + `GROUP BY` — per-vehicle avg/peak speed, one row per arrival |
 | `org.cqels.examples.SlidingWindowTrends` | `[SLIDE 4s STEP 2s]` overlapping windows — per-vehicle moving state-of-charge trend |
 | `org.cqels.examples.AdvancedQueryOperators` | `OPTIONAL` / `UNION` / `FILTER NOT EXISTS` / `BIND` enriching a speed reading against the static fleet graph |
 | `org.cqels.examples.ComplexEventPattern` | declarative CEP — `FILTER(SEQ(?e1; ?e2))` road-rage detection (speed drop then spike) |
@@ -124,9 +124,11 @@ Add the repository and the engine dependency to your `pom.xml`:
 
 Optional add-on modules (same group/version): `cqels-reasoning-rete` (RDFS/OWL
 inference), `cqels-shacl` (validation), `cqels-geo` (GeoSPARQL), `cqels-asp`
-(Answer-Set Programming), `cqels-storage-*` (durable backends), `cqels-functions-ext`
+(Answer-Set Programming), `cqels-storage-lmdb` and `cqels-storage-iotdb-tsfile` (durable
+backends, over `cqels-storage-spi`), `cqels-functions-ext`
 (user-defined SPARQL functions by IRI — e.g. `urn:cqels:fn:haversine`,
-`urn:cqels:fn:levenshtein` — self-registering via ServiceLoader).
+`urn:cqels:fn:levenshtein` — self-registering via ServiceLoader). The RocksDB and IoTDB-session
+backends are not published at this version, so they cannot be added as dependencies.
 
 ---
 
@@ -182,7 +184,7 @@ public class FirstQuery {
   pattern matched against each window.
 - Optional `GROUP BY` / `HAVING` / `ORDER BY` / `LIMIT` as in SPARQL.
 
-**Window types:** `[NOW]` (per element), `[RANGE Ns]` (tumbling), `[SLIDE Ws STEP Ss]`
+**Window types:** `[NOW]` (per element), `[RANGE Ns]` (time; tumbling or rolling depending on the query's shape — `CQELS-QL_SPEC.md` §9), `[SLIDE Ws STEP Ss]`
 (sliding), `[TRIPLES N]` (count-based).
 
 ---
@@ -203,6 +205,8 @@ fault.
 | A `FILTER` over an `OPTIONAL` variable, on a stream-only query or a windowed `GROUP BY` query ([#85](https://github.com/cqels/CQELS4J/issues/85)) | The `FILTER` runs before the `OPTIONAL`: `OPTIONAL { … ?l } FILTER(!BOUND(?l))` admits every row, `FILTER(BOUND(?l))` drops every row | Write the negation as `FILTER NOT EXISTS { … }`; test the optional value in the result listener — see `CQELS-QL_SPEC.md` §9 |
 | A **literal** join key between a multi-pattern `STREAM` block and a static pattern, under `[TRIPLES n]` / `[RANGE d]` | The row is dropped; the same query keyed on an IRI answers | Key the join on an IRI, or use `[NOW]` — see `CQELS-QL_SPEC.md` §6 |
 | `xsd:duration` comparison ([#82](https://github.com/cqels/CQELS4J/issues/82)) | Compared as text: `"PT10S" > "PT9S"` and `"PT60S" = "PT1M"` are false | Express the interval as a window |
+| `FROM <graph>` naming the background graph | The IRI does not scope the lookup: a static pattern also matches triples stored in any other named graph, or the default graph | Keep data you must not match out of the store — see `CQELS-QL_SPEC.md` §6 |
+| A CEP `SEQ` variable that is never the subject of a pattern ([#74](https://github.com/cqels/CQELS4J/issues/74)) | That step matches **any** element on the stream, so a misspelled variable raises false matches | Check that every `SEQ` variable is the subject of a triple pattern — see `CQELS-QL_SPEC.md` §7 |
 
 Property paths (`+`, `*`, `/`, `^`, `?`, `|`) are also unsupported, but they no longer belong in
 the table above: registration now rejects a query containing one with a clear parse error, instead
