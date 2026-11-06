@@ -17,9 +17,10 @@ import java.util.List;
  * The two request filters the launcher puts in front of the servlet. They are deliberately
  * small and generic so that, once {@code cqels-mcp} exposes a servlet mount point, the servlet
  * can run behind the MCP server's own bearer-token and origin filters instead and these are
- * simply not installed.
+ * simply not installed. They are public so that a program mounting the servlet in its own
+ * container can install them too; the servlet itself checks neither tokens nor origins.
  */
-final class AccessFilters {
+public final class AccessFilters {
 
     private AccessFilters() { }
 
@@ -28,10 +29,10 @@ final class AccessFilters {
      * answers 401 with {@code WWW-Authenticate: Bearer}, so a browser or YASGUI shows a prompt
      * rather than a bare failure.
      */
-    static final class BearerToken implements Filter {
+    public static final class BearerToken implements Filter {
         private final byte[] expected;
 
-        BearerToken(String token) {
+        public BearerToken(String token) {
             this.expected = token.getBytes(StandardCharsets.UTF_8);
         }
 
@@ -54,16 +55,30 @@ final class AccessFilters {
     }
 
     /**
-     * CORS for browser clients such as YASGUI. Installed before the token filter, because a
+     * Origin check and CORS, installed on every launch (before the token filter, because a
      * preflight {@code OPTIONS} carries no {@code Authorization} header and must still get its
-     * 204. An origin not on the list gets no CORS headers at all, which the browser then
-     * refuses on its side; the request itself is not blocked here.
+     * 204).
+     *
+     * <p>A request with no {@code Origin} header — curl, rdflib, Jena, any non-browser client —
+     * passes untouched. A request whose {@code Origin} is on the allow-list (or the list is
+     * {@code *}) gets the CORS headers, including {@code Access-Control-Expose-Headers} for
+     * {@code X-CQELS-Truncated} and {@code Retry-After}, which a browser hides otherwise. A
+     * request from any <em>other</em> origin is refused with 403 before it reaches the servlet.
+     *
+     * <p>Why refuse rather than merely withhold the CORS headers: a cross-origin
+     * {@code application/x-www-form-urlencoded} POST is a "simple" request — the browser sends
+     * it without a preflight and only hides the response. Any web page a user of a loopback
+     * endpoint visits could otherwise post {@code update=DROP ALL} to {@code 127.0.0.1:8089}
+     * and have it executed. Browsers attach {@code Origin} to every cross-origin POST, so this
+     * check is what stops it.
      */
-    static final class Cors implements Filter {
+    public static final class Origins implements Filter {
+        static final String EXPOSED = SparqlProtocolServlet.TRUNCATED_HEADER + ", Retry-After";
+
         private final List<String> allowed;
 
-        Cors(List<String> allowed) {
-            this.allowed = allowed;
+        public Origins(List<String> allowed) {
+            this.allowed = List.copyOf(allowed);
         }
 
         @Override
@@ -72,16 +87,25 @@ final class AccessFilters {
             HttpServletRequest req = (HttpServletRequest) request;
             HttpServletResponse resp = (HttpServletResponse) response;
             String origin = req.getHeader("Origin");
-            if (origin != null && (allowed.contains("*") || allowed.contains(origin))) {
-                resp.setHeader("Access-Control-Allow-Origin", origin);
-                resp.addHeader("Vary", "Origin");
-                resp.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-                resp.setHeader("Access-Control-Allow-Headers", "Accept, Content-Type, Authorization");
-                resp.setHeader("Access-Control-Max-Age", "600");
-                if ("OPTIONS".equalsIgnoreCase(req.getMethod())) {
-                    resp.setStatus(HttpServletResponse.SC_NO_CONTENT);
-                    return;
-                }
+            if (origin == null) {
+                chain.doFilter(request, response);
+                return;
+            }
+            if (!allowed.contains("*") && !allowed.contains(origin)) {
+                resp.setStatus(HttpServletResponse.SC_FORBIDDEN);
+                resp.setContentType("text/plain; charset=UTF-8");
+                resp.getWriter().write("origin " + origin + " is not allowed (CQELS_SPARQL_ALLOWED_ORIGINS)\n");
+                return;
+            }
+            resp.setHeader("Access-Control-Allow-Origin", origin);
+            resp.addHeader("Vary", "Origin");
+            resp.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+            resp.setHeader("Access-Control-Allow-Headers", "Accept, Content-Type, Authorization");
+            resp.setHeader("Access-Control-Expose-Headers", EXPOSED);
+            resp.setHeader("Access-Control-Max-Age", "600");
+            if ("OPTIONS".equalsIgnoreCase(req.getMethod())) {
+                resp.setStatus(HttpServletResponse.SC_NO_CONTENT);
+                return;
             }
             chain.doFilter(request, response);
         }

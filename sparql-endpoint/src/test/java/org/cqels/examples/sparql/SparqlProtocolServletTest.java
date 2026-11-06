@@ -206,9 +206,26 @@ class SparqlProtocolServletTest {
 
     @Test
     void badGraphIriIs400() throws Exception {
-        var r = HTTP.send(HttpRequest.newBuilder(URI.create(shared.url() + "?query=" + enc("ASK {}")
-                + "&default-graph-uri=not-an-iri")).build(), HttpResponse.BodyHandlers.ofString());
-        assertEquals(400, r.statusCode());
+        // the last two pass SimpleValueFactory's colon check and ParsedIRI.create; the strict parser refuses them
+        for (String bad : List.of("not-an-iri", "http://bad iri", "1:invalid")) {
+            var r = HTTP.send(HttpRequest.newBuilder(URI.create(shared.url() + "?query=" + enc("ASK {}")
+                    + "&default-graph-uri=" + enc(bad))).build(), HttpResponse.BodyHandlers.ofString());
+            assertEquals(400, r.statusCode(), bad);
+        }
+    }
+
+    @Test
+    void malformedPercentEncodingIs400() throws Exception {
+        var r = post(shared.url(), "application/x-www-form-urlencoded", "query=ASK%7B%7D&x=%zz", null);
+        assertEquals(400, r.statusCode(), r.body());
+        assertTrue(r.body().contains("percent-encoding"), r.body());
+    }
+
+    @Test
+    void relativeIrisResolveAgainstTheRequestUrl() throws Exception {
+        var r = get(shared.url(), "SELECT (<relative> AS ?x) WHERE {}", "text/csv");
+        assertEquals(200, r.statusCode(), r.body());
+        assertTrue(r.body().contains(shared.url().replace("/sparql", "/relative")), r.body());
     }
 
     @Test
@@ -231,6 +248,18 @@ class SparqlProtocolServletTest {
             String big = "SELECT * WHERE { ?s ?p ?o } #" + "x".repeat(200);
             var direct = post(small.url(), "application/sparql-query", big, null);
             assertEquals(413, direct.statusCode());
+            var form = post(small.url(), "application/x-www-form-urlencoded", "query=" + enc(big), null);
+            assertEquals(413, form.statusCode());
+            // Chunked: no Content-Length for the early check, so the bounded read must catch it —
+            // for a form too, which the container would otherwise parse under its own limit.
+            for (String type : List.of("application/x-www-form-urlencoded", "application/sparql-query")) {
+                byte[] body = (type.endsWith("urlencoded") ? "query=" + enc(big) : big).getBytes(StandardCharsets.UTF_8);
+                var chunked = HTTP.send(HttpRequest.newBuilder(URI.create(small.url()))
+                        .header("Content-Type", type)
+                        .POST(HttpRequest.BodyPublishers.ofInputStream(() -> new java.io.ByteArrayInputStream(body)))
+                        .build(), HttpResponse.BodyHandlers.ofString());
+                assertEquals(413, chunked.statusCode(), type);
+            }
         }
     }
 
@@ -245,6 +274,42 @@ class SparqlProtocolServletTest {
             assertTrue(ask.body().replace(" ", "").contains("\"boolean\":true"), ask.body());
             var bad = post(rw.url(), "application/sparql-update", "INSERT GARBAGE", null);
             assertEquals(400, bad.statusCode());
+        }
+    }
+
+    /** §2.2.3: protocol update datasets plus USING / WITH are an error — RDF4J would let WITH win. */
+    @Test
+    void updateDatasetParametersConflictingWithWithAre400() throws Exception {
+        try (Endpoint rw = Endpoint.start(EndpointOptions.defaults().withUpdateEnabled(true), 0)) {
+            for (String u : List.of("WITH <urn:ex:g1> DELETE { ?s ?p ?o } WHERE { ?s ?p ?o }",
+                    "DELETE { GRAPH <urn:ex:g1> { ?s ?p ?o } } USING <urn:ex:g1> WHERE { ?s ?p ?o }")) {
+                var r = post(rw.url() + "?using-graph-uri=" + enc("urn:ex:g2"), "application/sparql-update", u, null);
+                assertEquals(400, r.statusCode(), u + " -> " + r.body());
+            }
+            var still = get(rw.url(), "ASK { GRAPH <urn:ex:g1> { <urn:ex:g1s> ?p ?o } }", null);
+            assertTrue(still.body().replace(" ", "").contains("\"boolean\":true"), "the conflicting update ran");
+            // without the conflict the parameter is applied
+            var ok = post(rw.url() + "?using-graph-uri=" + enc("urn:ex:g2"), "application/sparql-update",
+                    "DELETE { GRAPH <urn:ex:g2> { ?s ?p ?o } } WHERE { ?s ?p ?o }", null);
+            assertEquals(204, ok.statusCode(), ok.body());
+            var gone = get(rw.url(), "ASK { GRAPH <urn:ex:g2> { ?s ?p ?o } }", null);
+            assertTrue(gone.body().replace(" ", "").contains("\"boolean\":false"), gone.body());
+        }
+    }
+
+    /**
+     * A cross-origin form POST is a CORS "simple" request: the browser sends it with no
+     * preflight. Without the origin check any page could write to a loopback endpoint.
+     */
+    @Test
+    void crossOriginFormUpdateIsRefused() throws Exception {
+        try (Endpoint rw = Endpoint.start(EndpointOptions.defaults().withUpdateEnabled(true), 0)) {
+            String form = "update=" + enc("INSERT DATA { <urn:ex:pwned> <urn:ex:y> <urn:ex:z> }");
+            var r = post(rw.url(), "application/x-www-form-urlencoded", form, null, "Origin", "https://attacker.example");
+            assertEquals(403, r.statusCode(), r.body());
+            var ask = get(rw.url(), "ASK { <urn:ex:pwned> ?p ?o }", null);
+            assertTrue(ask.body().replace(" ", "").contains("\"boolean\":false"), "the cross-origin update ran");
+            assertEquals(204, post(rw.url(), "application/x-www-form-urlencoded", form, null).statusCode());
         }
     }
 
@@ -274,10 +339,16 @@ class SparqlProtocolServletTest {
                     .header("Access-Control-Request-Method", "POST").build(), HttpResponse.BodyHandlers.ofString());
             assertEquals(204, ok.statusCode());
             assertEquals("https://yasgui.example", ok.headers().firstValue("Access-Control-Allow-Origin").orElse(""));
+            assertEquals(AccessFilters.Origins.EXPOSED, ok.headers().firstValue("Access-Control-Expose-Headers").orElse(""));
             var other = HTTP.send(HttpRequest.newBuilder(URI.create(cors.url() + "?query=" + enc("ASK {}")))
                     .header("Origin", "https://evil.example").build(), HttpResponse.BodyHandlers.ofString());
-            assertEquals(200, other.statusCode());
+            assertEquals(403, other.statusCode());
             assertTrue(other.headers().firstValue("Access-Control-Allow-Origin").isEmpty());
+            // an error answered to an allowed origin keeps its CORS headers, so the browser can read it
+            var malformed = HTTP.send(HttpRequest.newBuilder(URI.create(cors.url() + "?query=" + enc("SELEKT")))
+                    .header("Origin", "https://yasgui.example").build(), HttpResponse.BodyHandlers.ofString());
+            assertEquals(400, malformed.statusCode());
+            assertEquals("https://yasgui.example", malformed.headers().firstValue("Access-Control-Allow-Origin").orElse(""));
         }
     }
 
@@ -311,6 +382,21 @@ class SparqlProtocolServletTest {
             assertEquals(503, r.statusCode(), r.body());
             assertTrue(r.body().contains("execution limit"), r.body());
             assertTrue((System.nanoTime() - t0) / 1e9 < 10, "limit took too long to trip");
+        }
+    }
+
+    /**
+     * The limit tripping after rows are already on the wire cannot become a 503 any more. The
+     * response must then be aborted — a client must not receive a short result as a complete 200.
+     */
+    @Test
+    void executionLimitAfterCommitAbortsTheResponse() throws Exception {
+        try (Endpoint slow = Endpoint.start(EndpointOptions.defaults().withMaxExecutionSeconds(1), 300)) {
+            long t0 = System.nanoTime();
+            var req = HttpRequest.newBuilder(URI.create(slow.url() + "?query="
+                    + enc("SELECT * WHERE { ?a ?b ?c . ?d ?e ?f . ?g ?h ?i . ?j ?k ?l }"))).header("Accept", "text/csv").build();
+            assertThrows(IOException.class, () -> HTTP.send(req, HttpResponse.BodyHandlers.discarding()));
+            assertTrue((System.nanoTime() - t0) / 1e9 < 20, "limit took too long to trip");
         }
     }
 
@@ -384,6 +470,27 @@ class SparqlProtocolServletTest {
                 SparqlProtocolServlet.negotiate("text/csv", reg, json).orElseThrow());
         assertTrue(SparqlProtocolServlet.negotiate("image/png", reg, json).isEmpty());
         assertTrue(SparqlProtocolServlet.negotiate("text/*", reg, json).isPresent());
+        // q=0 is an exclusion the wildcard must not override (RFC 9110 §12.5.1)
+        var notJson = SparqlProtocolServlet.negotiate("application/sparql-results+json;q=0, */*", reg, json);
+        assertTrue(notJson.isPresent() && !notJson.get().equals(json), String.valueOf(notJson));
+        assertTrue(SparqlProtocolServlet.negotiate("*/*;q=0", reg, json).isEmpty());
+        // equal q: the more specific range wins, then the one listed first
+        assertEquals(org.eclipse.rdf4j.query.resultio.TupleQueryResultFormat.TSV,
+                SparqlProtocolServlet.negotiate("*/*, text/tab-separated-values", reg, json).orElseThrow());
+        assertEquals(org.eclipse.rdf4j.query.resultio.TupleQueryResultFormat.CSV,
+                SparqlProtocolServlet.negotiate("text/csv, application/sparql-results+json", reg, json).orElseThrow());
+    }
+
+    @Test
+    void nativeStoreIsReleasedAfterShutdown(@org.junit.jupiter.api.io.TempDir java.nio.file.Path dir) throws Exception {
+        for (int run = 0; run < 2; run++) {   // a second open of the same directory needs the lock released
+            var store = SparqlEndpointLauncher.openNativeStore(dir.toString());
+            CQELSEngine engine = SparqlEndpointLauncher.buildEngine(store);
+            engine.start();
+            engine.close();
+            store.shutDown();
+            assertFalse(store.isInitialized());
+        }
     }
 
     @SuppressWarnings("unused")
