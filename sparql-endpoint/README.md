@@ -7,8 +7,7 @@ same stack the published MCP server (`org.cqels:cqels-mcp`) embeds, for a reason
 under *Continuous queries* below.
 
 It is **not** a full triple-store server: no repository management, no transactions, no
-Workbench. Those are store features; for them, run RDF4J Server as the store and point the
-engine at it (see *Alternatives*).
+Workbench.
 
 ## Run
 
@@ -182,12 +181,6 @@ requested upstream as cqels/claude#1387; the Jetty version here is pinned to the
 
 ## Alternatives
 
-- **Full RDF4J Server features** (transactions, repository management, Workbench, federation):
-  run stock RDF4J Server as the store and start the engine with
-  `CQELSEngine.builder().repository(new HTTPRepository(serverUrl, repoId))`. The engine then
-  reads its background graph over HTTP and, for a repository that is not a local Sail, falls
-  back to time-based lookup-cache expiry instead of live invalidation. How stale a background
-  update can get under `CACHE 5m` on that route has **not** been measured yet.
 - **RDF4J's own Spring Boot endpoint** (`rdf4j-spring-boot-sparql-web`) works over
   `engine.getRepository()` too, but at RDF4J 4.3.8 it is Spring Boot 2.7 on `javax.servlet`,
   read-only, and its BOM downgrades the engine's Reactor, Jackson and SLF4J unless you fight

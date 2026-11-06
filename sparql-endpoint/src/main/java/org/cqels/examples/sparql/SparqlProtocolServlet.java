@@ -66,8 +66,7 @@ import java.util.function.Supplier;
  *
  * <p><strong>What this is and is not.</strong> It is RDF4J's protocol <em>library</em> layer
  * (result-writer registries, Rio, the query API) behind a plain {@code jakarta.servlet}. It is
- * not RDF4J Server: no repository management, no transactions, no Workbench. Those are store
- * features; the README names RDF4J Server as the deployment for them. The only code that
+ * not RDF4J Server: no repository management, no transactions, no Workbench. The only code that
  * duplicates RDF4J is this adapter from HTTP to the query API, which RDF4J ships only as a
  * Spring MVC controller on {@code javax.servlet} (4.3.8) and which therefore cannot be mounted
  * in the {@code jakarta} Jetty that {@code cqels-mcp} embeds.
