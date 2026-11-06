@@ -51,7 +51,7 @@ All settings are environment variables, named like the MCP server's `CQELS_MCP_H
 | `CQELS_SPARQL_UPDATE_ENABLED` | `false` | Accept SPARQL Update. |
 | `CQELS_SPARQL_STORE_PATH` | unset | NativeStore directory for a graph that survives restarts; unset = memory store. |
 | `CQELS_SPARQL_SEED_FLEET` | `false` | Seed the fleet world. |
-| `CQELS_SPARQL_MAX_THREADS` | `200` | Jetty request threads. |
+| `CQELS_SPARQL_MAX_THREADS` | `200` | Jetty request threads. Must cover the query slots, the connector's own threads and 4 spares, or start-up is refused: with fewer, requests would queue for a thread before reaching a slot, and neither the immediate `503` nor `/health` would hold. Ignored on virtual threads. |
 | `CQELS_SPARQL_VIRTUAL_THREADS` | `false` | Run requests on virtual threads (JDK 21+ runtime; ignored with a warning otherwise). |
 | `CQELS_SPARQL_ALLOW_UNAUTHENTICATED_REMOTE` | `false` | Override the start-up refusal. |
 
@@ -66,7 +66,7 @@ All settings are environment variables, named like the MCP server's `CQELS_MCP_H
 | `default-graph-uri`, `named-graph-uri` | query dataset; overrides `FROM` / `FROM NAMED` in the query |
 | `using-graph-uri`, `using-named-graph-uri` | update dataset; together with `USING`, `USING NAMED` or `WITH` in the update → `400` (§2.2.3) |
 | relative IRIs | resolved against the request URL, the service-defined base of §2.3 |
-| `Accept` | negotiated through RDF4J's writer registries per RFC 9110: `q` values honoured, `q=0` excludes, the most specific range wins, repeated `Accept` fields form one list, and the response is labelled with the media type that matched (`application/json` if that is what was asked for). Defaults: SPARQL JSON for SELECT/ASK, Turtle for CONSTRUCT/DESCRIBE. Also XML, CSV, TSV, binary; N-Triples, N-Quads, TriG, JSON-LD, RDF/XML as far as the RDF4J Rio modules on the classpath go. |
+| `Accept` | negotiated through RDF4J's writer registries per RFC 9110: `q` values honoured, `q=0` excludes, the most specific range wins, repeated `Accept` fields form one list, parameters count (`text/csv;charset=UTF-8` is more specific than `text/csv`; `charset=ISO-8859-1` matches nothing, since the writers emit UTF-8), and the response is labelled with the media type that matched (`application/json` if that is what was asked for). Defaults: SPARQL JSON for SELECT/ASK, Turtle for CONSTRUCT/DESCRIBE. Also XML, CSV, TSV, binary; N-Triples, N-Quads, TriG, JSON-LD, RDF/XML as far as the RDF4J Rio modules on the classpath go. |
 | `GET /health`, `GET /ready` | `200` once the engine has started and Jetty is bound (never behind the token). |
 
 | Status | When |
@@ -120,7 +120,8 @@ depends on where it is. Measured on RDF4J 4.3.8's memory store, 300 triples, a 1
 So the limit catches most things and is not a guarantee. A query that is not stopped holds
 one query slot until it finishes; `CQELS_SPARQL_MAX_CONCURRENT_QUERIES` bounds how many can,
 further requests are turned away with `503` + `Retry-After` at once, and `/health` needs no slot
-so probes keep working. The only cure for a stuck query is a restart. This is one more reason to
+so probes keep working. Both need a free request thread, which is why start-up refuses a
+`CQELS_SPARQL_MAX_THREADS` that does not exceed the slots. The only cure for a stuck query is a restart. This is one more reason to
 keep an exposed endpoint behind a token.
 
 ## Continuous queries

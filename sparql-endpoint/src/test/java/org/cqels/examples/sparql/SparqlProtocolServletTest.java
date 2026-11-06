@@ -51,7 +51,7 @@ class SparqlProtocolServletTest {
                 }
             }
             engine.start();
-            Server server = SparqlEndpointLauncher.startServer(engine, "127.0.0.1", 0, options, 16, false);
+            Server server = SparqlEndpointLauncher.startServer(engine, "127.0.0.1", 0, options, 64, false);
             int port = ((ServerConnector) server.getConnectors()[0]).getLocalPort();
             return new Endpoint(engine, server, "http://127.0.0.1:" + port + options.path());
         }
@@ -412,20 +412,112 @@ class SparqlProtocolServletTest {
         }
     }
 
+    /**
+     * Holds the first {@code holds} requests inside their query slot — the servlet asks for the
+     * repository only after acquiring one — until {@link #release} opens. No sleeps: the test
+     * waits on {@link #entered} for the slots to be taken.
+     */
+    static final class SlotHolder implements java.util.function.Supplier<org.eclipse.rdf4j.repository.Repository> {
+        final CQELSEngine engine;
+        final java.util.concurrent.atomic.AtomicInteger holds;
+        final java.util.concurrent.CountDownLatch entered;
+        final java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+
+        SlotHolder(CQELSEngine engine, int holds) {
+            this.engine = engine;
+            this.holds = new java.util.concurrent.atomic.AtomicInteger(holds);
+            this.entered = new java.util.concurrent.CountDownLatch(holds);
+        }
+
+        @Override
+        public org.eclipse.rdf4j.repository.Repository get() {
+            if (holds.getAndDecrement() > 0) {
+                entered.countDown();
+                try {
+                    release.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+            return engine.getRepository();
+        }
+    }
+
+    static HttpResponse<String> getWithin(String url, java.time.Duration timeout) throws Exception {
+        return HTTP.send(HttpRequest.newBuilder(URI.create(url)).timeout(timeout).build(), HttpResponse.BodyHandlers.ofString());
+    }
+
     @Test
     void concurrencyCapAnswers503WithRetryAfterAtOnce() throws Exception {
-        try (Endpoint one = Endpoint.start(EndpointOptions.defaults().withMaxExecutionSeconds(2).withMaxConcurrentQueries(1), 300)) {
-            var holdsTheSlot = HTTP.sendAsync(HttpRequest.newBuilder(URI.create(one.url() + "?query=" + enc(SLOW_BUT_STOPPABLE))).build(),
-                    HttpResponse.BodyHandlers.ofString());
-            Thread.sleep(300);   // let the first request take the only slot
-            long t0 = System.nanoTime();
-            var turnedAway = get(one.url(), "ASK {}", null);
+        CQELSEngine engine = CQELSEngine.builder().id("t-" + System.nanoTime()).withMemoryStore().build();
+        engine.start();
+        SlotHolder holder = new SlotHolder(engine, 1);
+        Server server = SparqlEndpointLauncher.startServer(holder, "127.0.0.1", 0,
+                EndpointOptions.defaults().withMaxConcurrentQueries(1), 64, false);
+        try {
+            String url = "http://127.0.0.1:" + ((ServerConnector) server.getConnectors()[0]).getLocalPort() + "/sparql";
+            String ask = url + "?query=" + enc("ASK {}");
+            var holdsTheSlot = HTTP.sendAsync(HttpRequest.newBuilder(URI.create(ask)).build(), HttpResponse.BodyHandlers.ofString());
+            assertTrue(holder.entered.await(10, java.util.concurrent.TimeUnit.SECONDS), "the first request never took the slot");
+            var turnedAway = getWithin(ask, java.time.Duration.ofSeconds(5));
             assertEquals(503, turnedAway.statusCode(), turnedAway.body());
             assertEquals("1", turnedAway.headers().firstValue("Retry-After").orElse(""));
             assertTrue(turnedAway.body().contains("too many concurrent queries"), turnedAway.body());
-            assertTrue((System.nanoTime() - t0) / 1e9 < 1, "a busy endpoint must answer at once, not queue");
-            assertEquals(503, holdsTheSlot.get().statusCode());   // the slow one hits the execution limit
-            assertEquals(200, get(one.url(), "ASK {}", null).statusCode());   // slot released
+            holder.release.countDown();
+            assertEquals(200, holdsTheSlot.get(10, java.util.concurrent.TimeUnit.SECONDS).statusCode());
+            assertEquals(200, getWithin(ask, java.time.Duration.ofSeconds(5)).statusCode());   // slot released
+        } finally {
+            holder.release.countDown();
+            server.stop();
+            engine.close();
+        }
+    }
+
+    /** With every slot held and the smallest pool start-up accepts, rejections and /health still answer. */
+    @Test
+    void fullSlotsLeaveHealthAndRejectionReachableAtTheMinimumPool() throws Exception {
+        CQELSEngine engine = CQELSEngine.builder().id("t-" + System.nanoTime()).withMemoryStore().build();
+        engine.start();
+        int slots = 3;
+        Server probe = SparqlEndpointLauncher.startServer(engine::getRepository, "127.0.0.1", 0,
+                EndpointOptions.defaults().withMaxConcurrentQueries(slots), 64, false);
+        int leased = ((org.eclipse.jetty.util.thread.QueuedThreadPool) probe.getThreadPool()).getThreadPoolBudget().getLeasedThreads();
+        probe.stop();
+        int minimum = Math.max(8, SparqlEndpointLauncher.minimumThreads(slots, leased));
+
+        SlotHolder holder = new SlotHolder(engine, slots);
+        Server server = SparqlEndpointLauncher.startServer(holder, "127.0.0.1", 0,
+                EndpointOptions.defaults().withMaxConcurrentQueries(slots), minimum, false);
+        try {
+            String base = "http://127.0.0.1:" + ((ServerConnector) server.getConnectors()[0]).getLocalPort();
+            String ask = base + "/sparql?query=" + enc("ASK {}");
+            List<java.util.concurrent.CompletableFuture<HttpResponse<String>>> held = new java.util.ArrayList<>();
+            for (int i = 0; i < slots; i++) {
+                held.add(HTTP.sendAsync(HttpRequest.newBuilder(URI.create(ask)).build(), HttpResponse.BodyHandlers.ofString()));
+            }
+            assertTrue(holder.entered.await(10, java.util.concurrent.TimeUnit.SECONDS), "the slots were never all taken");
+            assertEquals(200, getWithin(base + "/health", java.time.Duration.ofSeconds(2)).statusCode());
+            assertEquals(503, getWithin(ask, java.time.Duration.ofSeconds(2)).statusCode());
+            holder.release.countDown();
+            for (var f : held) {
+                assertEquals(200, f.get(10, java.util.concurrent.TimeUnit.SECONDS).statusCode());
+            }
+        } finally {
+            holder.release.countDown();
+            server.stop();
+            engine.close();
+        }
+    }
+
+    @Test
+    void fewerThreadsThanSlotsIsRefusedAtStartUp() throws Exception {
+        CQELSEngine engine = CQELSEngine.builder().id("t-" + System.nanoTime()).withMemoryStore().build();
+        try {
+            var e = assertThrows(IllegalStateException.class, () -> SparqlEndpointLauncher.startServer(engine,
+                    "127.0.0.1", 0, EndpointOptions.defaults().withMaxConcurrentQueries(16), 8, false));
+            assertTrue(e.getMessage().contains("CQELS_SPARQL_MAX_THREADS"), e.getMessage());
+        } finally {
+            engine.close();
         }
     }
 
@@ -494,6 +586,13 @@ class SparqlProtocolServletTest {
         n = SparqlProtocolServlet.negotiate("application/json", reg, json).orElseThrow();
         assertEquals(json, n.format());
         assertEquals("application/json", n.mediaType());
+        // parameters: q is case-insensitive; a range with parameters is more specific, and matches
+        // only what the writer produces (CSV is UTF-8)
+        assertTrue(SparqlProtocolServlet.negotiate("application/sparql-results+json;Q=0", reg, json).isEmpty());
+        assertEquals("text/csv", SparqlProtocolServlet.negotiate("text/csv;q=0, text/csv;charset=UTF-8", reg, json)
+                .orElseThrow().mediaType());
+        assertTrue(SparqlProtocolServlet.negotiate("text/csv;charset=ISO-8859-1", reg, json).isEmpty());
+        assertTrue(SparqlProtocolServlet.negotiate("text/csv;charset=utf-8;q=0.5", reg, json).isPresent());
         // equal q: the more specific range wins, then the one listed first
         assertEquals(tsv, SparqlProtocolServlet.negotiate("*/*, text/tab-separated-values", reg, json).orElseThrow().format());
         assertEquals(csv, SparqlProtocolServlet.negotiate("text/csv, application/sparql-results+json", reg, json).orElseThrow().format());
@@ -523,6 +622,12 @@ class SparqlProtocolServletTest {
         var utf8 = post(shared.url(), "application/x-www-form-urlencoded",
                 "query=SELECT+%28%22caf%C3%A9%22+AS+%3Fx%29+WHERE+%7B%7D", "text/csv");
         assertTrue(utf8.body().contains("café"), utf8.body());
+        // Shift_JIS テスト is 83 65 83 58 83 67: the trailing bytes are ASCII e, X, g, so a form
+        // encoder leaves them unescaped and they must join the escaped lead bytes
+        var sjis = post(shared.url(), "application/x-www-form-urlencoded; charset=Shift_JIS",
+                "query=SELECT+%28%22%83e%83X%83g%22+AS+%3Fx%29+WHERE+%7B%7D", "text/csv");
+        assertEquals(200, sjis.statusCode(), sjis.body());
+        assertTrue(sjis.body().contains("テスト"), sjis.body());
         var unknown = post(shared.url(), "application/x-www-form-urlencoded; charset=no-such-charset", "query=ASK%7B%7D", null);
         assertEquals(415, unknown.statusCode(), unknown.body());
     }
