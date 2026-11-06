@@ -229,7 +229,7 @@ public class CapabilityProbe {
                     s.pushTriple(C + "o1", C + "of", C + "a");
                     s.pushTriple(C + "o2", C + "of", C + "b");
                 });
-        return exactRows(rows, List.of(row("o", C + "o1", "x", C + "a")));
+        return exactRows(rows, List.of(row("o", iri("o1"), "x", iri("a"))));
     }
 
     /**
@@ -279,7 +279,7 @@ public class CapabilityProbe {
             stream.pushTriple(C + "mid", C + "broader", C + "root");
             Thread.sleep(1500);
             String got = toRoot.toString();
-            boolean executes = exactRows(toRoot, List.of(row("x", C + "mid"), row("x", C + "leaf")))
+            boolean executes = exactRows(toRoot, List.of(row("x", iri("mid")), row("x", iri("leaf"))))
                     && toBogus.isEmpty();
             if (!executes) {
                 DIVERGENCES.add("MIS-EVALUATED — '+' over leaf -> mid -> root returned " + got
@@ -841,16 +841,21 @@ public class CapabilityProbe {
             }
         };
         List<Object> control = run(labelled, query, one);
-        if (control.isEmpty() || !isNumber(((Map<?, ?>) control.get(control.size() - 1)).get("a"), 8)) {
+        if (!exactRows(control, List.of(row("o", iri("o1"), "a", num(8))))) {
             DIVERGENCES.add("REGRESSED — the control (AVG over a bound label 8) reported " + control
                     + "\n      the aggregate route itself is failing; the empty-group verdict is meaningless");
         }
+        // Exactly the one group row: an extra or empty row must not read as the documented null
+        // (codex, round 3 of #116). The alias must be present, bound to null.
         List<Object> rows = run(null, query, one);
-        if (rows.isEmpty()) {
-            return "no row";
+        if (rows.size() == 1 && ((Map<?, ?>) rows.get(0)).containsKey("a")
+                && exactRows(rows, List.of(row("o", iri("o1"), "a", UNBOUND)))) {
+            return "null";
         }
-        Object a = ((Map<?, ?>) rows.get(rows.size() - 1)).get("a");
-        return a == null ? "null" : (isNumber(a, 0) ? "0" : String.valueOf(a));
+        if (exactRows(rows, List.of(row("o", iri("o1"), "a", num(0))))) {
+            return "0";
+        }
+        return rows.isEmpty() ? "no row" : String.valueOf(rows);
     }
 
     /**
@@ -871,7 +876,7 @@ public class CapabilityProbe {
         List<Object> control = run(null, """
             SELECT (COUNT(*) AS ?n) FROM STREAM S [TRIPLES 3] WHERE { STREAM S { ?o <%sv> ?x . } }
             """.formatted(C), one);
-        if (control.isEmpty() || !isNumber(((Map<?, ?>) control.get(control.size() - 1)).get("n"), 1)) {
+        if (!exactRows(control, List.of(row("n", num(1))))) {
             DIVERGENCES.add("REGRESSED — the control (COUNT(*) over one element) reported " + control
                     + "\n      the aggregate route itself is failing; the unbound-argument verdict is meaningless");
         }
@@ -881,8 +886,7 @@ public class CapabilityProbe {
         if (rows.isEmpty()) {
             return "no row";
         }
-        Object n = ((Map<?, ?>) rows.get(rows.size() - 1)).get("n");
-        return isNumber(n, 0) ? "0" : String.valueOf(n);
+        return exactRows(rows, List.of(row("n", num(0)))) ? "0" : String.valueOf(rows);
     }
 
     /**
@@ -893,36 +897,37 @@ public class CapabilityProbe {
      * <p>The control is the documented workaround — {@code BIND(LANG(?l) AS ?lang)} and
      * {@code GROUP BY ?l ?lang} — which must report both tags, or grouping itself is failing.
      *
-     * <p>Both outputs are compared row by row, per arrival: the documented result is exactly
-     * {@code {cat,1}} then {@code {cat,2}}; a fix reports {@code {cat,1}}, then both tags at 1. The
-     * workaround control must be exactly {@code en:1}, then {@code en:1} and {@code fr:1}. Checking
-     * for "some count of 2" accepted extra rows and lost callbacks (codex, review of #116).
+     * <p>Both outputs are read <em>per arrival</em>: each arrival's rows are collected before the
+     * next element is pushed, and compared exactly. The documented result is {@code {cat,1}} on the
+     * first arrival and {@code {cat,2}} on the second; a fix reports {@code {cat,1}}, then both tags
+     * at 1. The workaround control must be {@code en:1}, then {@code en:1} and {@code fr:1}. One
+     * flattened multiset accepted reversed or batched histories (codex, round 3 of #116).
      *
      * <p>Returns {@code 1 group} as documented, {@code 2 groups} once fixed, or the rows.
      */
     private static String groupsOverLanguageTaggedKey() throws Exception {
-        Pusher twoTags = s -> {
-            s.push(VF.createStatement(VF.createIRI(C + "o1"), VF.createIRI(C + "l"), VF.createLiteral("cat", "en")), 1000L);
-            Thread.sleep(100);
-            s.push(VF.createStatement(VF.createIRI(C + "o2"), VF.createIRI(C + "l"), VF.createLiteral("cat", "fr")), 1100L);
-        };
-        List<Object> control = run(null, """
+        List<Pusher> twoTags = List.of(
+                s -> s.push(VF.createStatement(iri("o1"), iri("l"), VF.createLiteral("cat", "en")), 1000L),
+                s -> s.push(VF.createStatement(iri("o2"), iri("l"), VF.createLiteral("cat", "fr")), 1100L));
+        List<List<Object>> control = runPerArrival("""
             SELECT ?l ?lang (COUNT(*) AS ?n) FROM STREAM S [TRIPLES 3]
             WHERE { STREAM S { ?o <%sl> ?l . } BIND(LANG(?l) AS ?lang) } GROUP BY ?l ?lang
             """.formatted(C), twoTags);
-        if (!exactRows(control, List.of(row("l", "cat", "lang", "en", "n", "1"),
-                row("l", "cat", "lang", "en", "n", "1"), row("l", "cat", "lang", "fr", "n", "1")))) {
+        if (!(exactRows(control.get(0), List.of(row("l", "cat", "lang", "en", "n", num(1))))
+                && exactRows(control.get(1), List.of(row("l", "cat", "lang", "en", "n", num(1)),
+                        row("l", "cat", "lang", "fr", "n", num(1)))))) {
             DIVERGENCES.add("REGRESSED — the documented workaround (GROUP BY ?l ?lang) reported " + control
                     + "\n      fix the workaround in GETTING_STARTED.md before trusting the verdict");
         }
-        List<Object> rows = run(null, """
+        List<List<Object>> rows = runPerArrival("""
             SELECT ?l (COUNT(*) AS ?n) FROM STREAM S [TRIPLES 3]
             WHERE { STREAM S { ?o <%sl> ?l . } } GROUP BY ?l
             """.formatted(C), twoTags);
-        if (exactRows(rows, List.of(row("l", "cat", "n", "1"), row("l", "cat", "n", "2")))) {
+        boolean first = exactRows(rows.get(0), List.of(row("l", "cat", "n", num(1))));
+        if (first && exactRows(rows.get(1), List.of(row("l", "cat", "n", num(2))))) {
             return "1 group";
         }
-        if (exactRows(rows, List.of(row("l", "cat", "n", "1"), row("l", "cat", "n", "1"), row("l", "cat", "n", "1")))) {
+        if (first && exactRows(rows.get(1), List.of(row("l", "cat", "n", num(1)), row("l", "cat", "n", num(1))))) {
             return "2 groups";
         }
         return String.valueOf(rows);
@@ -950,25 +955,12 @@ public class CapabilityProbe {
         Pusher request = s -> s.push(VF.createStatement(VF.createIRI(C + "r1"), VF.createIRI(C + "person"),
                 VF.createIRI(C + "p1")));
         List<Object> control = run(seeded, shape.formatted(C, "?r ?p ?city"), request);
-        if (!exactRows(control, List.of(row("r", C + "r1", "p", C + "p1", "city", "Berlin")))) {
+        if (!exactRows(control, List.of(row("r", iri("r1"), "p", iri("p1"), "city", "Berlin")))) {
             DIVERGENCES.add("REGRESSED — the control (UNION with ?p projected) returned " + control
                     + ", not one row\n      the static UNION itself is failing; the projection verdict is meaningless");
         }
         int n = run(seeded, shape.formatted(C, "?r ?city"), request).size();
         return n == 0 ? "0 rows" : n == 1 ? "1 row" : n + " rows";
-    }
-
-    /** True when {@code value} is a number (or numeric literal) equal to {@code n}. */
-    private static boolean isNumber(Object value, double n) {
-        if (value == null) {
-            return false;
-        }
-        String text = value instanceof Literal l ? l.getLabel() : String.valueOf(value);
-        try {
-            return Double.parseDouble(text) == n;
-        } catch (NumberFormatException e) {
-            return false;
-        }
     }
 
     private static boolean durationFilterMatches(String filter) throws Exception {
@@ -1024,7 +1016,7 @@ public class CapabilityProbe {
                     + "answers\n      the composed route now drops IRI-keyed rows too; the literal "
                     + "verdict is meaningless until that is understood");
         }
-        return exactRows(literal, List.of(row("o", C + "o1", "item", C + "item1"))) && unmatched.isEmpty();
+        return exactRows(literal, List.of(row("o", iri("o1"), "item", iri("item1")))) && unmatched.isEmpty();
     }
 
     /**
@@ -1064,7 +1056,7 @@ public class CapabilityProbe {
             DIVERGENCES.add("REGRESSED — the control (a FILTER on the BIND's input) no longer answers\n"
                     + "      the static lookup itself is failing; the BIND/FILTER verdict is meaningless");
         }
-        return exactRows(onBindTarget, List.of(row("o", C + "o1", "y", "8")));
+        return exactRows(onBindTarget, List.of(row("o", iri("o1"), "y", num(8))));
     }
 
     /**
@@ -1379,7 +1371,7 @@ public class CapabilityProbe {
             WHERE { STREAM S { ?o <%sof> ?x . } ?x <%slabel> ?label . }
             """.formatted(C, C),
                 s -> s.pushTriple(C + "o1", C + "of", C + "a"));
-        return exactRows(rows, List.of(row("o", C + "o1", "label", "Alpha")));
+        return exactRows(rows, List.of(row("o", iri("o1"), "label", "Alpha")));
     }
 
     private static boolean builtinsWork() throws Exception {
@@ -1397,9 +1389,9 @@ public class CapabilityProbe {
         // otherwise pass, and this check exists to catch behavioural regressions.
         // Compared as exact values per binding: substring matching accepted d=150.01 (codex, #116).
         return exactRows(rows, List.of(row(
-                "d", "150.0",                   // ABS(250 - 100)
+                "d", num(150.0),                // ABS(250 - 100)
                 "c", "x250.0",                  // CONCAT("x", STR(250.0))
-                "i", C + "250.0",
+                "i", iri("250.0"),              // IRI(...) must bind an IRI, not a string
                 "u", "25",                      // SUBSTR("250.0", 1, 2)
                 "f", "hi")));                   // IF(250 > 10, "hi", "lo")
     }
@@ -1415,7 +1407,7 @@ public class CapabilityProbe {
                             VF.createStatement(o, VF.createIRI(C + "val"), VF.createLiteral(1.0)),
                             VF.createStatement(o, VF.createIRI(C + "other"), VF.createLiteral(2.0))));
                 });
-        return exactRows(rows, List.of(row("v", "1.0", "w", "2.0")));
+        return exactRows(rows, List.of(row("v", num(1.0), "w", num(2.0))));
     }
 
     private static boolean groupByWorks() throws Exception {
@@ -1440,7 +1432,7 @@ public class CapabilityProbe {
         // Exactly the closed bucket: {g1, 2} and {g2, 1}, nothing else. Substring matching across
         // rows passed on {g1,n=1}+{g2,n=2} and on tenfold counts (codex, rounds 2 and 3 of #66;
         // review of #116).
-        return exactRows(rows, List.of(row("g", C + "g1", "n", "2"), row("g", C + "g2", "n", "1")));
+        return exactRows(rows, List.of(row("g", iri("g1"), "n", num(2)), row("g", iri("g2"), "n", num(1))));
     }
 
     private static Statement st(String s, String p, String o) {
@@ -1450,35 +1442,71 @@ public class CapabilityProbe {
     // ---- exact-row oracle ------------------------------------------------------------------
 
     /**
-     * A binding as text: a literal's label, an IRI's string, anything else's {@code toString}. Used
-     * so that checks compare values, never substrings of a row's {@code toString} — substring
-     * matching accepted {@code 150.01} for {@code 150.0} and {@code AlphaWRONG} for {@code Alpha}
-     * (codex, review of #116).
+     * A binding as text: a literal's label, an IRI's string, anything else's {@code toString}. For
+     * messages and for the duration reports; checks compare with {@link #sameValue}, never with
+     * substrings of a row's {@code toString} (substring matching accepted {@code 150.01} for
+     * {@code 150.0} and {@code AlphaWRONG} for {@code Alpha}; codex, review of #116).
      */
     private static String text(Object value) {
         return value == null ? "null" : (value instanceof Literal l ? l.getLabel() : String.valueOf(value));
     }
 
-    /** One expected row: alternating variable names and values, e.g. {@code row("g", g1, "n", "2")}. */
-    private static Map<String, String> row(String... kv) {
-        Map<String, String> m = new java.util.LinkedHashMap<>();
+    /** An expected number: compared numerically, and only against a number or numeric literal. */
+    private record Num(double value) { }
+
+    /** An expected unbound variable: absent from the row, or bound to null. */
+    private static final Object UNBOUND = new Object();
+
+    private static IRI iri(String local) {
+        return VF.createIRI(C + local);
+    }
+
+    private static Num num(double value) {
+        return new Num(value);
+    }
+
+    /** One expected row: alternating variable names and typed values ({@link IRI}, {@link Num}, String, {@link #UNBOUND}). */
+    private static Map<String, Object> row(Object... kv) {
+        Map<String, Object> m = new java.util.LinkedHashMap<>();
         for (int i = 0; i < kv.length; i += 2) {
-            m.put(kv[i], kv[i + 1]);
+            m.put((String) kv[i], kv[i + 1]);
         }
         return m;
     }
 
-    /** True when {@code actual} and {@code expected} denote the same value; numbers compare numerically. */
-    private static boolean sameValue(Object actual, String expected) {
-        String a = text(actual);
-        if (a.equals(expected)) {
-            return true;
+    /**
+     * True when {@code actual} is the expected value AND of the expected kind: an IRI only matches an
+     * IRI, a string only a non-IRI with the same exact lexical form ({@code "025"} is not
+     * {@code "25"}), a number only a number. Spelling alone accepted a string where the engine
+     * should bind an IRI (codex, round 3 of #116).
+     */
+    private static boolean sameValue(Object actual, Object expected) {
+        if (expected == UNBOUND) {
+            return actual == null;
         }
-        try {
-            return Double.parseDouble(a) == Double.parseDouble(expected);
-        } catch (NumberFormatException e) {
+        if (actual == null) {
             return false;
         }
+        if (expected instanceof IRI want) {
+            return actual instanceof IRI got && got.equals(want);
+        }
+        if (expected instanceof Num want) {
+            if (actual instanceof Number n) {
+                return n.doubleValue() == want.value();
+            }
+            if (actual instanceof Literal l) {
+                try {
+                    return l.doubleValue() == want.value();
+                } catch (NumberFormatException e) {
+                    return false;
+                }
+            }
+            return false;
+        }
+        if (actual instanceof IRI || actual instanceof Number) {
+            return false;
+        }
+        return text(actual).equals(expected);
     }
 
     /**
@@ -1486,16 +1514,16 @@ public class CapabilityProbe {
      * each expected row matched by a distinct actual row that binds every expected variable to the
      * expected value. Variables an expected row does not name are not inspected.
      */
-    private static boolean exactRows(List<Object> rows, List<Map<String, String>> expected) {
+    private static boolean exactRows(List<Object> rows, List<Map<String, Object>> expected) {
         if (rows.size() != expected.size()) {
             return false;
         }
         List<Object> left = new ArrayList<>(rows);
-        for (Map<String, String> want : expected) {
+        for (Map<String, Object> want : expected) {
             Object hit = null;
             for (Object candidate : left) {
                 Map<?, ?> got = (Map<?, ?>) candidate;
-                if (want.entrySet().stream().allMatch(e -> got.containsKey(e.getKey())
+                if (want.entrySet().stream().allMatch(e -> (e.getValue() == UNBOUND || got.containsKey(e.getKey()))
                         && sameValue(got.get(e.getKey()), e.getValue()))) {
                     hit = candidate;
                     break;
@@ -1538,6 +1566,28 @@ public class CapabilityProbe {
     }
 
     /** One query, one fresh engine, so checks cannot contaminate each other. */
+    /**
+     * Like {@link #run}, but pushes one element per {@link Pusher} and returns the rows each arrival
+     * produced, collected before the next element is pushed — so a check can tell one arrival's
+     * output from the next one's.
+     */
+    private static List<List<Object>> runPerArrival(String where, List<Pusher> arrivals) throws Exception {
+        List<Object> rows = new CopyOnWriteArrayList<>();
+        List<List<Object>> perArrival = new ArrayList<>();
+        try (CQELSEngine engine = CQELSEngine.builder().id("probe-" + System.nanoTime()).withMemoryStore().build()) {
+            DataStream stream = engine.createStream("S");
+            engine.registerCqelsQuery(withRegister(where), rows::add);
+            engine.start();
+            for (Pusher arrival : arrivals) {
+                int before = rows.size();
+                arrival.push(stream);
+                Thread.sleep(1500);
+                perArrival.add(new ArrayList<>(rows.subList(before, rows.size())));
+            }
+        }
+        return perArrival;
+    }
+
     private static List<Object> run(Seeder seeder, String where, Pusher pusher) throws Exception {
         List<Object> rows = new CopyOnWriteArrayList<>();
         try (CQELSEngine engine = CQELSEngine.builder()
