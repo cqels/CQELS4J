@@ -1736,6 +1736,61 @@ EOF
 VTG_DEEP_CAPTURE="$WORK/t-good" checkmsg 0 "a correctly escaped quote reaches the endpoint as a quote" \
   "FILTER (?name = 'Alice') }" "$d" --deep
 
+# Bash's rules, not shlex's (round 2): inside double quotes \$ is $, which
+# shlex left as \$ — a false red on a correct README. An UNescaped $ is
+# expansion, which the gate refuses rather than evaluates.
+d=$(newfix)
+cat > "$d/sparql-endpoint/README.md" <<'EOF'
+```bash
+curl -G http://127.0.0.1:8089/sparql --data-urlencode "query=SELECT \$v WHERE { \$v ?p ?o }"
+```
+EOF
+VTG_DEEP_CAPTURE="$WORK/t-good" checkmsg 0 "a double-quoted \\\$ reaches the endpoint as \$, as bash sends it" \
+  'SELECT $v WHERE { $v ?p ?o }' "$d" --deep
+d=$(newfix)
+cat > "$d/sparql-endpoint/README.md" <<'EOF'
+```bash
+curl -G http://127.0.0.1:8089/sparql --data-urlencode "query=SELECT $v WHERE { $v ?p ?o }"
+```
+EOF
+VTG_DEEP_CAPTURE="$WORK/t-good" checkmsg 1 "a query that depends on shell expansion is refused, never evaluated" \
+  "depends on shell expansion" "$d" --deep
+
+# Once found, a broken example is a defect — it must not fall through to a
+# later, valid block and leave the broken one unchecked (round 2).
+d=$(newfix)
+cat > "$d/sparql-endpoint/README.md" <<'EOF'
+```bash
+curl -G http://127.0.0.1:8089/sparql --data-urlencode 'query=SELECT ?v WHERE { ?v ?p ?o }
+```
+
+```bash
+curl -G http://127.0.0.1:8089/sparql --data-urlencode 'query=SELECT ?v WHERE { ?v ?p ?o }'
+```
+EOF
+VTG_DEEP_CAPTURE="$WORK/t-good" checkmsg 1 "an unterminated first example fails instead of yielding to the next" \
+  "not a well-formed shell command" "$d" --deep
+
+# {} is a valid row — every variable unbound — and must count (round 2).
+spcap s-emptyrow '{"head":{},"boolean":true}' '{"head":{"vars":["v"]},"results":{"bindings":[{}]}}' 12.0.16
+d=$(newfix); VTG_DEEP_CAPTURE="$WORK/t-good" VTG_SPARQL_CAPTURE="$WORK/s-emptyrow" checkmsg 0 \
+  "an all-unbound row is a row" "returns 1 row(s)" "$d" --deep
+for bad in '{"results":{"bindings":[{"v":{"type":"uri","value":"x"}}]}}' \
+           '{"head":{"vars":["v"]},"results":{"bindings":[{"v":{"type":"garbage","value":"x"}}]}}' \
+           '{"head":{"vars":["v"]},"results":{"bindings":[{"w":{"type":"uri","value":"x"}}]}}'; do
+  spcap s-bad '{"head":{},"boolean":true}' "$bad" 12.0.16
+  d=$(newfix); VTG_DEEP_CAPTURE="$WORK/t-good" VTG_SPARQL_CAPTURE="$WORK/s-bad" checkmsg 1 \
+    "malformed SPARQL JSON fails: $bad" "did not return SPARQL JSON results" "$d" --deep
+done
+spcap s-askhead '{"boolean":true}' "$ROWS" 12.0.16
+d=$(newfix); VTG_DEEP_CAPTURE="$WORK/t-good" VTG_SPARQL_CAPTURE="$WORK/s-askhead" checkmsg 1 \
+  "an ASK answer without its head is not SPARQL JSON" "did not answer ASK {}" "$d" --deep
+
+# A defect already found is not demoted to INCONCLUSIVE by a missing Jetty reading.
+spcap s-defect-nojetty '{"head":{},"boolean":true}' '{"results":"broken"}' ''
+d=$(newfix); VTG_DEEP_CAPTURE="$WORK/t-good" VTG_SPARQL_CAPTURE="$WORK/s-defect-nojetty" checkmsg 1 \
+  "a defect stays exit 1 when the Jetty reading is also missing" "did not return SPARQL JSON results" "$d" --deep
+
 # Malformed answers are the endpoint's defect (exit 1), not a parser failure
 # (exit 3) and not a pass: a null binding used to count as a row.
 spcap s-nullrow '{"head":{},"boolean":true}' '{"head":{"vars":["v"]},"results":{"bindings":[null]}}' 12.0.16

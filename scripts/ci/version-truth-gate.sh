@@ -1675,34 +1675,106 @@ PY
   SPDOC=sparql-endpoint/README.md
   SPPOM=sparql-endpoint/pom.xml
   # The example is taken the way a reader's SHELL takes it: the first fenced
-  # block holding a `--data-urlencode 'query=…'` curl, continuation lines
-  # joined, tokenised by shlex. A sed over the raw line kept quotes the shell
-  # strips, so the gate and the reader disagreed in both directions (review of
-  # #106): an unescaped 'Alice' inside the single-quoted argument reached the
-  # endpoint intact here but as a bare Alice — and a 400 — for the reader, and
-  # the correct '\'' escape did the opposite.
-  EXAMPLE=$("$PY3" - "$SPDOC" <<'PY' 2>/dev/null
-import re, shlex, sys
+  # block holding `--data-urlencode … query=…`, tokenised by bash's own quoting
+  # rules. Two cheaper readings were each wrong (review of #106): a sed over the
+  # raw line kept quotes the shell strips — an unescaped 'Alice' inside the
+  # single-quoted argument reached the endpoint intact here but as a bare Alice,
+  # and a 400, for the reader — and Python's shlex keeps the backslash in a
+  # double-quoted \$v, which bash removes. The tokenizer below implements the
+  # bash rules (single quotes literal; double quotes honour \$ \` \" \\ and
+  # \<newline>; unquoted \x is x; \<newline> joins lines) and REFUSES a query
+  # that depends on $ or ` expansion rather than guessing it: the gate never
+  # executes README text. Once the example is found, an unparseable one is a
+  # defect; it does not fall through to a later, valid block.
+  # Written to a file and run from there, never as a heredoc inside $( ): bash
+  # 3.2 (macOS's /bin/bash) still scans such a heredoc for quotes and backticks,
+  # and this one is full of both.
+  cat > "$WORK/extract-example.py" <<'PY'
+import re, sys
+
+def bash_words(src):
+    """Words of a shell command list, as (text, expanded) pairs. Operators end words."""
+    words, cur, have, tainted, i, n = [], [], False, False, 0, len(src)
+    def flush():
+        nonlocal cur, have, tainted
+        if have:
+            words.append((''.join(cur), tainted))
+        cur, have, tainted = [], False, False
+    while i < n:
+        c = src[i]
+        if c in ' \t\n':
+            flush(); i += 1
+        elif c in ';&|<>()':
+            flush(); i += 1
+        elif c == '#' and not have:
+            j = src.find('\n', i)
+            i = n if j < 0 else j
+        elif c == "'":
+            j = src.find("'", i + 1)
+            if j < 0:
+                raise ValueError('unterminated single quote')
+            cur.append(src[i + 1:j]); have = True; i = j + 1
+        elif c == '"':
+            have = True; i += 1
+            while True:
+                if i >= n:
+                    raise ValueError('unterminated double quote')
+                c = src[i]
+                if c == '"':
+                    i += 1; break
+                if c == '\\' and i + 1 < n and src[i + 1] in '$`"\\\n':
+                    if src[i + 1] != '\n':
+                        cur.append(src[i + 1])
+                    i += 2; continue
+                if c in '$`':
+                    tainted = True
+                cur.append(c); i += 1
+        elif c == '\\':
+            if i + 1 < n and src[i + 1] == '\n':
+                i += 2                      # line continuation
+            else:
+                if i + 1 < n:
+                    cur.append(src[i + 1])
+                have = True; i += 2
+        else:
+            if c in '$`':
+                tainted = True
+            cur.append(c); have = True; i += 1
+    flush()
+    return words
+
 try:
     text = open(sys.argv[1], encoding='utf-8').read()
 except OSError:
     sys.exit(0)
 for block in re.findall(r'^```[a-z]*\n(.*?)^```', text, re.S | re.M):
-    if '--data-urlencode' not in block:
+    if '--data-urlencode' not in block or 'query=' not in block:
         continue
-    command = re.sub(r'\\\n', ' ', block)
     try:
-        tokens = shlex.split(command, comments=False)
-    except ValueError:
-        continue
-    for i, tok in enumerate(tokens[:-1]):
-        if tok == '--data-urlencode' and tokens[i + 1].startswith('query='):
-            sys.stdout.write(tokens[i + 1][len('query='):])
+        words = bash_words(block)
+    except ValueError as e:
+        print('the curl example is not a well-formed shell command (%s)' % e)
+        sys.exit(4)
+    for k, (w, _) in enumerate(words[:-1]):
+        nxt, expanded = words[k + 1]
+        if w == '--data-urlencode' and nxt.startswith('query='):
+            if expanded:
+                print('the curl example\'s query depends on shell expansion ($ or `), which this gate will not evaluate')
+                sys.exit(4)
+            sys.stdout.write(nxt[len('query='):])
             sys.exit(0)
 PY
-)
+  EXAMPLE=$("$PY3" "$WORK/extract-example.py" "$SPDOC" 2>/dev/null)
+  exrc=$?
+  if [ "$exrc" -eq 4 ]; then
+    err "$SPDOC: $EXAMPLE — a reader pasting it would not send the query it shows."
+    EXAMPLE="(unreadable)"
+  elif [ "$exrc" -ne 0 ]; then
+    echo "??:   INCONCLUSIVE — the README example extractor exited $exrc. Not a documentation defect; re-run."
+    exit 3
+  fi
   JETTY_PIN=$(sed -n 's|.*<jetty\.version>\(.*\)</jetty\.version>.*|\1|p' "$SPPOM" | head -1)
-  [ -n "$EXAMPLE" ] && echo "note: $SPDOC example query, as a shell passes it: $EXAMPLE"
+  [ -n "$EXAMPLE" ] && [ "$exrc" -eq 0 ] && echo "note: $SPDOC example query, as a shell passes it: $EXAMPLE"
   if [ -z "$EXAMPLE" ]; then
     err "$SPDOC no longer carries a curl example (--data-urlencode 'query=…') — the deep tier would have nothing of the README's to run, so it would pass vacuously."
   fi
@@ -1771,7 +1843,7 @@ PY
   # and passed, and `"results": "broken"` crashed the parser into an
   # INCONCLUSIVE (review of #106). A malformed answer is the endpoint's
   # defect; only the interpreter failing is ours.
-  SPV=$("$PY3" - "$SPW" <<'PY'
+  cat > "$WORK/check-answers.py" <<'PY'
 import json, os, sys
 d = sys.argv[1]
 def load(name):
@@ -1780,18 +1852,31 @@ def load(name):
             return json.load(fh)
     except (OSError, ValueError):
         return None
+TYPES = {'uri', 'literal', 'bnode', 'triple'}
 def term(t):
-    return isinstance(t, dict) and isinstance(t.get('type'), str) and isinstance(t.get('value'), str)
+    # SPARQL 1.1 Query Results JSON §3.2.2 (plus RDF-star's 'triple', which RDF4J writes).
+    return (isinstance(t, dict) and t.get('type') in TYPES
+            and (isinstance(t.get('value'), str) or (t.get('type') == 'triple' and isinstance(t.get('value'), dict))))
+def head_vars(doc):
+    h = doc.get('head') if isinstance(doc, dict) else None
+    if not isinstance(h, dict):
+        return None
+    v = h.get('vars', [])
+    return v if isinstance(v, list) and all(isinstance(x, str) for x in v) else None
 ask, example = load('ask'), load('example')
-ask_ok = isinstance(ask, dict) and ask.get('boolean') is True
+ask_ok = isinstance(ask, dict) and head_vars(ask) is not None and ask.get('boolean') is True
 rows = -1   # -1 = not a well-formed SPARQL JSON SELECT result
-if isinstance(example, dict) and isinstance(example.get('results'), dict):
+vars_ = head_vars(example)
+if vars_ is not None and isinstance(example.get('results'), dict):
     b = example['results'].get('bindings')
-    if isinstance(b, list) and all(isinstance(r, dict) and r and all(term(v) for v in r.values()) for r in b):
+    # A row is an object whose keys are declared variables bound to RDF terms.
+    # {} is a valid row: every variable unbound (an OPTIONAL that matched nothing).
+    if isinstance(b, list) and all(isinstance(r, dict) and all(k in vars_ and term(v) for k, v in r.items())
+                                   for r in b):
         rows = len(b)
 print('%s %d' % ('true' if ask_ok else 'bad', rows))
 PY
-)
+  SPV=$("$PY3" "$WORK/check-answers.py" "$SPW")
   if [ $? -ne 0 ] || [ -z "$SPV" ]; then
     echo "??:   INCONCLUSIVE — the endpoint-answer parser failed. Not a documentation defect; re-run."
     exit 3
@@ -1813,6 +1898,12 @@ PY
 
   JETTY_MCP=$(head -1 "$SPW/jetty-mcp" 2>/dev/null | tr -d '[:space:]')
   if [ -z "$JETTY_MCP" ]; then
+    # A defect already found above stays a defect: "inconclusive, re-run" would
+    # hide it behind a Maven hiccup (review of #106).
+    if [ "$fail" -ne 0 ]; then
+      echo "note: could not also read which jetty-server mcp-server resolves at $PIN; C3 not checked this run."
+      exit 1
+    fi
     echo "??:   INCONCLUSIVE — could not read which jetty-server mcp-server resolves at $PIN. Not a documentation defect; re-run."
     exit 3
   elif [ "$JETTY_MCP" = "$JETTY_PIN" ]; then
