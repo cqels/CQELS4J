@@ -499,6 +499,10 @@ are called out.
   (resolved against the query's own `PREFIX` declarations, the same as in a triple pattern). Since
   `2.0.0-alpha.22` also `REPLACE`, `COALESCE`, `REGEX` and `STRDT`, and a string literal's escapes
   (`"a\nb"` has `STRLEN` 3).
+  **`=` and `!=` ignore a language tag** ([#117](https://github.com/cqels/CQELS4J/issues/117)). Measured on `2.0.0-alpha.22` (and the same on alpha.21),
+  `"cat"@en = "cat"@fr` holds and `!=` does not, whether both values come from the stream or one is
+  a constant; `"cat"@en = "cat"` holds too. In SPARQL 1.1 these are distinct terms. `sameTerm`
+  tells them apart, as does adding `LANG(?x) = "fr"` to the comparison.
   **Not every SPARQL 1.1 built-in is evaluated**, and an unevaluated one fails the same silent way an
   unregistered function IRI does — no registration error, `FILTER` simply never matches and `BIND`
   leaves the variable unbound. Known gaps on `2.0.0-alpha.22`:
@@ -548,13 +552,14 @@ are called out.
   `GROUP BY` query with a static graph pattern under `[TRIPLES 2]`. On alpha.20 and alpha.21 both
   shapes ran the `FILTER` first, so it saw the variable unbound.
 - **`{ … } UNION { … }`** — alternative patterns merged before `FILTER`. **On a non-aggregate
-  query, a static `UNION` drops every row when the variable joining it to the stream is not
-  projected** — an upstream known issue of `2.0.0-alpha.22`. Measured under `[NOW]`, `[TRIPLES 3]`
-  and `[RANGE 3s]`:
+  query whose only static pattern is a `UNION`, the `UNION` drops every row when the variable
+  joining it to the stream is not projected** — an upstream known issue of `2.0.0-alpha.22`.
+  Measured under `[NOW]`, `[TRIPLES 3]` and `[RANGE 3s]`:
   `SELECT ?r ?city … { STREAM S { ?r ex:person ?p } { ?p ex:city ?city } UNION { ?p ex:town ?city } }`
-  answers nothing, and the same query projecting `?p` answers. Under `[TRIPLES 3]` or
-  `[RANGE 3s]`, adding `ORDER BY` or `LIMIT` also avoids it, and so does an aggregate such as
-  `COUNT(*)`; under `[NOW]`, project the join variable.
+  answers nothing, and the same query projecting `?p` answers. Each of these also avoids it: a
+  satisfied static pattern outside the `UNION` (such as `?r ex:kind ex:K`), an aggregate such as
+  `COUNT(*)`, and — under `[TRIPLES 3]` or `[RANGE 3s]` — `ORDER BY` or `LIMIT`. The simplest fix
+  is to project the join variable.
 - **Property paths (`/`, `^`, `+`, `*`, `?`, `|`)** — **executed on one route since
   `2.0.0-alpha.22`**: the triple patterns of the one `STREAM` block of a single-stream query over a
   `[RANGE]`, `[SLIDE]` or `[TRIPLES]` window, with no static graph pattern. Measured on

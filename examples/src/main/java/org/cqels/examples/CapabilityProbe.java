@@ -94,6 +94,9 @@ public class CapabilityProbe {
         knownBug("     GROUP BY merges \"cat\"@en and \"cat\"@fr into one group",
                 groupsOverLanguageTaggedKey(), "1 group", "2 groups",
                 "CQELS-QL_SPEC.md §9 Aggregates, GETTING_STARTED.md limitations table");
+        knownBug("#117 = treats \"cat\"@en and \"cat\"@fr as equal (a language tag is ignored)",
+                languageTaggedEquality(), "equal", "not equal",
+                "CQELS-QL_SPEC.md §9 FILTER entry, GETTING_STARTED.md limitations table");
         knownBug("     a static UNION drops every row when its join variable is not projected",
                 unionWithUnprojectedJoinVariable(), "0 rows", "1 row",
                 "CQELS-QL_SPEC.md §9 UNION entry, GETTING_STARTED.md limitations table");
@@ -316,27 +319,19 @@ public class CapabilityProbe {
      * CDSP_MAPPING.md now says ports directly.
      */
     private static boolean replaceEvaluates() throws Exception {
-        String single = firstValue(run(null, """
+        List<Object> single = run(null, """
             SELECT ?r FROM STREAM S [TRIPLES 1]
             WHERE { STREAM S { ?o <%sof> ?x . } BIND(REPLACE(STR(?x), "^.*#", "") AS ?r) }
             """.formatted(C),
-                s -> s.pushTriple(C + "o1", C + "of", C + "a")), "r");
-        String nested = firstValue(run(null, """
+                s -> s.pushTriple(C + "o1", C + "of", C + "a"));
+        List<Object> nested = run(null, """
             SELECT ?r FROM STREAM S [TRIPLES 1]
             WHERE { STREAM S { ?o <%sof> ?x . }
                     BIND(REPLACE(REPLACE(STR(?x), "^.*#", ""), "[^a-zA-Z0-9]", "") AS ?r) }
             """.formatted(C),
-                s -> s.pushTriple(C + "o1", C + "of", C + "a-b_c")), "r");
-        return "a".equals(single) && "abc".equals(nested);
-    }
-
-    /** The label (or string form) of {@code var} in the first row, or null. */
-    private static String firstValue(List<Object> rows, String var) {
-        if (rows.isEmpty()) {
-            return null;
-        }
-        Object v = ((Map<?, ?>) rows.get(0)).get(var);
-        return v == null ? null : (v instanceof Literal l ? l.getLabel() : String.valueOf(v));
+                s -> s.pushTriple(C + "o1", C + "of", C + "a-b_c"));
+        // Exactly one plain-string row each: an extra row or a language-tagged "a"@fr must fail.
+        return exactRows(single, List.of(row("r", "a"))) && exactRows(nested, List.of(row("r", "abc")));
     }
 
     /** sameTerm (SPARQL 1.1 §17.4.1.1) must evaluate, even over one variable with itself. */
@@ -371,7 +366,27 @@ public class CapabilityProbe {
                             VF.createStatement(o, VF.createIRI(C + "lit"), VF.createLiteral(C + "a"))));
                 });
 
-        return !same.isEmpty() && otherIri.isEmpty() && iriVsLiteral.isEmpty();
+        // "1"^^xsd:int and "1.0"^^xsd:decimal are EQUAL values but distinct terms: = admits the pair
+        // (the control: if it stops, the fixture no longer separates the two), sameTerm must not.
+        // Without this pair, replacing sameTerm with = passed (codex, round 5 of #116).
+        Pusher equalValues = s -> {
+            IRI o = VF.createIRI(C + "o1");
+            s.push(List.of(
+                    VF.createStatement(o, VF.createIRI(C + "a"), VF.createLiteral("1", org.eclipse.rdf4j.model.vocabulary.XSD.INT)),
+                    VF.createStatement(o, VF.createIRI(C + "b"), VF.createLiteral("1.0", org.eclipse.rdf4j.model.vocabulary.XSD.DECIMAL))));
+        };
+        String pair = """
+            SELECT ?o FROM STREAM S [TRIPLES 1]
+            WHERE { STREAM S { ?o <%1$sa> ?x . ?o <%1$sb> ?y . } FILTER(%2$s) }
+            """;
+        List<Object> valueEqual = run(null, pair.formatted(C, "?x = ?y"), equalValues);
+        List<Object> termEqual = run(null, pair.formatted(C, "sameTerm(?x, ?y)"), equalValues);
+        if (valueEqual.isEmpty()) {
+            DIVERGENCES.add("REGRESSED — the control (\"1\"^^xsd:int = \"1.0\"^^xsd:decimal) no longer "
+                    + "matches\n      the sameTerm-vs-equality verdict is meaningless until that is understood");
+        }
+
+        return !same.isEmpty() && otherIri.isEmpty() && iriVsLiteral.isEmpty() && termEqual.isEmpty();
     }
 
     /**
@@ -799,8 +814,15 @@ public class CapabilityProbe {
                 s.push(VF.createStatement(VF.createIRI(C + "o2"), VF.createIRI(C + "d"),
                         VF.createLiteral(second, duration)), 1100L);
             });
+        // Each report must be an xsd:duration literal; anything else is reported by its full term,
+        // so a string or xsd:dayTimeDuration cannot read as the documented label (codex, round 5).
         List<String> reports = new ArrayList<>();
-        rows.forEach(row -> reports.add(text(((Map<?, ?>) row).get("m"))));
+        for (Object row : rows) {
+            Object m = ((Map<?, ?>) row).get("m");
+            reports.add(m instanceof Literal l && l.getLanguage().isEmpty()
+                    && org.eclipse.rdf4j.model.vocabulary.XSD.DURATION.equals(l.getDatatype())
+                    ? l.getLabel() : "<" + m + (m == null ? "" : " : " + m.getClass().getSimpleName()) + ">");
+        }
         return reports.isEmpty() ? "no row" : String.join(" ", reports);
     }
 
@@ -923,6 +945,47 @@ public class CapabilityProbe {
             return "2 groups";
         }
         return String.valueOf(rows);
+    }
+
+    /**
+     * Measured on 2.0.0-alpha.22 (and the same on alpha.21): {@code =} compares a language-tagged
+     * literal by its label, so {@code "cat"@en = "cat"@fr} holds and {@code !=} does not. In SPARQL
+     * 1.1 the two are distinct terms, so {@code =} must not hold; RDF4J's own evaluator, the
+     * reference used here, answers {@code =} false and {@code !=} true.
+     * Both arrive in one atomic element under {@code [TRIPLES 1]}.
+     *
+     * <p>The control is {@code sameTerm}, which must reject the pair, and {@code =} over two
+     * identical {@code "cat"@en} values, which must hold — or the fixture itself is failing.
+     *
+     * <p>Returns {@code equal} as documented ({@code =} one row, {@code !=} none), {@code not equal}
+     * once fixed, or the rows.
+     */
+    private static String languageTaggedEquality() throws Exception {
+        String pair = """
+            SELECT ?o FROM STREAM S [TRIPLES 1]
+            WHERE { STREAM S { ?o <%1$sa> ?x . ?o <%1$sb> ?y . } FILTER(%2$s) }
+            """;
+        Pusher tags = s -> s.push(List.of(
+                VF.createStatement(iri("o1"), iri("a"), VF.createLiteral("cat", "en")),
+                VF.createStatement(iri("o1"), iri("b"), VF.createLiteral("cat", "fr"))));
+        Pusher same = s -> s.push(List.of(
+                VF.createStatement(iri("o1"), iri("a"), VF.createLiteral("cat", "en")),
+                VF.createStatement(iri("o1"), iri("b"), VF.createLiteral("cat", "en"))));
+        List<Map<String, Object>> o1 = List.of(row("o", iri("o1")));
+        if (!run(null, pair.formatted(C, "sameTerm(?x, ?y)"), tags).isEmpty()
+                || !exactRows(run(null, pair.formatted(C, "?x = ?y"), same), o1)) {
+            DIVERGENCES.add("REGRESSED — the controls (sameTerm rejects @en/@fr; = holds for @en/@en) "
+                    + "failed\n      the language-tag equality verdict is meaningless until that is understood");
+        }
+        List<Object> eq = run(null, pair.formatted(C, "?x = ?y"), tags);
+        List<Object> ne = run(null, pair.formatted(C, "?x != ?y"), tags);
+        if (exactRows(eq, o1) && ne.isEmpty()) {
+            return "equal";
+        }
+        if (eq.isEmpty() && exactRows(ne, o1)) {
+            return "not equal";
+        }
+        return "= " + eq + ", != " + ne;
     }
 
     /**
@@ -1374,7 +1437,10 @@ public class CapabilityProbe {
                     BIND(SUBSTR(STR(?v), 1, 2) AS ?u)
                     BIND(IF(?v > 10, "hi", "lo") AS ?f) }
             """.formatted(C, C),
-                s -> s.push(C + "o1", C + "val", 250.0));
+                s -> {
+                    s.push(C + "o1", C + "val", 250.0);
+                    s.push(C + "o2", C + "val", 5.0);
+                });
         // Assert the VALUES, not merely that the bindings exist: a wrong ABS or SUBSTR would
         // otherwise pass, and this check exists to catch behavioural regressions.
         // Compared as exact values per binding: substring matching accepted d=150.01 (codex, #116).
@@ -1383,7 +1449,10 @@ public class CapabilityProbe {
                 "c", "x250.0",                  // CONCAT("x", STR(250.0))
                 "i", iri("250.0"),              // IRI(...) must bind an IRI, not a string
                 "u", "25",                      // SUBSTR("250.0", 1, 2)
-                "f", "hi")));                   // IF(250 > 10, "hi", "lo")
+                "f", "hi"),                     // IF(250 > 10, "hi", "lo")
+                // The second input separates ABS from its argument (-95) and IF's branches: with
+                // 250 alone, a missing ABS or a constant "hi" passed (codex, round 5 of #116).
+                row("d", num(95.0), "c", "x5.0", "i", iri("5.0"), "u", "5.", "f", "lo")));
     }
 
     private static boolean atomicElementJoins() throws Exception {
@@ -1502,8 +1571,10 @@ public class CapabilityProbe {
         }
         if (expected instanceof Literal want) {
             // Term identity — label, language tag and datatype — whatever Literal class the engine uses.
+            // Language tags compare case-insensitively, as RDF term equality does (@EN is @en).
             return actual instanceof Literal got && got.getLabel().equals(want.getLabel())
-                    && got.getLanguage().equals(want.getLanguage()) && got.getDatatype().equals(want.getDatatype());
+                    && got.getLanguage().map(String::toLowerCase).equals(want.getLanguage().map(String::toLowerCase))
+                    && got.getDatatype().equals(want.getDatatype());
         }
         // A plain string: a Java String, or a simple literal (xsd:string, no language tag). "25"^^xsd:int
         // and "25"@fr are other RDF terms (codex, round 4 of #116); expect them as a Literal instead.
