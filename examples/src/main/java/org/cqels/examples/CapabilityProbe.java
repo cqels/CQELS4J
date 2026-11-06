@@ -18,6 +18,7 @@ import org.cqels.reasoning.config.ReasoningConfig;
 import org.cqels.reasoning.engine.ReactiveReteAdapter;
 import org.cqels.stream.StreamElement;
 import org.eclipse.rdf4j.model.IRI;
+import org.eclipse.rdf4j.model.Literal;
 import org.eclipse.rdf4j.model.Statement;
 import org.eclipse.rdf4j.model.ValueFactory;
 import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
@@ -37,7 +38,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * <p><strong>Why this exists.</strong> `scripts/ci/version-truth-gate.sh` was written because a claim
  * in the prose can go stale without anything failing to compile. Capability claims are the same
  * hazard one category over. The examples, `examples/README.md`, `CQELS-QL_SPEC.md` §6/§9 and
- * `CDSP_MAPPING.md` all carry statements of the form "X does not work on 2.0.0-alpha.21, work around
+ * `CDSP_MAPPING.md` all carry statements of the form "X does not work on 2.0.0-alpha.22, work around
  * it like this". Every one of those becomes <em>false</em> the day the engine is fixed, and nothing
  * would notice: the workarounds keep working, so the build stays green while the documentation
  * quietly starts lying — and readers keep applying workarounds they no longer need.
@@ -81,27 +82,12 @@ public class CapabilityProbe {
         System.out.println("Capability probe — does the engine still behave as this repo documents?\n");
 
         System.out.println("-- caveats (documented as BROKEN; a pass here means the docs are stale) --");
-        caveat("#82 xsd:duration is compared as text (PT10S > PT9S is false)",
-                durationOrderIsNotLexical(),
-                "CQELS-QL_SPEC.md §9 gap table, CDSP_MAPPING.md §4");
-        caveat("     a literal join key drops its row on the composed route",
-                literalJoinKeyAdmits(),
-                "CQELS-QL_SPEC.md §6");
-        caveat("#83 a FILTER over a BIND target drops every row beside a static pattern",
-                filterSeesBindTargetBesideStaticPattern(),
-                "CQELS-QL_SPEC.md §9 BIND entry and §6");
-        caveat("#85 a FILTER over an OPTIONAL variable drops every row on a stream-only query",
-                filterSeesOptionalVariableOnStreamOnlyQuery(),
-                "CQELS-QL_SPEC.md §9 OPTIONAL entry, GETTING_STARTED.md limitations table");
-        caveat("#74 a CEP SEQ variable that is never a subject matches any element",
-                seqVariableMustBeASubject(),
-                "CQELS-QL_SPEC.md §7 SEQ arguments, GETTING_STARTED.md limitations table");
-        caveat("     FROM <graph> does not scope a static lookup on a one-stream query",
-                fromGraphScopesStaticLookup(),
-                "CQELS-QL_SPEC.md §6, GETTING_STARTED.md limitations table");
-        caveat("     REPLACE() is not evaluated",
-                replaceEvaluates(),
-                "CQELS-QL_SPEC.md §9 gap table, CDSP_MAPPING.md §4");
+        caveat("     xsd:duration in MAX is compared as text (MAX of PT9S, PT10S is PT9S)",
+                durationMaxIsByValue(),
+                "CQELS-QL_SPEC.md §9 gap table, CDSP_MAPPING.md §4, GETTING_STARTED.md limitations table");
+        caveat("     AVG of a group with no bound argument is null, not 0",
+                avgOfUnboundGroupIsZero(),
+                "GETTING_STARTED.md limitations table");
         caveat("#58 reasoner cannot match the background graph",
                 reasonerSeesBackgroundGraph(),
                 "SkosConceptRollup.java, CDSP_MAPPING.md §5, GETTING_STARTED.md limitations table");
@@ -114,8 +100,8 @@ public class CapabilityProbe {
                 staticPatternEliminates());
         capability("#55 prefixed name inside FILTER resolves (fixed)",
                 pnameInFilterResolves());
-        capability("#56 property path is rejected at registration, not silently mis-evaluated (fixed)",
-                propertyPathRejected());
+        capability("property paths run in a stream-only STREAM block and are refused by name elsewhere",
+                propertyPathRoute());
         capability("#65 sameTerm() evaluates (fixed)",
                 sameTermEvaluates());
         capability("#57 reasoner sees multi-statement (atomic) elements (fixed)",
@@ -124,6 +110,19 @@ public class CapabilityProbe {
                 reverseEdgeGuardAdmits());
         capability("#67 [NOW] static pattern does not admit a missing stream conjunct (fixed)",
                 nowStaticPatternEnforcesConjunction());
+        capability("#82 FILTER compares xsd:duration by value (fixed in alpha.22)",
+                durationFilterIsByValue());
+        capability("     a literal join key answers on the composed route (fixed in alpha.22)",
+                literalJoinKeyAdmits());
+        capability("#83 a FILTER sees a BIND target beside a static pattern (fixed in alpha.22)",
+                filterSeesBindTargetBesideStaticPattern());
+        capability("#85 a FILTER sees an OPTIONAL variable on a stream-only query (fixed in alpha.22)",
+                filterSeesOptionalVariableOnStreamOnlyQuery());
+        capability("#74 a CEP SEQ variable that is never a subject is refused (fixed in alpha.22)",
+                seqVariableMustBeASubject());
+        capability("     FROM <graph> scopes a static lookup on a one-stream query (fixed in alpha.22)",
+                fromGraphScopesStaticLookup());
+        capability("     REPLACE() is evaluated (fixed in alpha.22)", replaceEvaluates());
         capability("stream-static enrichment binds static variables", staticEnrichmentBinds());
         capability("FILTER/BIND builtins: ABS, CONCAT, IRI, SUBSTR, IF", builtinsWork());
         capability("atomic multi-statement element joins in a query", atomicElementJoins());
@@ -200,75 +199,82 @@ public class CapabilityProbe {
     }
 
     /**
-     * #56 (fixed): a property path must either be REJECTED at registration or EXECUTED correctly.
-     * Confirmed fixed via the REJECTED branch — strict parsing now throws at registration; paths
-     * remain unsupported syntax, just no longer silently mis-evaluated.
+     * Property paths, since 2.0.0-alpha.22: EXECUTED on one route, REFUSED by name on every other.
+     * CQELS-QL_SPEC.md §9 states both halves, so the check asserts both.
      *
-     * <p>The oracle lives entirely INSIDE the stream block, which matters. An earlier version put
-     * both path patterns in the static graph; #54, also fixed, used to make a non-matching static
-     * pattern survive, so the "bogus target matched nothing" half was contaminated and the check
-     * could not have distinguished a real path fix (codex, round 2). Stream patterns were never
-     * affected by #54.
+     * <p>Executed: inside the one {@code STREAM} block of a single-stream {@code [RANGE]} query with
+     * no static graph pattern. The hierarchy is {@code leaf -> mid -> root}, pushed as two elements;
+     * {@code ?x broader+ root} must bind BOTH {@code mid} (one hop) and {@code leaf} (two), and a
+     * path to a target that does not exist must bind nothing. The oracle lives entirely inside the
+     * stream block on purpose: an earlier version put the path in the static graph, where #54 used
+     * to make a non-matching pattern survive (codex, round 2). Binding only {@code mid} is the old
+     * #56 silent mis-evaluation, so it fails the check.
      *
-     * <p>The hierarchy is {@code leaf -> mid -> root}. Had the engine instead started EXECUTING
-     * paths rather than rejecting them, correct semantics would bind BOTH {@code leaf} (two hops)
-     * and {@code mid} (one) for {@code ?x broader+ root} — the old, silently-wrong behavior bound
-     * only {@code mid}. Either outcome is a fix; only the old silent-registration behavior is not.
+     * <p>Refused: under {@code [NOW]}, and beside a static graph pattern. Each refusal must name the
+     * path ("path" in the message): a refusal for some unrelated reason must not read as the
+     * documented one. Before alpha.22 every path was refused, which this check reports as a
+     * regression — the docs now promise the executed route.
      */
-    private static boolean propertyPathRejected() throws Exception {
+    private static boolean propertyPathRoute() throws Exception {
+        String path = "?x <" + C + "broader>+ ";
+        String now = pathRefusal("SELECT ?x FROM STREAM S [NOW]\n"
+                + "WHERE { STREAM S { " + path + "<" + C + "root> . } }\n");
+        String besideStatic = pathRefusal("SELECT ?x ?l FROM STREAM S [RANGE 5s]\n"
+                + "WHERE { STREAM S { " + path + "?r . } ?r <" + C + "label> ?l . }\n");
+        boolean refusedByName = now != null && now.toLowerCase().contains("path")
+                && besideStatic != null && besideStatic.toLowerCase().contains("path");
+
         try (CQELSEngine engine = CQELSEngine.builder().id("probe-path").withMemoryStore().build()) {
             DataStream stream = engine.createStream("S");
             List<Object> toRoot = new CopyOnWriteArrayList<>();
             List<Object> toBogus = new CopyOnWriteArrayList<>();
             try {
-                engine.registerCqelsQuery(withRegister(
-                        "SELECT ?x FROM STREAM S [RANGE 5s]\n"
-                        + "WHERE { STREAM S { ?x <" + C + "broader>+ <" + C + "root> . } }\n"), toRoot::add);
-                engine.registerCqelsQuery(withRegister(
-                        "SELECT ?x FROM STREAM S [RANGE 5s]\n"
-                        + "WHERE { STREAM S { ?x <" + C + "broader>+ <" + C + "nope> . } }\n"), toBogus::add);
+                engine.registerCqelsQuery(withRegister("SELECT ?x FROM STREAM S [RANGE 5s]\n"
+                        + "WHERE { STREAM S { " + path + "<" + C + "root> . } }\n"), toRoot::add);
+                engine.registerCqelsQuery(withRegister("SELECT ?x FROM STREAM S [RANGE 5s]\n"
+                        + "WHERE { STREAM S { " + path + "<" + C + "nope> . } }\n"), toBogus::add);
             } catch (Exception e) {
-                String msg = String.valueOf(e.getMessage()).toLowerCase();
-                // Only a PATH-specific rejection counts; an unrelated failure must not read as a fix.
-                // A future engine rejecting paths with some other wording reads as "still open",
-                // which fails safe: it can never report green when it should not. "syntax" is the
-                // one word CqelsQueryParser's own parse-error wrapper guarantees (asserted by its
-                // own test suite), so it survives an ANTLR message-wording change that would drop
-                // "extraneous" or "'+'".
-                return msg.contains("path") || msg.contains("'+'") || msg.contains("extraneous")
-                        || msg.contains("syntax");
+                DIVERGENCES.add("REFUSED — a '+' path inside a stream-only [RANGE] STREAM block was "
+                        + "refused at registration (" + e.getMessage() + ")\n      CQELS-QL_SPEC.md §9 "
+                        + "says this route executes paths");
+                return false;
             }
-            // Registration SUCCEEDED. On alpha.20 that is already a divergence: §9 says paths are
-            // "not supported, and (since 2.0.0-alpha.20) cleanly rejected", so anything that gets
-            // this far contradicts the documentation and must fail the check.
-            //
-            // Accepting correct execution here would be wrong even though it sounds generous. If
-            // issue #46 lands and paths are genuinely implemented, §9's "not supported" becomes
-            // false — and that is exactly the staleness this probe exists to catch. Treating
-            // execution as success would keep the check green through it (codex, review of #66).
-            // So the run below only distinguishes WHICH way the docs are now wrong, for the
-            // failure message; either way the answer is false.
             engine.start();
             stream.pushTriple(C + "leaf", C + "broader", C + "mid");
             Thread.sleep(200);
             stream.pushTriple(C + "mid", C + "broader", C + "root");
             Thread.sleep(1500);
-            if (toRoot.toString().contains(C + "leaf") && toBogus.isEmpty()) {
-                DIVERGENCES.add("NOW EXECUTING — a two-hop '+' path over the stream resolved, and "
-                        + "a bogus target matched nothing\n      CQELS-QL_SPEC.md §9 still says "
-                        + "'not supported ... cleanly rejected', so that is already wrong. This "
-                        + "probes ONE operator on ONE shape: re-assess #46 against its acceptance "
-                        + "criteria before claiming paths are implemented");
-            } else {
-                DIVERGENCES.add("MIS-EVALUATED — a property path registered but did not execute "
-                        + "correctly\n      neither §9's 'cleanly rejected' nor working support; "
-                        + "re-open the silent-mangling case from #56");
+            String got = toRoot.toString();
+            boolean executes = got.contains(C + "leaf") && got.contains(C + "mid") && toBogus.isEmpty();
+            if (!executes) {
+                DIVERGENCES.add("MIS-EVALUATED — '+' over leaf -> mid -> root returned " + got
+                        + " (bogus target: " + toBogus + ")\n      expected mid and leaf, and nothing "
+                        + "for the bogus target; this is the silent-mangling case from #56");
             }
-            return false;
+            if (!refusedByName) {
+                DIVERGENCES.add("NOT REFUSED BY NAME — [NOW]: " + now + "; beside a static pattern: "
+                        + besideStatic + "\n      CQELS-QL_SPEC.md §9 says both are refused at "
+                        + "registration with a message naming the path");
+            }
+            return executes && refusedByName;
         }
     }
 
-    /** REPLACE (SPARQL 1.1 §17.4.3.14) must bind. Today the variable stays unbound. */
+    /** Registers a CQELS-QL query; returns null if it registers, or the refusal's message. */
+    private static String pathRefusal(String body) throws Exception {
+        try (CQELSEngine engine = CQELSEngine.builder().id("probe-path-refusal-" + QUERY_SEQ.incrementAndGet())
+                .withMemoryStore().build()) {
+            engine.createStream("S");
+            try {
+                engine.registerCqelsQuery(withRegister(body), row -> { });
+                return null;
+            } catch (Exception e) {
+                return String.valueOf(e.getMessage());
+            }
+        }
+    }
+
+    /** REPLACE (SPARQL 1.1 §17.4.3.14) must bind; fixed in alpha.22 (before, the variable stayed unbound). */
     private static boolean replaceEvaluates() throws Exception {
         List<Object> rows = run(null, """
             SELECT ?r FROM STREAM S [TRIPLES 1]
@@ -467,7 +473,7 @@ public class CapabilityProbe {
     }
 
     /**
-     * #67, fixed in 2.0.0-alpha.21: a static guard that reaches the join key by a REVERSE edge —
+     * #67, fixed since 2.0.0-alpha.21: a static guard that reaches the join key by a REVERSE edge —
      * {@code ex:coll ex:member ?f}, with {@code ?f} bound by the stream in object position — must
      * admit a matching element and must not admit one that cannot match the stream block.
      *
@@ -628,7 +634,7 @@ public class CapabilityProbe {
 
 
     /**
-     * #67's {@code [NOW]} half, fixed in 2.0.0-alpha.21. Two stream patterns plus a <em>satisfied</em>
+     * #67's {@code [NOW]} half, fixed since 2.0.0-alpha.21. Two stream patterns plus a <em>satisfied</em>
      * static pattern, and an element carrying only the FIRST stream statement: the second stream
      * pattern has no match, so the correct answer is no row.
      *
@@ -666,30 +672,111 @@ public class CapabilityProbe {
     }
 
     /**
-     * #82: {@code xsd:duration} comparison is evaluated, but not as durations. Measured on 2.0.0-alpha.21,
-     * and unchanged from the release before it:
+     * #82, fixed in 2.0.0-alpha.22: a {@code FILTER} compares {@code xsd:duration} values by value.
+     * Through alpha.21 every result was consistent with comparing the literals' text:
      *
      * <pre>
-     *   "PT2S"  &gt; "PT1S"    matches        (true as durations, true as text)
-     *   "PT10S" &gt; "PT9S"    does NOT match (true as durations, false as text)
-     *   "PT60S" = "PT1M"    does NOT match (equal durations, different text)
+     *   "PT2S"  &gt; "PT1S"    matched        (true as durations, true as text)
+     *   "PT10S" &gt; "PT9S"    did NOT match  (true as durations, false as text)
+     *   "PT60S" = "PT1M"    did NOT match  (equal durations, different text)
      * </pre>
      *
-     * <p>Every result is consistent with comparing the literals' text. The docs used to call this
-     * "silently unsupported — filter never matches", which was wrong in the more dangerous direction:
-     * it does match, sometimes, and the sometimes is decided by how the digits happen to sort.
-     *
-     * <p>Returns true when ANY of the three stops behaving as documented. That covers both ways
-     * upstream might change it — real duration ordering (the second and third start matching) or a
-     * type error per the SPARQL 1.1 operator table (the first stops matching) — and either one means
-     * {@code CQELS-QL_SPEC.md} §9 and {@code CDSP_MAPPING.md} §4 need editing.
+     * <p>All three must match now. The first is the control: it held as text too, so it is the row
+     * that would catch a type error per the SPARQL 1.1 operator table, which defines no ordering
+     * over durations. The other two are the ones only value comparison passes.
      */
-    private static boolean durationOrderIsNotLexical() throws Exception {
+    private static boolean durationFilterIsByValue() throws Exception {
         boolean twoGtOne = durationFilterMatches("\"PT2S\"^^<%1$sduration> > \"PT1S\"^^<%1$sduration>");
         boolean tenGtNine = durationFilterMatches("\"PT10S\"^^<%1$sduration> > \"PT9S\"^^<%1$sduration>");
         boolean sixtyEqMin = durationFilterMatches("\"PT60S\"^^<%1$sduration> = \"PT1M\"^^<%1$sduration>");
-        boolean asDocumented = twoGtOne && !tenGtNine && !sixtyEqMin;
-        return !asDocumented;
+        return twoGtOne && tenGtNine && sixtyEqMin;
+    }
+
+    /**
+     * Upstream lists it as a known issue of 2.0.0-alpha.22: {@code ORDER BY}, {@code MIN} and
+     * {@code MAX} still compare durations as text, although a {@code FILTER} now compares them by
+     * value. Measured: {@code MAX} over {@code PT9S} then {@code PT10S} under {@code [TRIPLES 3]}
+     * reports {@code PT9S}.
+     *
+     * <p>The control is {@code MAX} over two durations whose text and value orders agree
+     * ({@code PT1S}, {@code PT2S}): it must report {@code PT2S}, or the aggregate itself is failing.
+     *
+     * <p>Returns true when the last report is {@code PT10S}, i.e. the caveat is fixed.
+     */
+    private static boolean durationMaxIsByValue() throws Exception {
+        String agreeing = lastMax("PT1S", "PT2S");
+        if (!"PT2S".equals(agreeing)) {
+            DIVERGENCES.add("REGRESSED — the control (MAX of PT1S, PT2S) reported " + agreeing
+                    + ", not PT2S\n      MAX over durations is failing outright; the text-order "
+                    + "verdict is meaningless");
+        }
+        return "PT10S".equals(lastMax("PT9S", "PT10S"));
+    }
+
+    /** Pushes two {@code xsd:duration} values and returns the last {@code ?m} MAX reported, or null. */
+    private static String lastMax(String first, String second) throws Exception {
+        IRI duration = VF.createIRI("http://www.w3.org/2001/XMLSchema#duration");
+        List<Object> rows = run(null, """
+            SELECT (MAX(?d) AS ?m) FROM STREAM S [TRIPLES 3]
+            WHERE { STREAM S { ?o <%sd> ?d . } }
+            """.formatted(C), s -> {
+                s.push(VF.createStatement(VF.createIRI(C + "o1"), VF.createIRI(C + "d"),
+                        VF.createLiteral(first, duration)), 1000L);
+                Thread.sleep(100);
+                s.push(VF.createStatement(VF.createIRI(C + "o2"), VF.createIRI(C + "d"),
+                        VF.createLiteral(second, duration)), 1100L);
+            });
+        if (rows.isEmpty()) {
+            return null;
+        }
+        Object m = ((Map<?, ?>) rows.get(rows.size() - 1)).get("m");
+        return m == null ? null : (m instanceof Literal l ? l.getLabel() : String.valueOf(m));
+    }
+
+    /**
+     * Upstream lists it as a known issue of 2.0.0-alpha.22: {@code AVG} of a group in which no row
+     * binds the argument is null, where SPARQL 1.1 defines {@code Avg} of an empty multiset as 0.
+     * Measured: one element whose {@code OPTIONAL} finds no label in the store, grouped by subject under
+     * {@code [TRIPLES 2]}, reports {@code a=null}.
+     *
+     * <p>The control stores the label, so the {@code OPTIONAL} binds the argument: {@code AVG} must
+     * then report the label's value, or the aggregate route itself is failing.
+     *
+     * <p>Returns true when the unbound group reports 0, i.e. the caveat is fixed.
+     */
+    private static boolean avgOfUnboundGroupIsZero() throws Exception {
+        String query = """
+            SELECT ?o (AVG(?l) AS ?a) FROM STREAM S [TRIPLES 2]
+            WHERE { STREAM S { ?o <%1$sv> ?x . } OPTIONAL { ?o <%1$slabel> ?l } } GROUP BY ?o
+            """.formatted(C);
+        Pusher one = s -> s.push(List.of(VF.createStatement(VF.createIRI(C + "o1"), VF.createIRI(C + "v"),
+                VF.createLiteral(1))), 1000L);
+        // The OPTIONAL reads the store, as in the #85 check: the control seeds the label there.
+        Seeder labelled = engine -> {
+            try (RepositoryConnection conn = engine.getRepository().getConnection()) {
+                conn.add(VF.createIRI(C + "o1"), VF.createIRI(C + "label"), VF.createLiteral(8));
+            }
+        };
+        List<Object> control = run(labelled, query, one);
+        if (control.isEmpty() || !isNumber(((Map<?, ?>) control.get(control.size() - 1)).get("a"), 8)) {
+            DIVERGENCES.add("REGRESSED — the control (AVG over a bound label 8) reported " + control
+                    + "\n      the aggregate route itself is failing; the empty-group verdict is meaningless");
+        }
+        List<Object> rows = run(null, query, one);
+        return !rows.isEmpty() && isNumber(((Map<?, ?>) rows.get(rows.size() - 1)).get("a"), 0);
+    }
+
+    /** True when {@code value} is a number (or numeric literal) equal to {@code n}. */
+    private static boolean isNumber(Object value, double n) {
+        if (value == null) {
+            return false;
+        }
+        String text = value instanceof Literal l ? l.getLabel() : String.valueOf(value);
+        try {
+            return Double.parseDouble(text) == n;
+        } catch (NumberFormatException e) {
+            return false;
+        }
     }
 
     private static boolean durationFilterMatches(String filter) throws Exception {
@@ -704,14 +791,13 @@ public class CapabilityProbe {
     }
 
     /**
-     * Measured on 2.0.0-alpha.21, outside the 162-case sweep that showed #67 fixed: on the composed
+     * Fixed in 2.0.0-alpha.22, outside the 162-case sweep that showed #67 fixed: on the composed
      * windowed route (a multi-pattern {@code STREAM} block under an accumulating window), a stream
-     * solution whose join key binds a LITERAL drops its row. The identical query keyed on an IRI
-     * answers — that is the control, and if it stops answering the comparison means nothing.
-     * Under {@code [NOW]} the literal key is answered correctly. Upstream lists this as a known
-     * issue of the release.
+     * solution whose join key binds a LITERAL used to drop its row on alpha.21. The identical query
+     * keyed on an IRI answers — that is the control, and if it stops answering the comparison means
+     * nothing.
      *
-     * <p>Returns true when the literal-keyed row appears, i.e. the caveat is fixed.
+     * <p>Returns true when the literal-keyed row appears.
      */
     private static boolean literalJoinKeyAdmits() throws Exception {
         Seeder seeded = engine -> {
@@ -742,21 +828,18 @@ public class CapabilityProbe {
     }
 
     /**
-     * #83, measured on 2.0.0-alpha.21: on a query with a static graph pattern, a {@code FILTER} over
-     * a {@code BIND} target runs before the {@code BIND} — wherever the {@code FILTER} is written —
-     * and sees the variable unbound. A comparison on it drops every row; {@code FILTER(!BOUND(?y))}
-     * admits the row, which then comes out with {@code ?y} bound. In SPARQL 1.1 a group's
-     * {@code FILTER} sees its {@code BIND}, and a stream-only query gets this right. Checking the
-     * dropping direction is enough: a fix to the order flips both. The query deliberately has no
-     * {@code OPTIONAL} / {@code UNION} block: since alpha.21 a {@code BIND} written above the first
-     * of those runs before the {@code FILTER}, which would hide the defect. (A
-     * {@code FILTER NOT EXISTS} block does not hide it.)
+     * #83, fixed in 2.0.0-alpha.22: on a query with a static graph pattern, a {@code FILTER} over a
+     * {@code BIND} target must see the target, as SPARQL 1.1 requires. On alpha.21 the
+     * {@code FILTER} ran before the {@code BIND} and saw the variable unbound, so a comparison on it
+     * dropped every row. Checking the dropping direction is enough: a regression of the order flips
+     * both. The query deliberately has no {@code OPTIONAL} / {@code UNION} block: on alpha.21 a
+     * {@code BIND} written above the first of those already ran first, which would hide a
+     * regression.
      *
      * <p>The control filters on the variable the {@code BIND} reads instead, which answers; if it
      * stops answering, the static lookup itself has broken and this verdict means nothing.
      *
-     * <p>Returns true when the {@code FILTER} over the {@code BIND} target admits the row, i.e. the
-     * caveat is fixed.
+     * <p>Returns true when the {@code FILTER} over the {@code BIND} target admits the row.
      */
     private static boolean filterSeesBindTargetBesideStaticPattern() throws Exception {
         Seeder seeded = engine -> {
@@ -780,12 +863,11 @@ public class CapabilityProbe {
     }
 
     /**
-     * #85, measured on 2.0.0-alpha.21 (and the same on alpha.20): on a stream-only query, a
-     * {@code FILTER} over a variable an {@code OPTIONAL} binds runs before the {@code OPTIONAL} and
-     * sees it unbound. {@code FILTER(BOUND(?l))} drops a row whose {@code ?l} the {@code OPTIONAL}
-     * binds; {@code FILTER(!BOUND(?l))} admits it, carrying the bound value. A windowed
-     * {@code GROUP BY} query with a static graph pattern does the same; a non-aggregate query with
-     * one is correct.
+     * #85, fixed in 2.0.0-alpha.22: on a stream-only query, a {@code FILTER} over a variable an
+     * {@code OPTIONAL} binds must run after the {@code OPTIONAL}. On alpha.20 and alpha.21 it ran
+     * first and saw the variable unbound: {@code FILTER(BOUND(?l))} dropped a row whose {@code ?l}
+     * the {@code OPTIONAL} binds, and {@code FILTER(!BOUND(?l))} admitted it, carrying the bound
+     * value.
      *
      * <p>Two subjects arrive: {@code o1}, which the {@code OPTIONAL} labels, and {@code o2}, which it
      * does not. The control is the query with no {@code FILTER}: it must return {@code o1} with
@@ -794,7 +876,7 @@ public class CapabilityProbe {
      * {@code o1}, {@code !BOUND} keeps only {@code o2} — so a query that loses its {@code FILTER}
      * altogether does not read as a fix.
      *
-     * <p>Returns true when both filters answer as SPARQL requires, i.e. the caveat is fixed.
+     * <p>Returns true when both filters answer as SPARQL requires.
      */
     private static boolean filterSeesOptionalVariableOnStreamOnlyQuery() throws Exception {
         Seeder seeded = engine -> {
@@ -821,7 +903,7 @@ public class CapabilityProbe {
         boolean boundRight = bound.equals(Set.of("o1+l"));
         boolean unboundRight = unbound.equals(Set.of("o2"));
         if (boundRight != unboundRight) {
-            DIVERGENCES.add("PARTIAL — #85 is fixed in one direction only: FILTER(BOUND(?l)) returned "
+            DIVERGENCES.add("PARTIAL — #85 holds in one direction only: FILTER(BOUND(?l)) returned "
                     + bound + ", FILTER(!BOUND(?l)) returned " + unbound);
         }
         return boundRight && unboundRight;
@@ -839,16 +921,18 @@ public class CapabilityProbe {
     }
 
     /**
-     * #74, measured on 2.0.0-alpha.21: a {@code SEQ} argument must be the subject of a triple
-     * pattern (CQELS-QL_SPEC.md §7), but one that is not registers anyway and matches any element.
-     * Both measured forms are checked — the variable mentioned nowhere else, and the variable used
-     * only as an object — each with an alert followed by an unrelated element.
+     * #74, fixed in 2.0.0-alpha.22: a {@code SEQ} argument must be the subject of a triple pattern
+     * (CQELS-QL_SPEC.md §7), and one that is not is refused at registration. On alpha.21 it
+     * registered and matched any element. Both measured forms are checked — the variable mentioned
+     * nowhere else, and the variable used only as an object — each with an alert followed by an
+     * unrelated element, in case a regression lets one register again.
      *
      * <p>The control makes the second argument a subject and pushes two alerts: it must match. If it
      * stops matching, CEP itself has broken and this verdict means nothing.
      *
-     * <p>Returns true when both forms are refused at registration or match nothing, i.e. fixed; a
-     * change in only one form is reported as PARTIAL.
+     * <p>Returns true when both forms are refused at registration, which is what §7 documents; a
+     * form that registers fails the check even if it matches nothing, and one form refused while
+     * the other is not is reported as PARTIAL.
      */
     private static boolean seqVariableMustBeASubject() throws Exception {
         String alert = "<" + C + "hasAlert> <" + C + "Overheat>";
@@ -863,12 +947,13 @@ public class CapabilityProbe {
             DIVERGENCES.add("REGRESSED — the control (two alerts, both SEQ arguments subjects) no longer matches\n"
                     + "      CEP itself is failing; the #74 verdict is meaningless");
         }
-        boolean unmentionedFixed = unmentioned == null || unmentioned.isEmpty();
-        boolean objectOnlyFixed = objectOnly == null || objectOnly.isEmpty();
+        boolean unmentionedFixed = unmentioned == null;
+        boolean objectOnlyFixed = objectOnly == null;
         if (unmentionedFixed != objectOnlyFixed) {
-            DIVERGENCES.add("PARTIAL — #74 changed for one form only: unmentioned variable "
-                    + (unmentionedFixed ? "fixed" : "still a wildcard") + ", object-only variable "
-                    + (objectOnlyFixed ? "fixed" : "still a wildcard"));
+            DIVERGENCES.add("PARTIAL — #74 holds for one form only: unmentioned variable "
+                    + (unmentionedFixed ? "refused" : "registers, matches " + unmentioned)
+                    + ", object-only variable "
+                    + (objectOnlyFixed ? "refused" : "registers, matches " + objectOnly));
         }
         return unmentionedFixed && objectOnlyFixed;
     }
@@ -898,16 +983,16 @@ public class CapabilityProbe {
     }
 
     /**
-     * Measured on 2.0.0-alpha.21: on a query over one stream, {@code FROM <g>} does not scope the
-     * static lookup. A static pattern matches a triple stored only in another named graph, or in the
-     * default graph, exactly as if the clause were absent. (A two-stream {@code [RANGE]} join is
-     * scoped correctly, so this check stays on one stream.) Raised in #79.
+     * Fixed in 2.0.0-alpha.22: on a query over one stream, {@code FROM <g>} scopes the static lookup.
+     * On alpha.21 a static pattern matched a triple stored only in another named graph, or in the
+     * default graph, exactly as if the clause were absent. (A two-stream {@code [RANGE]} join was
+     * already scoped, so this check stays on one stream.) Raised in #79.
      *
      * <p>The control stores the triple in the declared graph, where it must match; if it stops
      * matching, the static lookup itself has broken.
      *
-     * <p>Returns true when neither the other named graph nor the default graph is matched, i.e.
-     * fixed; a change for only one of them is reported as PARTIAL.
+     * <p>Returns true when neither the other named graph nor the default graph is matched; a
+     * regression for only one of them is reported as PARTIAL.
      */
     private static boolean fromGraphScopesStaticLookup() throws Exception {
         String where = """
@@ -923,7 +1008,7 @@ public class CapabilityProbe {
                     + "      the static lookup itself is failing; the FROM <graph> verdict is meaningless");
         }
         if (otherScoped != defaultScoped) {
-            DIVERGENCES.add("PARTIAL — FROM <graph> now scopes the lookup against "
+            DIVERGENCES.add("PARTIAL — FROM <graph> scopes the lookup against "
                     + (otherScoped ? "another named graph" : "the default graph") + " only");
         }
         return otherScoped && defaultScoped;

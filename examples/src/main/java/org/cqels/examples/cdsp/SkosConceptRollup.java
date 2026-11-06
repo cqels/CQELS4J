@@ -47,17 +47,16 @@ import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
  * the vehicle query and correctly stays out of the cabin one — the rollup follows the modelled
  * hierarchy rather than lifting everything everywhere.
  *
- * <p><strong>Known limit on 2.0.0-alpha.21:</strong> the hierarchy must be pushed into the stream.
+ * <p><strong>Known limit on 2.0.0-alpha.22:</strong> the hierarchy must be pushed into the stream.
  * The reasoner reads stream elements only, never the background graph — even though that is
- * exactly where an s2dm catalogue lives. (An earlier version of this demo also listed the two-hop
- * rollup as not working. Measured on alpha.20 and alpha.21, it works, and the demo now shows it.)
+ * exactly where an s2dm catalogue lives (#58). (An earlier version of this demo also listed the
+ * two-hop rollup as not working. Measured on alpha.20 and later, it works, and the demo shows it.)
  *
- * <p>Filed as #58 (background graph) and #56 (property paths), each with a minimal reproducer. #56
- * is listed although no query here contains a path expression: the natural way to write this
- * rollup is {@code ?narrow skos:broader+ ?broad} in the query itself, and the reason it is a pair
- * of RETE rules instead is that property paths still do not execute — the engine now rejects one
- * cleanly at registration rather than silently mis-evaluating it, but it remains unsupported. The
- * rules are the workaround for that.
+ * <p>Why rules and not a property path: the natural way to write this rollup is
+ * {@code ?narrow skos:broader+ ?broad} in the query itself. Since 2.0.0-alpha.22 a path runs, but
+ * only inside the {@code STREAM} block of a query with no static graph pattern; a path over the
+ * static concept graph, where the hierarchy belongs, is refused at registration (#46). The rules
+ * are the workaround for that.
  *
  * <p>Observations are pushed as one atomic multi-statement element
  * ({@link S2dm#pushConceptSignal}), the same call every other demo uses: the reasoner used to skip

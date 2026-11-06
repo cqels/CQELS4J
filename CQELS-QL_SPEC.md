@@ -1,13 +1,14 @@
 # CQELS-QL Language Specification
 
-**Applies to:** CQELS `2.0.0-alpha.21` · **Based on:** SPARQL 1.1, extended with RSP-QL / C-SPARQL / LARS streaming constructs.
+**Applies to:** CQELS `2.0.0-alpha.22` · **Based on:** SPARQL 1.1, extended with RSP-QL / C-SPARQL / LARS streaming constructs.
 
 CQELS-QL (*Continuous Query Evaluation over Linked Streams — Query Language*) is **SPARQL 1.1 plus
 streaming**. If you know SPARQL, you already know most of it: `SELECT`, `FILTER`, `BIND`, `OPTIONAL`,
 `UNION`, aggregates and `GROUP BY` / `HAVING` behave as in SPARQL 1.1. (`ORDER BY` / `LIMIT` are
 supported with a streaming caveat, `MINUS` is not yet executed — registration rejects it with a
-hint to use `FILTER NOT EXISTS` — property paths are not supported, and a few SPARQL 1.1 built-ins
-are not yet evaluated; see [§9](#9-standard-sparql-features-supported-as-is) for the full list.)
+hint to use `FILTER NOT EXISTS` — property paths run on one route only, and a few SPARQL 1.1
+built-ins are not yet evaluated; see [§9](#9-standard-sparql-features-supported-as-is) for the full
+list.)
 
 This document focuses on **what CQELS-QL adds on top of SPARQL** — the constructs you won't find in a
 plain triple store. The standard SPARQL surface is summarized briefly in
@@ -99,8 +100,8 @@ WHERE clause at each evaluation.
 
 ## 3. Window specifications
 
-A window appears in square brackets after a stream name. **Time units:** `s` (seconds), `m` (minutes),
-`h` (hours), `d` (days).
+A window appears in square brackets after a stream name. **Time units:** `ms` (milliseconds, since
+`2.0.0-alpha.22`), `s` (seconds), `m` (minutes), `h` (hours), `d` (days).
 
 ### 3.1 Backward windows
 
@@ -145,13 +146,27 @@ latency for tolerance of out-of-order arrivals. The `EMIT` policy governs emissi
 aggregation** queries; complex-event (`SEQ`) matching over a directional window instead emits one final
 match per anchor (see [§7](#7-complex-event-processing-cep)).
 
-> **`LATENESS` on backward windows.** `LATENESS d` also parses on the backward forms and is
-> **honoured on single-stream `[RANGE Ns]` aggregate queries** (`COUNT`/`SUM`/`AVG`/`MIN`/`MAX`,
-> optional `GROUP BY` — e.g. `FROM STREAM Sensors [RANGE 10s LATENESS 2s]`). On every other
-> backward shape it **fails loud** rather than being silently ignored: `[SLIDE … STEP …]` and
-> `[RANGE … STEP …]` are rejected at compile time, and multi-stream joins, non-aggregate windowed
-> `SELECT`s, and `FILTER(SEQ(...))` on a non-directional window are rejected at registration.
-> (`EMIT`, by contrast, is directional-only — an explicit `EMIT` on a backward window is rejected.)
+> **`LATENESS` on backward windows.** `LATENESS d` also parses on the backward forms. It is
+> honoured on:
+>
+> - a single-stream `[RANGE Ns]` aggregate (`COUNT`/`SUM`/`AVG`/`MIN`/`MAX`, optional
+>   `GROUP BY` — e.g. `FROM STREAM Sensors [RANGE 10s LATENESS 2s]`);
+> - since `2.0.0-alpha.22`, a single-stream `[SLIDE … STEP … EMIT ON_CLOSE]` aggregate;
+> - since `2.0.0-alpha.22`, a multi-stream join over `[RANGE]` or `[SLIDE]` windows.
+>
+> On every other backward shape it **fails loud** at registration rather than being silently
+> ignored. Measured on `2.0.0-alpha.22`, that includes a `[SLIDE … STEP …]` or `[RANGE … STEP …]`
+> aggregate without `EMIT ON_CLOSE`, a non-aggregate windowed `SELECT`, and `FILTER(SEQ(...))` on a
+> non-directional window.
+>
+> **`EMIT` on backward windows.** Since `2.0.0-alpha.22`, `EMIT ON_CLOSE` or `EMIT ON_UPDATE` on a
+> `[RANGE]`, `[SLIDE]` or `[TRIPLES]` window chooses the emission model of an aggregate over one
+> stream's triple patterns, with or without a static graph pattern:
+> `[RANGE 3s EMIT ON_UPDATE]` reports on every arrival, and `[RANGE 3s EMIT ON_CLOSE]` once per
+> closed bucket (see §9 *Aggregates*). An aggregate on such a window that states no `EMIT` logs one warning naming the
+> model its window keyword chose. `EMIT` on any other query — non-aggregate, multi-stream — is
+> refused at registration, as are `EMIT EARLY_AND_FINAL` on a backward window and `EMIT` under
+> `[NOW]`.
 >
 > **Default.** Without `LATENESS`, every event-time (`RANGE`/`FUTURE`) window drops late-arriving
 > events **silently** (allowed-lateness is 0; `[NOW]` and `[TRIPLES n]` use no watermark, so
@@ -234,13 +249,12 @@ WHERE {
 | `CACHE d` | Cache lookup results for duration *d*. |
 | `FROM NAMED <iri>` | Named background graph. |
 
-**On a query over one stream, the graph IRI does not scope the lookup.** Measured on
-`2.0.0-alpha.21`: with `FROM <http://example.org/graph>`, a static pattern still matches a triple
-stored only in another named graph, or in the default graph — exactly as if the `FROM` clause were
-absent. That held under `[NOW]`, `[TRIPLES 1]` and `[RANGE 3s]`, with one or two stream patterns.
-A query joining **two** streams under `[RANGE]` is scoped correctly: the same triple outside the
-declared graph is not matched. On a one-stream query, keep data you must not match out of the
-engine's store, or add a distinguishing triple to the pattern.
+**`FROM <iri>` scopes the lookup.** Since `2.0.0-alpha.22`, a query that declares `FROM` reads
+only its `FROM` graphs, on every route: with `FROM <http://example.org/graph>`, a static pattern
+does not match a triple stored only in another named graph, or in the default graph. Before
+`2.0.0-alpha.22` a query over one stream ignored the IRI and read the whole store. A query with no
+`FROM` still reads every graph in the store. One declaring only `FROM NAMED <g>` matches nothing
+with a plain static pattern: write the pattern inside `GRAPH <g> { … }`, or declare `FROM <g>`.
 
 Because the lookup re-reads the static store per element, updates to background facts are reflected on the
 next matching element.
@@ -269,14 +283,11 @@ still is, evaluated correctly either way.
 > returns the wrong answer in 24 of them, which is what makes it evidence rather than a tautology.
 > Shapes outside it have not been tested.
 >
-> Two static-pattern shapes outside that sweep are still wrong on `2.0.0-alpha.21`, measured. On the
-> composed windowed route — a multi-pattern `STREAM` block under `[TRIPLES n]` or `[RANGE d]` — a
-> stream solution whose join key binds a **literal** drops its row; the same query keyed on an IRI
-> answers, and under `[NOW]` it is correct. And on a query with a static graph pattern, a `FILTER`
-> over a `BIND` target runs before the `BIND`, so a comparison on it drops every row
-> ([#83](https://github.com/cqels/CQELS4J/issues/83); see the `BIND` entry in
-> [§9](#9-standard-sparql-features-supported-as-is)). Upstream lists further static-lookup gaps for
-> this release; its release notes have them.
+> Two static-pattern shapes outside that sweep stayed wrong on alpha.21 and are fixed since
+> `2.0.0-alpha.22`. On the composed windowed route — a multi-pattern `STREAM` block under
+> `[TRIPLES n]` or `[RANGE d]` — a stream solution whose join key binds a **literal** dropped its
+> row. And a `FILTER` over a `BIND` target ran before the `BIND`
+> ([#83](https://github.com/cqels/CQELS4J/issues/83)).
 >
 > One point from that history is independent of the bug and still holds. On real s2dm output the two
 > guards are **not** interchangeable: the exporter makes every enum value a `skos:member` of
@@ -319,11 +330,10 @@ NOT <eventVar>
 ```
 
 - **`<eventVar>`** (e.g. `?e1`) must appear as the **subject** of at least one triple pattern in the WHERE
-  block — that pattern defines what the event matches. **This is not enforced**
-  ([#74](https://github.com/cqels/CQELS4J/issues/74)): measured on `2.0.0-alpha.21`, a variable
-  that is never a subject — mentioned nowhere else, or only as an object — registers without a
-  warning and then matches **any** element on the stream, so a misspelled variable turns its step
-  into a wildcard. Check that every `SEQ` variable is the subject of a pattern.
+  block — that pattern defines what the event matches. Since `2.0.0-alpha.22` a variable that is
+  never a subject — mentioned nowhere else, or only as an object — is refused at registration
+  ([#74](https://github.com/cqels/CQELS4J/issues/74)). Earlier alphas registered it, and it then
+  matched **any** element on the stream.
 - **`NOT`** turns the step into a negated gap — "this must *not* occur between the previous and next
   events" (a gap constraint, not adjacency). A `NOT` step takes no quantifier: since
   `2.0.0-alpha.21` a quantified negation such as `NOT ?e+` is refused at registration. Nor may it
@@ -412,13 +422,14 @@ are called out.
   refused at registration; earlier alphas silently returned the bare aggregate (`?c = 2`, not `20`).
   Compute it in the result listener. On a single-pattern stream query, `DISTINCT` is scoped to the
   window. Under `[NOW]` that means one arrival: since `2.0.0-alpha.21` the same projection from two
-  arrivals is reported twice. With `ORDER BY … LIMIT`, `DISTINCT` can also repeat a projection
-  within one arrival, once for each row that improves the sort (upstream #904): on alpha.21,
-  `SELECT DISTINCT ?o … [NOW] … ORDER BY DESC(?x) LIMIT 1` over one element carrying
-  `(o1 ex:v 1) (o1 ex:v 2) (o1 ex:v 3)` emits `o1` three times (alpha.20: once).
-- **Aggregates:** `COUNT(*)` / `COUNT(?v)`, `SUM`, `AVG`, `MIN`, `MAX`, `GROUP_CONCAT(?v; SEPARATOR=", ")`.
+  arrivals is reported twice. With `ORDER BY … LIMIT`, alpha.21 could also repeat a projection
+  within one arrival, once for each row that improved the sort (upstream #904). Measured on
+  `2.0.0-alpha.22`, `SELECT DISTINCT ?o … [NOW] … ORDER BY DESC(?x) LIMIT 1` over one element
+  carrying `(o1 ex:v 1) (o1 ex:v 2) (o1 ex:v 3)` emits `o1` once, as it did on alpha.20.
+- **Aggregates:** `COUNT(*)` / `COUNT(?v)`, `SUM`, `AVG`, `MIN`, `MAX`, `GROUP_CONCAT(?v; SEPARATOR=", ")`,
+  and since `2.0.0-alpha.22` per-aggregate `DISTINCT` (`COUNT(DISTINCT ?v)`).
   *Note:* `GROUP BY` selects **per-group** results rather than global ones; it is **not** required
-  for an aggregate to apply. Measured on `2.0.0-alpha.21`, a global (no `GROUP BY`) aggregate
+  for an aggregate to apply. Measured on `2.0.0-alpha.22`, a global (no `GROUP BY`) aggregate
   accumulates correctly over every window that accumulates — `[RANGE]`, `[TRIPLES]`, `[SLIDE]`.
   One shape is rejected: `[NOW]` with a global aggregate **fails at registration**, with a message
   naming the windows to use instead (`[NOW]` is zero-length, so there is nothing to accumulate).
@@ -431,22 +442,24 @@ are called out.
   **tumbling bucket**, reported once the bucket closes, and a **rolling window** relative to the
   arriving element, reported on every arrival.
 
-  The table below is a list of **measured cases**, not a rule — the boundary between the two is not
-  something this document can derive, and shapes outside the list have not been tested. All measured
-  on `2.0.0-alpha.21` with one stream pattern and `[RANGE 3s]`, using elements timestamped 2800,
-  2900 and 3100 ms:
+  The table below is a list of **measured cases**, not a rule, and shapes outside it have not been
+  tested. All measured on `2.0.0-alpha.22` with one stream pattern and `[RANGE 3s]`, using elements
+  timestamped 2800, 2900 and 3100 ms, with no `EMIT` clause:
 
   | Query shape | Result |
   |---|---|
-  | one simple aggregate (`COUNT`, `SUM`, `AVG`, `MIN`, `MAX`) | **tumbling** — the closed bucket `[0, 3000)`; for `COUNT` that is `{n=2}` |
+  | one simple aggregate (`COUNT`, `SUM`, `AVG`, `MIN`, `MAX`), or `COUNT(DISTINCT ?v)` | **tumbling** — the closed bucket `[0, 3000)`; for `COUNT` that is `{n=2}` |
   | …plus `FILTER` or `BIND` | tumbling |
   | …plus `GROUP BY` | tumbling — one row per group in the closed bucket |
   | …plus `HAVING`, a static join, or `OPTIONAL` | **rolling** — running `{n=1}`, `{n=2}`, `{n=3}` |
   | two aggregates, or `GROUP_CONCAT` | rolling |
   | two stream patterns | rolling |
 
-  Some shapes do not register at all: `COUNT(DISTINCT ?v)` fails to **parse**, and `SELECT DISTINCT`
-  over the simple-aggregate form is **rejected at registration**. Other window forms —
+  Since `2.0.0-alpha.22` a query can state the model instead of inheriting it from its shape:
+  `[RANGE 3s EMIT ON_UPDATE]` turns the first row of the table into running `{n=1}`, `{n=2}`,
+  `{n=3}`, and `[RANGE 3s EMIT ON_CLOSE]` keeps it at `{n=2}` (see
+  [§3.2](#32-directional-lars-windows) for where `EMIT` is accepted). `SELECT DISTINCT` over the
+  simple-aggregate form is still **rejected at registration**. Other window forms —
   `[TRIPLES n]`, `[SLIDE W STEP S]` and `[RANGE W STEP S]` — reported per arrival in every shape
   tested.
 
@@ -457,50 +470,37 @@ are called out.
 
 
 - **`FILTER(expr)`** — operators `= != < > <= >= && || !` `+ - * /`, plus built-ins; full SPARQL
-  effective-boolean-value semantics. Verified working on `2.0.0-alpha.21`: `BOUND`, `IF`, `STR`,
+  effective-boolean-value semantics. Verified working on `2.0.0-alpha.22`: `BOUND`, `IF`, `STR`,
   `CONCAT`, `ABS`, `SUBSTR`, `IRI`, `year(...)`, `sameTerm`, and a prefixed name used as a constant
-  (resolved against the query's own `PREFIX` declarations, the same as in a triple pattern).
+  (resolved against the query's own `PREFIX` declarations, the same as in a triple pattern). Since
+  `2.0.0-alpha.22` also `REPLACE`, `COALESCE`, `REGEX` and `STRDT`, and a string literal's escapes
+  (`"a\nb"` has `STRLEN` 3).
   **Not every SPARQL 1.1 built-in is evaluated**, and an unevaluated one fails the same silent way an
   unregistered function IRI does — no registration error, `FILTER` simply never matches and `BIND`
-  leaves the variable unbound. Known gaps on `2.0.0-alpha.21`:
+  leaves the variable unbound. Known gaps on `2.0.0-alpha.22`:
 
   | Construct | SPARQL 1.1 | Status | Use instead |
   |-----------|-----------|--------|-------------|
-  | `REPLACE(str, pattern, repl)` | §17.4.3.14 | **not evaluated** | post-process in the result listener |
-  | String escapes `\n \t \r \b \f` in a literal | §19.7 (`ECHAR`) | **not decoded** — `"a\nb"` keeps the backslash, so `STRLEN` is 4, not 3; `\"` is decoded | avoid them in query literals; build such strings in the result listener |
   | `xsd:dateTime` subtraction | XPath-derived, outside the SPARQL 1.1 operator table | **not evaluated** — the variable is left unbound | express the interval as a **window** ([§3](#3-window-specifications)) |
-  | `xsd:duration` comparison ([#82](https://github.com/cqels/CQELS4J/issues/82)) | XPath-derived, outside the SPARQL 1.1 operator table | **evaluated, wrongly** — `PT2S > PT1S` matches, but `PT10S > PT9S` and `PT60S = PT1M` do not | express the interval as a **window**; do not rely on a comparison that appears to work |
+  | `xsd:duration` in `ORDER BY`, `MIN` or `MAX` | XPath-derived, outside the SPARQL 1.1 operator table | **compared as text** — `MAX` over `PT9S` and `PT10S` returns `PT9S` | compare in a `FILTER`, which compares durations by value, or order in the result listener |
 
-  The last two rows are not conformance gaps — SPARQL 1.1's operator table defines neither `-` over
-  two `xsd:dateTime` values nor ordering over `xsd:duration` — but they are worth stating, because
-  porting rule engines that do (RDFox, for one) will reach for them. The duration row is the more
-  dangerous of the two. Rather than failing every time, it returns answers consistent with comparing
-  the literals' *text*: right when the digits happen to sort the same way (`PT2S` vs `PT1S`), wrong
-  when they do not (`PT10S` vs `PT9S`), and blind to equal durations written differently (`PT60S` vs
-  `PT1M`). A window expresses the same constraint declaratively and bounds engine state as well.
-- **`BIND(expr AS ?v)`** — computed variables. Whether a `FILTER` sees a `BIND` target depends on
-  the route, measured on `2.0.0-alpha.21`:
-  - on a **stream-only** query it does, as SPARQL 1.1 requires;
-  - on a query **with a static graph pattern** it does not
-    ([#83](https://github.com/cqels/CQELS4J/issues/83)): the `FILTER` runs before the `BIND`,
-    wherever it is written, and sees the variable unbound. A comparison on it drops **every** row,
-    and a test that holds for an unbound variable — `FILTER(!BOUND(?y))` — admits every row, which
-    then comes out with `?y` bound. Both are silent wrong answers. Upstream describes this
-    `FILTER`-before-`BIND` order as the route's documented behaviour, but SPARQL 1.1 does not allow
-    it. Filter on the variables the `BIND` reads instead (`FILTER(?x > 2.5)` rather than
-    `BIND(?x * 2 AS ?y) FILTER(?y > 5)`), which works on both routes.
+  Neither row is a conformance gap — SPARQL 1.1's operator table defines neither `-` over two
+  `xsd:dateTime` values nor ordering over `xsd:duration` — but they are worth stating, because
+  porting rule engines that do (RDFox, for one) will reach for them. Since `2.0.0-alpha.22` a
+  `FILTER` compares durations by value (`PT10S > PT9S` and `PT60S = PT1M` both hold;
+  [#82](https://github.com/cqels/CQELS4J/issues/82)), so the second row is the dangerous one: the
+  same pair of durations orders one way in a `FILTER` and the other way in `MAX`.
+- **`BIND(expr AS ?v)`** — computed variables. Since `2.0.0-alpha.22` the group's `FILTER` sees a
+  `BIND` target on every route, as SPARQL 1.1 requires
+  ([#83](https://github.com/cqels/CQELS4J/issues/83)). Measured on `2.0.0-alpha.22` beside a
+  static graph pattern, `BIND(?x * 2 AS ?y) FILTER(?y > 5)` answers, and `FILTER(!BOUND(?y))`
+  correctly drops the row. The same holds beside `FILTER NOT EXISTS`, and with `OPTIONAL` and
+  `GROUP BY` under `[TRIPLES 2]`. Before `2.0.0-alpha.22`, on a query with a static graph pattern,
+  the `FILTER` ran before the `BIND` in most shapes and saw the target unbound.
 
-  Since `2.0.0-alpha.21`, on a query with a static graph pattern, a top-level `BIND` written
-  **above** the first `OPTIONAL` or `UNION` block runs before that block. The block sees the
-  target, and so does the group's `FILTER`: `BIND(?x * 2 AS ?y) OPTIONAL { … } FILTER(?y > 5)`
-  answers correctly. A `BIND` written below that block still runs after the `FILTER`. The same
-  query with `GROUP BY` under `[TRIPLES 2]` still returns no row, measured; under `[NOW]`, or
-  without the `GROUP BY`, it answers. A `FILTER NOT EXISTS` block is different: it sees every
-  top-level `BIND` target, whether the `BIND` is written above or below it, but it does not change
-  when the group's `FILTER` runs —
-  `BIND(?x * 2 AS ?y) FILTER NOT EXISTS { … } FILTER(?y > 5)` still drops the row. Filtering on
-  the `BIND`'s input (`FILTER(?x > 2.5)`) works beside a `FILTER NOT EXISTS` since
-  `2.0.0-alpha.21`; on alpha.20 it dropped the row as well.
+  Also since `2.0.0-alpha.22`, a top-level `BIND` whose target is already bound where the `BIND`
+  is written, such as `BIND(1 AS ?x)` after a pattern binding `?x`, is refused at registration
+  (SPARQL 1.1 §18.2.2.6). Earlier alphas kept one of the two values, depending on the route.
 - **Extension functions (SPARQL 1.1 §17.6)** — since `2.0.0-alpha.11`, a `FILTER` / `BIND` /
   `SELECT`-expression call to an **explicit function IRI** — `<urn:cqels:fn:haversine>(…)` or a
   declared-prefix form such as `cqfn:haversine(…)` with `PREFIX cqfn: <urn:cqels:fn:>` — resolves
@@ -517,29 +517,33 @@ are called out.
   registered it and null-filled every row. To correlate two streams, use a top-level multi-stream
   join.
 
-  **On a stream-only query, a `FILTER` over a variable the `OPTIONAL` binds runs before the
-  `OPTIONAL`** ([#85](https://github.com/cqels/CQELS4J/issues/85)), measured on alpha.20 and
-  alpha.21 under `[NOW]` and `[TRIPLES 2]`. The `FILTER` sees the variable unbound, and the row
-  then comes out carrying the bound value. So the negation idiom `OPTIONAL { ?o ex:label ?l }
-  FILTER(!BOUND(?l))` admits every row, and `FILTER(BOUND(?l))` or `FILTER(?l = 8)` drops every
-  row. A `FILTER` on other variables is unaffected. A `GROUP BY` query with a static graph
-  pattern under `[TRIPLES 2]` does the same; one under `[NOW]`, and a non-aggregate query with a
-  static graph pattern, are correct on alpha.21. For the negation, write
-  `FILTER NOT EXISTS { ?o ex:label ?any }` instead. For a test on the optional value, apply it in
-  the result listener.
+  Since `2.0.0-alpha.22` the group's `FILTER` runs after its `OPTIONAL` on every route
+  ([#85](https://github.com/cqels/CQELS4J/issues/85)). Measured on `2.0.0-alpha.22`, the negation
+  idiom `OPTIONAL { ?o ex:label ?l } FILTER(!BOUND(?l))` admits only the rows with no label, and
+  `FILTER(BOUND(?l))` only the rows with one. That holds on a stream-only query, and on a
+  `GROUP BY` query with a static graph pattern under `[TRIPLES 2]`. On alpha.20 and alpha.21 both
+  shapes ran the `FILTER` first, so it saw the variable unbound.
 - **`{ … } UNION { … }`** — alternative patterns merged before `FILTER`.
-- **Property paths (`/`, `^`, `+`, `*`, `?`, `|`)** — **not supported, and (since `2.0.0-alpha.20`)
-  cleanly rejected.** A path such as `?a skos:broader+ ?b` fails registration with a parse error
-  naming the construct. Before `2.0.0-alpha.20` the same query printed a parser error to stderr
-  (`extraneous input '+'`) yet **registration still succeeded**, after which the engine evaluated a
-  *different* pattern from the one written and could return rows that looked plausible — the one
-  unsupported construct that did not fail loud. That silent-registration failure is gone; property
-  paths themselves are still not executable. Write the hops explicitly
-  (`?a skos:broader ?mid . ?mid skos:broader ?b .`) for a fixed depth, or use a recursive rule (see
-  the [`BoundedTransitiveClosure`](examples/) example) for unbounded closure.
-- **`FILTER NOT EXISTS { … }`** — anti-join (exclude rows with a match). Its body may hold only
-  triple patterns over the static graph; since `2.0.0-alpha.21` anything else — an inner `FILTER`,
-  for instance — is refused at registration rather than silently dropped. On a query with **no**
+- **Property paths (`/`, `^`, `+`, `*`, `?`, `|`)** — **executed on one route since
+  `2.0.0-alpha.22`**: the triple patterns of the one `STREAM` block of a single-stream query over a
+  `[RANGE]`, `[SLIDE]` or `[TRIPLES]` window, with no static graph pattern. Measured on
+  `2.0.0-alpha.22` under each of those windows, `STREAM S { ?x ex:broader+ ex:root }` over
+  `leaf → mid → root` answers `mid` and `leaf`, and `ex:broader/ex:broader` answers `leaf`. Every
+  other placement is **refused at registration**, with a message naming the path and the route:
+  under `[NOW]`, beside a static graph pattern, and in a static pattern, `GRAPH`, `OPTIONAL`,
+  `UNION` or `FILTER (NOT) EXISTS` block. A path's evaluation runs under a work budget; past it
+  the query fails rather than answering partially. So the common case of traversing a
+  hierarchy held in the **static** graph is still not expressible as a path: write the hops
+  explicitly (`?a skos:broader ?mid . ?mid skos:broader ?b .`) for a fixed depth, or use a
+  recursive rule (see the [`BoundedTransitiveClosure`](examples/) example) for unbounded closure.
+  (Before `2.0.0-alpha.20` a path registered despite a parse error and was silently mis-evaluated;
+  alpha.20 and alpha.21 refused every path.)
+- **`FILTER NOT EXISTS { … }`** and, since `2.0.0-alpha.22`, **`FILTER EXISTS { … }`** —
+  anti-join and semi-join over the static graph. Since `2.0.0-alpha.22` the body may also hold a
+  `FILTER`, including one that reads outer variables
+  ([#92](https://github.com/cqels/CQELS4J/issues/92)): measured, `FILTER NOT EXISTS { ?o ex:lim ?m
+  FILTER(?x > ?m) }` keeps the row with `?x` 3 and drops the one with `?x` 9 against a limit of 5.
+  On alpha.21 an inner `FILTER` was refused at registration. On a query with **no**
   static graph pattern, a block that correlates on a variable the row does not carry — bound
   outside the block but not projected — is refused too, since `2.0.0-alpha.21`: name the variable
   in `SELECT`, or add a static pattern. (`MINUS` is not yet
@@ -555,8 +559,14 @@ are called out.
   - A route with a real evaluation boundary — a window close, or each element's batch on a
     windowed hash join — applies `ORDER BY` / `LIMIT` **inside each evaluation batch**, in
     solution-modifier order (aggregation → `HAVING` → `ORDER BY` → `LIMIT`).
-  - A **legacy-windowed, single-pattern, non-aggregate** `SELECT` combining `ORDER BY` with
-    `LIMIT` has no such boundary and is **rejected at registration** rather than ranked per window.
+  - A **single fixed-predicate stream pattern**, non-aggregate, with `ORDER BY` or `LIMIT` under
+    `[RANGE]`, `[TRIPLES]` or `[SLIDE]`, registers since `2.0.0-alpha.22` and ranks **per
+    evaluation**; earlier alphas refused it. It runs on the windowed hash join, which changes its
+    emission model as well as its ranking: every arrival re-evaluates the whole window, so a bare
+    `ORDER BY` re-emits each row for as long as it stays in the window. Measured with three
+    arrivals under `[RANGE 5s]` or `[TRIPLES 3]`, a bare `ORDER BY DESC(?x)` emits 1 + 2 + 3 = 6
+    rows, where the same query without the modifier emits 3.
+  - Under `[NOW]`, `ORDER BY … LIMIT k` is a continuous top-`k` over everything seen.
   - A **windowed stream–static, non-aggregate** query whose stream side needs the windowed join
     ranks **per evaluation** since `2.0.0-alpha.21`, like the other batch routes: each arrival
     emits the current window's ranked rows, and a row that leaves the window stops competing. A bare
@@ -570,17 +580,10 @@ are called out.
 
 **Evaluation order:** stream patterns → static lookup join → `UNION` → `OPTIONAL` →
 `FILTER` and `FILTER NOT EXISTS` → `GROUP BY` + aggregates → `HAVING` → `ORDER BY` → `LIMIT`.
-That is the intended order. Two measured exceptions answer silently wrong:
-
-- On a query with a static graph pattern, a `FILTER` over a `BIND` target runs before the `BIND`,
-  except in the cases the `BIND` entry above lists ([#83](https://github.com/cqels/CQELS4J/issues/83)).
-  A `FILTER NOT EXISTS` sees every top-level `BIND` target.
-- On a stream-only query, and on a `GROUP BY` query with a static graph pattern under
-  `[TRIPLES 2]`, a `FILTER` over a variable an `OPTIONAL` binds runs before the `OPTIONAL`
-  ([#85](https://github.com/cqels/CQELS4J/issues/85); see the `OPTIONAL` entry above).
-
-`BIND` is deliberately not placed in the chain: where it runs depends on the route and on what
-follows it.
+Top-level `BIND`s run with the `OPTIONAL` and `UNION` blocks, in the order written, before the
+group's `FILTER`. Since `2.0.0-alpha.22` that holds on every route; on earlier alphas a `FILTER`
+could run before a `BIND` ([#83](https://github.com/cqels/CQELS4J/issues/83)) or an `OPTIONAL`
+([#85](https://github.com/cqels/CQELS4J/issues/85)) on some routes.
 
 ---
 
@@ -597,11 +600,16 @@ RETURN p.firstName, p.lastName, c.name
 
 CypherQL reuses the streaming model with graph-traversal patterns instead of triple patterns. The
 clauses come in the order shown: `FROM STREAM` first, then `MATCH`, then `RETURN`; a query that
-starts with `MATCH` is a syntax error. Measured
-on `2.0.0-alpha.21` (and the same on alpha.20), `[NOW]` and `[TRIPLES n]` answer on a live stream:
-the same `MATCH` under `[RANGE 2s]` or `[SLIDE 2s STEP 1s]` registers and emits nothing while the
-stream is live (upstream lists this as a known issue: those windows fire on completion). `RETURN
-DISTINCT` parses and is ignored — duplicate rows are emitted.
+starts with `MATCH` is a syntax error.
+
+Since `2.0.0-alpha.22` every window answers on a live stream. Measured on `2.0.0-alpha.22` with
+three elements 300 ms apart, `MATCH (o:Observation) RETURN o` reports all three under `[NOW]`.
+Under `[TRIPLES 2]`, `[RANGE 2s]` and `[SLIDE 2s STEP 1s]` it reports the first two; the window
+holding the third has not closed yet. On alpha.20 and alpha.21, `[RANGE]` and `[SLIDE]` reported
+nothing until the source completed. A variable-length relationship such as
+`(a)-[:broader*1..3]->(b)` is also evaluated since `2.0.0-alpha.22`, once per window batch:
+over `leaf → mid → root` it answers the three pairs. `RETURN DISTINCT` needs a projected
+variable or property; under `[NOW]`, the same `o.type` from two arrivals is reported twice.
 
 ---
 
@@ -632,7 +640,7 @@ windowSpec      ::= 'NOW'
                   | 'TRIPLES' 'FUTURE' INT emit?
 emit            ::= 'EMIT' ('ON_UPDATE' | 'ON_CLOSE' | 'EARLY_AND_FINAL')
 lateness        ::= 'LATENESS' duration
-duration        ::= INT ('s' | 'm' | 'h' | 'd')
+duration        ::= INT ('ms' | 's' | 'm' | 'h' | 'd')
 
 whereClause     ::= '{' patternGroup+ '}'
 patternGroup    ::= streamPattern | windowPattern | triplePattern+
@@ -640,15 +648,15 @@ patternGroup    ::= streamPattern | windowPattern | triplePattern+
 streamPattern   ::= 'STREAM' Name '{' triplePattern+ '}'
 windowPattern   ::= 'WINDOW' PrefixedName '{' triplePattern+ '}'
 filterConstraint::= 'FILTER' '(' expression ')'
-                  | 'FILTER' 'NOT' 'EXISTS' '{' triplePattern+ '}'    -- other content is refused (§9)
+                  | 'FILTER' 'NOT'? 'EXISTS' '{' (triplePattern | filterConstraint)+ '}'   -- §9
 bindPattern     ::= 'BIND' '(' expression 'AS' Var ')'
 
 seqExpression   ::= 'SEQ' '(' seqArg (';' seqArg)+ ')'        -- inside FILTER(...)
 seqArg          ::= 'NOT'? Var seqQuantifier? ('AS' alias)?   -- NOT takes no quantifier (§7); AS renames the argument
 seqQuantifier   ::= '+' | '*' | '?' | '{' INT '}' | '{' INT ',' INT '}'
 
-aggregate       ::= 'COUNT' '(' ('*' | Var) ')' | ('SUM'|'AVG'|'MIN'|'MAX') '(' Var ')'
-                  | 'GROUP_CONCAT' '(' Var (';' 'SEPARATOR' '=' STRING)? ')'
+aggregate       ::= 'COUNT' '(' ('*' | 'DISTINCT'? Var) ')' | ('SUM'|'AVG'|'MIN'|'MAX') '(' 'DISTINCT'? Var ')'
+                  | 'GROUP_CONCAT' '(' 'DISTINCT'? Var (';' 'SEPARATOR' '=' STRING)? ')'
 ```
 
 ---

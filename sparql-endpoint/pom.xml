@@ -16,13 +16,13 @@
     <properties>
         <maven.compiler.release>17</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <cqels.version>2.0.0-alpha.21</cqels.version>
+        <cqels.version>2.0.0-alpha.22</cqels.version>
         <!-- Must equal the Jetty that org.cqels:cqels-mcp embeds at the pinned engine version
-             (12.0.16 at 2.0.0-alpha.21), so the servlet can mount into the MCP server's Jetty
+             (12.0.40 at 2.0.0-alpha.22), so the servlet can mount into the MCP server's Jetty
              unchanged once upstream exposes a mount point (cqels/claude#1387). Two Jetty
              versions in one JVM would split silently; the gate's deep tier is meant to compare
              this property with the resolved cqels-mcp pom (tracking: cqels/CQELS4J#104). -->
-        <jetty.version>12.0.16</jetty.version>
+        <jetty.version>12.0.40</jetty.version>
         <!-- The RDF4J the engine is built on. Any RDF4J module declared here must be this
              version so there is exactly one RDF4J on the classpath. -->
         <rdf4j.version>4.3.8</rdf4j.version>
