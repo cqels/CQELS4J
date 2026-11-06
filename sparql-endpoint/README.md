@@ -43,6 +43,7 @@ All settings are environment variables, named like the MCP server's `CQELS_MCP_H
 | `CQELS_SPARQL_PORT` | `8089` | `0` picks an ephemeral port, printed in the `listening on` line. |
 | `CQELS_SPARQL_PATH` | `/sparql` | |
 | `CQELS_SPARQL_AUTH_TOKEN` | unset | Bearer token. Missing or wrong → `401` with `WWW-Authenticate: Bearer`. |
+| `CQELS_SPARQL_ALLOWED_HOSTS` | loopback names + bind host | Comma-separated host names a request's `Host` header may carry (or `*`). Checked whenever no token is set, as the defence against DNS rebinding; behind a proxy or under a DNS name, list the name clients use. |
 | `CQELS_SPARQL_ALLOWED_ORIGINS` | unset | Comma-separated browser origins allowed to call the endpoint (or `*`); they get CORS headers. A request carrying any **other** `Origin` is refused with `403` (see *Security*). Requests without `Origin` — curl, rdflib, Jena — are unaffected. |
 | `CQELS_SPARQL_MAX_REQUEST_BYTES` | `1048576` | Larger bodies → `413`, form bodies and chunked bodies included. |
 | `CQELS_SPARQL_MAX_EXECUTION_SECONDS` | `30` | `Query.setMaxExecutionTime`; exceeding it → `503`, or an aborted response if rows were already sent. `0` = unlimited. **Best effort** — see *The execution limit*. |
@@ -74,7 +75,7 @@ All settings are environment variables, named like the MCP server's `CQELS_MCP_H
 |---|---|
 | `400` | malformed query or update, graph parameter that is not an absolute IRI, missing `query`, update dataset parameters plus `USING`/`WITH`, malformed percent-encoding |
 | `401` | token set and missing or wrong |
-| `403` | update while `CQELS_SPARQL_UPDATE_ENABLED` is false; `SERVICE` or `LOAD` while `CQELS_SPARQL_FEDERATION_ENABLED` is false; `Origin` not in `CQELS_SPARQL_ALLOWED_ORIGINS`; a browser request marked `Sec-Fetch-Site: cross-site` or `same-site` with no allowed `Origin` |
+| `403` | update while `CQELS_SPARQL_UPDATE_ENABLED` is false; `SERVICE` or `LOAD` while `CQELS_SPARQL_FEDERATION_ENABLED` is false; `Host` not in `CQELS_SPARQL_ALLOWED_HOSTS` (no token set); `Origin` not in `CQELS_SPARQL_ALLOWED_ORIGINS`; a browser request marked `Sec-Fetch-Site: cross-site` or `same-site` with no allowed `Origin` |
 | `405` | update sent via GET |
 | `406` | nothing in `Accept` matches a registered writer |
 | `413` | body over `CQELS_SPARQL_MAX_REQUEST_BYTES` |
@@ -160,6 +161,14 @@ requested upstream as cqels/claude#1387; the Jetty version here is pinned to the
   only hides the response; the update would still run. Browsers attach `Origin` to every
   cross-origin POST, so the endpoint refuses any `Origin` not on `CQELS_SPARQL_ALLOWED_ORIGINS`.
   Setting that to `*` with update enabled and no token undoes this; don't.
+- **DNS rebinding is refused by `Host`.** An attacker's page can re-resolve its own domain to
+  `127.0.0.1`; its requests are then same-origin to the browser (no `Origin`,
+  `Sec-Fetch-Site: same-origin`) and it can read the answers. Only the `Host` header still names
+  the attacker's domain, so without a token the endpoint accepts only `localhost`, `127.0.0.1`,
+  `::1` and the bind host, plus `CQELS_SPARQL_ALLOWED_HOSTS`. With a token there is no host
+  check unless you list hosts: the browser never sends the token for the attacker's page.
+  Binding `0.0.0.0` with `CQELS_SPARQL_ALLOWED_HOSTS` unset and `…_ALLOW_UNAUTHENTICATED_REMOTE`
+  therefore answers only to loopback names; list the names remote clients use.
 - A browser GET from an `<img>` or a link carries no `Origin`, so it also checks Fetch Metadata:
   `Sec-Fetch-Site: cross-site` or `same-site` with no allowed `Origin` is refused (`403`).
   `none` (a URL typed into the address bar), `same-origin`, and clients that send no
@@ -189,9 +198,10 @@ requested upstream as cqels/claude#1387; the Jetty version here is pinned to the
 
 `SparqlProtocolServlet` depends only on `jakarta.servlet` and RDF4J. Mount it in any Servlet 6
 container. It parses its own parameters and enforces `maxRequestBytes` itself, so the
-container's form limit does not matter. It checks **neither tokens nor origins**: install
-`AccessFilters.Origins` (always) and `AccessFilters.BearerToken` (when exposed) in front of it,
-as the launcher does, or your container's equivalents:
+container's form limit does not matter. It checks **neither tokens, hosts nor origins**:
+install `AccessFilters.Hosts` (without a token), `AccessFilters.Origins` (always) and
+`AccessFilters.BearerToken` (when exposed) in front of it, as the launcher does, or your
+container's equivalents:
 
 ```java
 EndpointOptions options = EndpointOptions.defaults().withMaxRows(10_000);

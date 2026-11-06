@@ -40,6 +40,8 @@ import java.util.function.Supplier;
  *   CQELS_SPARQL_PORT                     8089        0 = ephemeral, printed on stdout
  *   CQELS_SPARQL_PATH                     /sparql
  *   CQELS_SPARQL_AUTH_TOKEN               (none)      bearer token
+ *   CQELS_SPARQL_ALLOWED_HOSTS            (loopback)  comma-separated Host names, or *; checked when
+ *                                                     no token is set (DNS rebinding)
  *   CQELS_SPARQL_ALLOWED_ORIGINS          (none)      comma-separated browser origins, or *; any
  *                                                     other Origin is refused with 403
  *   CQELS_SPARQL_MAX_REQUEST_BYTES        1048576
@@ -78,6 +80,7 @@ public final class SparqlEndpointLauncher {
                 .withPath(env("CQELS_SPARQL_PATH", EndpointOptions.DEFAULT_PATH))
                 .withAuthToken(env("CQELS_SPARQL_AUTH_TOKEN", null))
                 .withAllowedOrigins(csv(env("CQELS_SPARQL_ALLOWED_ORIGINS", "")))
+                .withAllowedHosts(csv(env("CQELS_SPARQL_ALLOWED_HOSTS", "")))
                 .withMaxRequestBytes(Long.parseLong(env("CQELS_SPARQL_MAX_REQUEST_BYTES",
                         Long.toString(EndpointOptions.DEFAULT_MAX_REQUEST_BYTES))))
                 .withMaxExecutionSeconds(Integer.parseInt(env("CQELS_SPARQL_MAX_EXECUTION_SECONDS",
@@ -197,6 +200,12 @@ public final class SparqlEndpointLauncher {
 
         ServletContextHandler context = new ServletContextHandler();
         context.setContextPath("/");
+        // Host check first: a rebound page is same-origin to the browser, so only Host betrays it.
+        List<String> hosts = allowedHosts(host, options);
+        if (!hosts.isEmpty()) {
+            context.addFilter(new FilterHolder(new AccessFilters.Hosts(hosts)), options.path(),
+                    EnumSet.of(DispatcherType.REQUEST));
+        }
         // Always installed, even with an empty allow-list: that is what refuses a cross-origin
         // form POST, which a browser sends without a preflight (see AccessFilters.Origins).
         context.addFilter(new FilterHolder(new AccessFilters.Origins(options.allowedOrigins())),
@@ -229,6 +238,26 @@ public final class SparqlEndpointLauncher {
             }
         }
         return server;
+    }
+
+    /**
+     * The {@code Host} names to accept, or empty for no check: none when {@code *} is listed, or
+     * when a token is set and no list was given (the token already defeats DNS rebinding).
+     * Otherwise the list given, or by default the loopback names plus the bind host.
+     */
+    static List<String> allowedHosts(String bindHost, EndpointOptions options) {
+        List<String> given = options.allowedHosts();
+        if (given.contains("*") || (given.isEmpty() && options.authToken() != null)) {
+            return List.of();
+        }
+        if (!given.isEmpty()) {
+            return given;
+        }
+        List<String> defaults = new java.util.ArrayList<>(List.of("localhost", "127.0.0.1", "::1"));
+        if (bindHost != null && !bindHost.isBlank() && !defaults.contains(AccessFilters.Hosts.normalise(bindHost))) {
+            defaults.add(bindHost);
+        }
+        return defaults;
     }
 
     /** A NativeStore at {@code storePath} for a graph that survives restarts, or {@code null} for memory. */
