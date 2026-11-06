@@ -4,7 +4,7 @@ This guide takes you from zero to a running continuous query in a few minutes:
 install the prerequisites, pull the engine anonymously, run the bundled
 examples, then wire CQELS into your own project.
 
-> **Current release:** `2.0.0-alpha.21` — coordinates `org.cqels:cqels-*`, entry point `cqels-engine`.
+> **Current release:** `2.0.0-alpha.22` — coordinates `org.cqels:cqels-*`, entry point `cqels-engine`.
 
 ---
 
@@ -47,7 +47,7 @@ the next, so a pin is still the safer choice.
 > Every release is published from a cosign-signed manifest — see
 > [SUPPLY_CHAIN.md](SUPPLY_CHAIN.md) to verify what you downloaded. The one artifact not served
 > here is the runnable shaded `cqels-mcp` jar, which is attached to the
-> [GitHub release](https://github.com/cqels/CQELS4J/releases/tag/v2.0.0-alpha.21) instead.
+> [GitHub release](https://github.com/cqels/CQELS4J/releases/tag/v2.0.0-alpha.22) instead.
 
 ---
 
@@ -117,7 +117,7 @@ Add the repository and the engine dependency to your `pom.xml`:
   <dependency>
     <groupId>org.cqels</groupId>
     <artifactId>cqels-engine</artifactId>
-    <version>2.0.0-alpha.21</version>
+    <version>2.0.0-alpha.22</version>
   </dependency>
 </dependencies>
 ```
@@ -199,23 +199,27 @@ fault.
 
 | What | Symptom | Do this instead |
 |------|---------|-----------------|
-| `REPLACE()` | The variable is left unbound | Move the string manipulation to the result listener |
 | Rules matching the background graph ([#58](https://github.com/cqels/CQELS4J/issues/58)) | The reasoner reads stream elements only, so an ontology in the store is invisible to rules | Push the ontology onto the stream at start-up |
-| A `FILTER` over a `BIND` target, beside a static pattern ([#83](https://github.com/cqels/CQELS4J/issues/83)) | The `FILTER` runs before the `BIND`: `FILTER(?y > 5)` drops every row, `FILTER(!BOUND(?y))` admits every row | Filter on the `BIND`'s inputs (`?x > 2.5` for `?y = ?x * 2`), or write the `BIND` above the first `OPTIONAL` or `UNION` (not on a windowed `GROUP BY` query) — see `CQELS-QL_SPEC.md` §9 |
-| A `FILTER` over an `OPTIONAL` variable, on a stream-only query or a windowed `GROUP BY` query ([#85](https://github.com/cqels/CQELS4J/issues/85)) | The `FILTER` runs before the `OPTIONAL`: `OPTIONAL { … ?l } FILTER(!BOUND(?l))` admits every row, `FILTER(BOUND(?l))` drops every row | Write the negation as `FILTER NOT EXISTS { … }`; test the optional value in the result listener — see `CQELS-QL_SPEC.md` §9 |
-| A **literal** join key between a multi-pattern `STREAM` block and a static pattern, under `[TRIPLES n]` / `[RANGE d]` | The row is dropped; the same query keyed on an IRI answers | Key the join on an IRI, or use `[NOW]` — see `CQELS-QL_SPEC.md` §6 |
-| `xsd:duration` comparison ([#82](https://github.com/cqels/CQELS4J/issues/82)) | Compared as text: `"PT10S" > "PT9S"` and `"PT60S" = "PT1M"` are false | Express the interval as a window |
-| `FROM <graph>` naming the background graph, on a query over one stream | The IRI does not scope the lookup: a static pattern also matches triples stored in any other named graph, or the default graph | Keep data you must not match out of the store — see `CQELS-QL_SPEC.md` §6 |
-| A CEP `SEQ` variable that is never the subject of a pattern ([#74](https://github.com/cqels/CQELS4J/issues/74)) | That step matches **any** element on the stream, so a misspelled variable raises false matches | Check that every `SEQ` variable is the subject of a triple pattern — see `CQELS-QL_SPEC.md` §7 |
+| `xsd:duration` in `ORDER BY`, `MIN` or `MAX` | Compared as text: `MAX` over `PT9S` and `PT10S` returns `PT9S` | Compare in a `FILTER`, which compares durations by value, or order in the result listener — see `CQELS-QL_SPEC.md` §9 |
+| `AVG` of a group in which no row binds the argument | `null`, where SPARQL 1.1 gives `0` | Treat `null` as `0` in the result listener |
 
-Property paths (`+`, `*`, `/`, `^`, `?`, `|`) are also unsupported, but they no longer belong in
-the table above: registration now rejects a query containing one with a clear parse error, instead
-of printing a diagnostic to stderr and running anyway. Write the hops explicitly, or use a
+`2.0.0-alpha.22` fixed six rows that this table carried for alpha.21: `REPLACE()`, a `FILTER`
+over a `BIND` target ([#83](https://github.com/cqels/CQELS4J/issues/83)) or an `OPTIONAL`
+variable ([#85](https://github.com/cqels/CQELS4J/issues/85)), a literal join key, `FILTER`
+comparison of `xsd:duration` values ([#82](https://github.com/cqels/CQELS4J/issues/82)), and
+`FROM <graph>` scoping. A seventh, a CEP `SEQ` variable that is never a subject
+([#74](https://github.com/cqels/CQELS4J/issues/74)), is now refused at registration. If you wrote
+a workaround for one of them, it still works, but it is no longer needed.
+
+Property paths (`+`, `*`, `/`, `^`, `?`, `|`) are not in the table either way. Since
+`2.0.0-alpha.22` they run inside the one `STREAM` block of a single-stream `[RANGE]`, `[SLIDE]`
+or `[TRIPLES]` query with no static graph pattern. Anywhere else, registration refuses them with a
+message naming the path. For a hierarchy in the static graph, write the hops explicitly, or use a
 recursive rule — see `CQELS-QL_SPEC.md` §9.
 
 The demos in [`examples/`](examples/) are all verified to run against this release, working around
 the rows above where they must. This table is kept honest by `scripts/ci/capability-probe.sh` (see
-`RELEASING.md`), which asserts each row automatically — including the property-path rejection and
+`RELEASING.md`), which asserts each row automatically — including the property-path routes and
 the reasoner rows — and fails the moment one of them stops being true.
 
 ---
@@ -277,6 +281,6 @@ progress is tracked in [#104](https://github.com/cqels/CQELS4J/issues/104).
   `FILTER NOT EXISTS`; `FROM NAMED WINDOW` parses but is not yet executed in this alpha — see the spec.)
 - **Cypher & CEP:** `engine.registerCypherQuery(...)` for property-graph patterns and
   `engine.registerCepQuery(...)` for event sequences.
-- **Release verification:** [2.0.0-alpha.21](https://raw.githubusercontent.com/cqels/maven/main/releases/supply-chain/2.0.0-alpha.21/VERIFY.md)
+- **Release verification:** [2.0.0-alpha.22](https://raw.githubusercontent.com/cqels/maven/main/releases/supply-chain/2.0.0-alpha.22/VERIFY.md)
 
 Questions or issues? Open one at https://github.com/cqels/CQELS4J/issues.

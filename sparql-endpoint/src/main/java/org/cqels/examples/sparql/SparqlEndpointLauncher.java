@@ -105,7 +105,7 @@ public final class SparqlEndpointLauncher {
         }
 
         // A NativeStore handed to the builder is the caller's to shut down: engine.close() leaves
-        // a supplied repository initialized (measured on 2.0.0-alpha.21). The memory store the
+        // a supplied repository initialized (measured on 2.0.0-alpha.22). The memory store the
         // builder creates itself is closed with the engine.
         Repository store = openNativeStore(storePath);
         CQELSEngine engine = buildEngine(store);

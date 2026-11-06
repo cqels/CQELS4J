@@ -3,7 +3,7 @@
 This document maps the [COVESA Central Data Service Playground](https://github.com/COVESA/cdsp)
 (CDSP) knowledge layer onto CQELS 2.0, rule by rule and query by query. It is written against
 what CDSP **actually runs today**, not a planned configuration, and every capability claim about
-CQELS below was verified by running it on `2.0.0-alpha.21`.
+CQELS below was verified by running it on `2.0.0-alpha.22`.
 
 > **Scope note.** A natural question is how S2DM-on-MongoDB use cases map here. They do not,
 > because they do not exist yet: [S2DM](https://github.com/COVESA/s2dm) has no MongoDB binding —
@@ -63,7 +63,7 @@ It is implemented as eight Datalog rules plus one output query.
 > **Rule 2 is not redundant.** A window says "no older than N seconds"; rule 2 says "the most
 > recent". Those differ exactly when a signal changes inside the window — a vehicle at 64 km/h that
 > slows to 4 and *then* swerves still has the 64 reading in scope, and a naive translation alerts on
-> it. CQELS-QL cannot express "the latest value of X" on `2.0.0-alpha.21` as a single aggregate:
+> it. CQELS-QL cannot express "the latest value of X" on `2.0.0-alpha.22` as a single aggregate:
 > `MAX(?pt)` finds the latest timestamp, but there is no argmax to join it back to that reading's
 > other properties, and no `xsd:dateTime` subtraction to compute a gap either (see §4). Relational
 > comparison (`<`, `>`) between two `xsd:dateTime` values **is** evaluated — see `FILTER(?t1 < ?t2)`
@@ -125,8 +125,9 @@ scenario 5 (§3), the same reversed-push case, verified. Relational comparison o
 (§4) — conflating the two is what previously led this document to scope the detection to an
 **in-order feed**. It is not so scoped.
 
-The `REPLACE(REPLACE(?s, "^.*#", ""), "[^a-zA-Z0-9]", "")` segment-id cleanup is presentation, and
-`REPLACE` is not supported (see §4) — do it in the result listener.
+The `REPLACE(REPLACE(?s, "^.*#", ""), "[^a-zA-Z0-9]", "")` segment-id cleanup is presentation.
+Since `2.0.0-alpha.22` `REPLACE` is evaluated (see §4), so it can stay in the query; on earlier
+alphas it belonged in the result listener.
 
 **What this mapping does not reproduce.** The output query projects a *segment*: an id, a start and
 end fix point with their coordinates, and start and end timestamps. The continuous query in §3
@@ -216,27 +217,27 @@ name them are needed. That is the substance of the reduction, not a syntactic tr
 
 ## 4. Function support, verified
 
-Probed on `2.0.0-alpha.21` by registering one query per function and pushing a value.
+Probed on `2.0.0-alpha.22` by registering one query per function and pushing a value.
 
 | Function | Status | Consequence for this mapping |
 |---|---|---|
 | `ABS`, `CONCAT`, `IRI`, `SUBSTR`, `IF` | works | Rules 4, 8 port directly, IRI minting included |
 | `SELECT DISTINCT`, `GROUP BY`, `AVG`/`MAX`/`COUNT`, `HAVING` | works | Rules 8, 9 and the output projection port directly |
-| `REPLACE` | **silently unsupported** — the row is emitted with the variable unbound | Cosmetic segment-id cleanup moves to the listener |
+| `REPLACE` | works since `2.0.0-alpha.22` | The segment-id cleanup ports directly |
 | `xsd:dateTime` subtraction | **silently unsupported** — variable unbound | Not needed: the window replaces duration arithmetic |
-| `xsd:duration` comparison ([#82](https://github.com/cqels/CQELS4J/issues/82)) | **evaluated wrongly** — `PT2S > PT1S` matches, but `PT10S > PT9S` and `PT60S = PT1M` do not | Not needed, as above — and not to be relied on where it appears to work |
+| `xsd:duration` comparison in `FILTER` ([#82](https://github.com/cqels/CQELS4J/issues/82)) | works since `2.0.0-alpha.22` — by value: `PT10S > PT9S` and `PT60S = PT1M` hold | Not needed, as above |
+| `xsd:duration` in `ORDER BY`, `MIN`, `MAX` | **compared as text** — `MAX` over `PT9S` and `PT10S` returns `PT9S` | Not needed, as above — and not to be relied on where it appears to work |
 
-None of these raises at registration, which is what makes them expensive to find: the query goes
-live and either returns nothing for that expression or — for duration comparison — returns an
+None of the gaps raises at registration, which is what makes them expensive to find: the query
+goes live and either returns nothing for that expression or — for a duration in `MAX` — returns an
 answer that is right only when the lexical order of the two literals happens to agree. Earlier
-alphas had four issues sharing this silent shape —
+alphas had more issues sharing this silent shape —
 [#54](https://github.com/cqels/CQELS4J/issues/54),
 [#55](https://github.com/cqels/CQELS4J/issues/55),
-[#56](https://github.com/cqels/CQELS4J/issues/56) and
-[#57](https://github.com/cqels/CQELS4J/issues/57) — all four now fixed (`#56`'s fix is a loud
-parse-time rejection rather than execution, so it left this shape entirely rather than joining
-`REPLACE` and `xsd:dateTime` subtraction here). `REPLACE`, `xsd:dateTime` subtraction and
-`xsd:duration` comparison are what remain in this silent class.
+[#56](https://github.com/cqels/CQELS4J/issues/56),
+[#57](https://github.com/cqels/CQELS4J/issues/57), and on alpha.21 `REPLACE` and `FILTER`
+comparison of durations — all now fixed. `xsd:dateTime` subtraction and duration ordering in
+`ORDER BY` / `MIN` / `MAX` are what remain in this silent class.
 
 ---
 
@@ -244,7 +245,7 @@ parse-time rejection rather than execution, so it left this shape entirely rathe
 
 | Need | Status | Issue |
 |---|---|---|
-| Transitive traversal of a vocabulary hierarchy (`skos:broader+`, `rdfs:subClassOf+`) | Property paths remain unsupported; the engine now rejects them cleanly at registration instead of parse-erroring yet registering anyway | — (`#56` tracked the silent-registration bug, now fixed; see `CQELS-QL_SPEC.md` §9) |
+| Transitive traversal of a vocabulary hierarchy (`skos:broader+`, `rdfs:subClassOf+`) held in the static graph | Since `2.0.0-alpha.22` property paths run, but only inside the `STREAM` block of a query with no static graph pattern; a path over the static graph is refused at registration | [#46](https://github.com/cqels/CQELS4J/issues/46) (see `CQELS-QL_SPEC.md` §9) |
 | Rules matching a background ontology (CDSP loads `.ttl` ontologies alongside its rules) | Reasoner sees stream elements only; ontology must be pushed onto the stream | [#58](https://github.com/cqels/CQELS4J/issues/58) |
 
 Guards on a static pattern ([#54](https://github.com/cqels/CQELS4J/issues/54)), prefixed-name
@@ -267,7 +268,7 @@ want.
 CDSP already exposes the data CQELS needs, in two places:
 
 - **IoTDB.** CDSP upstreamed IoTDB support into VISSR, and CQELS has two IoTDB storage modules.
-  `cqels-storage-iotdb-tsfile` **is** published at `2.0.0-alpha.21`; `cqels-storage-iotdb-session`
+  `cqels-storage-iotdb-tsfile` **is** published at `2.0.0-alpha.22`; `cqels-storage-iotdb-session`
   is **not** (404 on the release mirror), so that half cannot be run from the published artifacts at
   this version.
 - **VISS over WebSocket.** The information layer speaks VISS; the unpublished `cqels-cdsp` module

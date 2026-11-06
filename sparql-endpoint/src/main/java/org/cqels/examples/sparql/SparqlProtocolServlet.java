@@ -393,7 +393,7 @@ public final class SparqlProtocolServlet extends HttpServlet {
                 update.setMaxExecutionTime(options.maxExecutionSeconds());
             }
             // The engine sees the change on its next element: it listens to its own Sail for
-            // lookup-cache invalidation (measured on 2.0.0-alpha.21, even under FROM <g> CACHE 5m).
+            // lookup-cache invalidation (measured on 2.0.0-alpha.22, even under FROM <g> CACHE 5m).
             update.execute();
             resp.setStatus(HttpServletResponse.SC_NO_CONTENT);
         } catch (IllegalArgumentException e) {

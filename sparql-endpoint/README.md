@@ -99,7 +99,7 @@ why the fleet seed, written to the MCP server's long-term memory graph, answers 
 
 - An **update through this endpoint reaches the engine on its next element**, including under
   `FROM <g> CACHE 5m`: the engine listens to its own store for lookup-cache invalidation.
-  Measured on `2.0.0-alpha.21`. That is also why update is off by default.
+  Measured on `2.0.0-alpha.22`. That is also why update is off by default.
 - The endpoint opens one repository connection per request beside the engine's own static
   lookups. Both the memory and the native store allow that. Contention under many concurrent
   clients is not measured yet.
@@ -208,7 +208,7 @@ context.addServlet(new ServletHolder(new SparqlProtocolServlet(engine::getReposi
 Give it the engine's `Repository` object, never a store path: a NativeStore holds a directory
 lock, and a second open on the same path fails. A repository you hand to
 `CQELSEngine.builder().repository(…)` stays yours to shut down — `engine.close()` leaves it
-initialized (measured on `2.0.0-alpha.21`), so the launcher shuts its NativeStore down itself.
+initialized (measured on `2.0.0-alpha.22`), so the launcher shuts its NativeStore down itself.
 
 ## Dependency notes
 
