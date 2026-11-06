@@ -163,10 +163,13 @@ match per anchor (see [§7](#7-complex-event-processing-cep)).
 > `[RANGE]`, `[SLIDE]` or `[TRIPLES]` window can state the emission model of an aggregate over one
 > stream. Measured on `2.0.0-alpha.22` with one `COUNT` over one stream pattern:
 > `[RANGE 3s EMIT ON_UPDATE]` reports on every arrival, and `[RANGE 3s EMIT ON_CLOSE]` once per
-> closed bucket (see §9 *Aggregates*). `EMIT ON_CLOSE` is narrower than that sentence suggests: it
-> runs only on the incremental aggregate route — one `COUNT` / `SUM` / `AVG` / `MIN` / `MAX` over
-> one stream triple pattern, with optional `GROUP BY`, `FILTER` and `BIND`. Adding `HAVING` or a
-> second aggregate is refused at registration, measured under `[RANGE 3s]` and `[TRIPLES 3]`. An
+> closed bucket (see §9 *Aggregates*). `EMIT ON_CLOSE` also reports once per closed window on a
+> two-pattern `STREAM` block and beside a static graph pattern, measured under `[RANGE 3s]`,
+> `[TRIPLES 3]` and `[SLIDE 3s STEP 1s]`; with a static pattern under `[RANGE 3s]` it also
+> accepted `HAVING` and a second aggregate. Over **one** stream triple pattern it runs on the incremental aggregate route,
+> which takes one `COUNT` / `SUM` / `AVG` / `MIN` / `MAX` with optional `GROUP BY`, `FILTER` and
+> `BIND`: there, adding `HAVING` or a second aggregate is refused at registration, measured under
+> `[RANGE 3s]` and `[TRIPLES 3]`. An
 > aggregate on a backward window that states no `EMIT` logs one warning naming the model its
 > window keyword chose. `EMIT` on a non-aggregate or multi-stream query is refused at
 > registration, as are `EMIT EARLY_AND_FINAL` on a backward window and `EMIT` under `[NOW]`.
@@ -543,11 +546,14 @@ are called out.
   `FILTER(BOUND(?l))` only the rows with one. That holds on a stream-only query, and on a
   `GROUP BY` query with a static graph pattern under `[TRIPLES 2]`. On alpha.20 and alpha.21 both
   shapes ran the `FILTER` first, so it saw the variable unbound.
-- **`{ … } UNION { … }`** — alternative patterns merged before `FILTER`. **A static `UNION` drops
-  every row when the variable joining it to the stream is not projected** — an upstream known
-  issue of `2.0.0-alpha.22`. Measured under `[NOW]`, `[TRIPLES 3]` and `[RANGE 3s]`:
+- **`{ … } UNION { … }`** — alternative patterns merged before `FILTER`. **On a non-aggregate
+  query, a static `UNION` drops every row when the variable joining it to the stream is not
+  projected** — an upstream known issue of `2.0.0-alpha.22`. Measured under `[NOW]`, `[TRIPLES 3]`
+  and `[RANGE 3s]`:
   `SELECT ?r ?city … { STREAM S { ?r ex:person ?p } { ?p ex:city ?city } UNION { ?p ex:town ?city } }`
-  answers nothing, and the same query projecting `?p` answers. Project the join variable.
+  answers nothing, and the same query projecting `?p` answers. Under `[TRIPLES 3]` or
+  `[RANGE 3s]`, adding `ORDER BY` or `LIMIT` also avoids it, and so does an aggregate such as
+  `COUNT(*)`; under `[NOW]`, project the join variable.
 - **Property paths (`/`, `^`, `+`, `*`, `?`, `|`)** — **executed on one route since
   `2.0.0-alpha.22`**: the triple patterns of the one `STREAM` block of a single-stream query over a
   `[RANGE]`, `[SLIDE]` or `[TRIPLES]` window, with no static graph pattern. Measured on

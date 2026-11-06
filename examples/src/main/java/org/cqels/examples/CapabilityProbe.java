@@ -83,7 +83,7 @@ public class CapabilityProbe {
 
         System.out.println("-- caveats (documented as BROKEN; a pass here means the docs are stale) --");
         knownBug("     xsd:duration in MAX is compared as text (MAX of PT9S, PT10S is PT9S)",
-                durationMax(), "PT9S", "PT10S",
+                durationMax(), "PT9S PT9S / PT10S PT9S", "PT9S PT10S / PT10S PT10S",
                 "CQELS-QL_SPEC.md §9 gap table, CDSP_MAPPING.md §4, GETTING_STARTED.md limitations table");
         knownBug("     AVG of a group with no bound argument is null, not 0",
                 avgOfUnboundGroup(), "null", "0",
@@ -219,13 +219,17 @@ public class CapabilityProbe {
 
     /** #55 (fixed): a prefixed name as a FILTER constant must resolve. */
     private static boolean pnameInFilterResolves() throws Exception {
+        // A non-matching value must be filtered out, or an ignored FILTER would pass (codex, #116).
         List<Object> rows = run(null, """
             PREFIX p: <%s>
-            SELECT ?x FROM STREAM S [TRIPLES 1]
+            SELECT ?o ?x FROM STREAM S [TRIPLES 1]
             WHERE { STREAM S { ?o p:of ?x . } FILTER(?x = p:a) }
             """.formatted(C),
-                s -> s.pushTriple(C + "o1", C + "of", C + "a"));
-        return !rows.isEmpty();
+                s -> {
+                    s.pushTriple(C + "o1", C + "of", C + "a");
+                    s.pushTriple(C + "o2", C + "of", C + "b");
+                });
+        return exactRows(rows, List.of(row("o", C + "o1", "x", C + "a")));
     }
 
     /**
@@ -275,7 +279,8 @@ public class CapabilityProbe {
             stream.pushTriple(C + "mid", C + "broader", C + "root");
             Thread.sleep(1500);
             String got = toRoot.toString();
-            boolean executes = got.contains(C + "leaf") && got.contains(C + "mid") && toBogus.isEmpty();
+            boolean executes = exactRows(toRoot, List.of(row("x", C + "mid"), row("x", C + "leaf")))
+                    && toBogus.isEmpty();
             if (!executes) {
                 DIVERGENCES.add("MIS-EVALUATED — '+' over leaf -> mid -> root returned " + got
                         + " (bogus target: " + toBogus + ")\n      expected mid and leaf, and nothing "
@@ -556,17 +561,25 @@ public class CapabilityProbe {
         // !reverse.isEmpty(), so a fabricated row would have been reported as NOW FIXED and the
         // caveat removed from the docs — precisely backwards.
         boolean fabricates = !reverseGuardRun(false).isEmpty();
-        return admitsMatch && !fabricates;
+        // Phase 3 — an element that DOES match the stream block, keyed on b, which is not a member
+        // of the collection. Only the static guard can reject it; phase 2 never reaches the guard,
+        // so without this phase an engine that ignored the guard would pass (codex, review of #116).
+        boolean guardRejects = reverseGuardRun(null).isEmpty();
+        return admitsMatch && !fabricates && guardRejects;
     }
 
     /**
-     * One run of the #67 comparison. Pushes either a matching two-statement element or one that
-     * cannot match the stream block at all, and returns what the reverse-guarded query emitted.
+     * One run of the #67 comparison. Pushes a matching two-statement element ({@code true}), one
+     * that cannot match the stream block at all ({@code false}), or one that matches the stream
+     * block keyed on a non-member {@code b} ({@code null}), and returns what the reverse-guarded
+     * query emitted.
      * The forward-typed guard runs alongside as a control: on the matching push it must admit, and
      * on the non-matching push it must stay silent. If either fails, the reverse verdict is not
      * measuring what it claims to and a divergence says so.
      */
-    private static List<Object> reverseGuardRun(boolean matching) throws Exception {
+    private static List<Object> reverseGuardRun(Boolean mode) throws Exception {
+        boolean matching = Boolean.TRUE.equals(mode);
+        boolean nonMember = mode == null;
         try (CQELSEngine engine = CQELSEngine.builder().id("probe-67").withMemoryStore().build()) {
             try (RepositoryConnection conn = engine.getRepository().getConnection()) {
                 // Both directions asserted, exactly as the s2dm exporter emits them.
@@ -588,9 +601,9 @@ public class CapabilityProbe {
                     forward::add);
             engine.start();
             IRI o = VF.createIRI(C + "o1");
-            if (matching) {
+            if (matching || nonMember) {
                 stream.push(List.of(
-                        VF.createStatement(o, VF.createIRI(C + "of"), VF.createIRI(C + "a")),
+                        VF.createStatement(o, VF.createIRI(C + "of"), VF.createIRI(C + (nonMember ? "b" : "a"))),
                         VF.createStatement(o, VF.createIRI(C + "v"), VF.createLiteral(1.0))));
             } else {
                 stream.push(VF.createStatement(o, VF.createIRI(C + "unrelated"), VF.createIRI(C + "x")));
@@ -601,6 +614,7 @@ public class CapabilityProbe {
                         + "      the #67 comparison is meaningless in this run; investigate before "
                         + "trusting its verdict");
             } else if (!matching && !forward.isEmpty()) {
+                // b is not typed Field either, so the forward guard must reject the non-member too.
                 DIVERGENCES.add("REGRESSED — the forward-typed guard now fabricates too\n"
                         + "      it emitted for an element that cannot match the stream block; the "
                         + "#67 control is no longer sound");
@@ -767,22 +781,24 @@ public class CapabilityProbe {
      * <p>The control is {@code MAX} over two durations whose text and value orders agree
      * ({@code PT1S}, {@code PT2S}): it must report {@code PT2S}, or the aggregate itself is failing.
      *
-     * <p>Returns the last {@code ?m} reported for {@code PT9S, PT10S}: {@code PT9S} as documented,
-     * {@code PT10S} once fixed, {@code no row} if nothing was reported.
+     * <p>Every arrival's report is read, in both input orders, so a lost final evaluation cannot
+     * leave the first arrival's value standing in for the two-element answer (codex, review of
+     * #116). Returns the reports as {@code "PT9S PT9S / PT10S PT9S"} — {@code PT9S,PT10S} then
+     * {@code PT10S,PT9S}: that string as documented (text order), {@code "PT9S PT10S / PT10S PT10S"}
+     * once fixed.
      */
     private static String durationMax() throws Exception {
-        String agreeing = lastMax("PT1S", "PT2S");
-        if (!"PT2S".equals(agreeing)) {
+        String agreeing = maxReports("PT1S", "PT2S");
+        if (!"PT1S PT2S".equals(agreeing)) {
             DIVERGENCES.add("REGRESSED — the control (MAX of PT1S, PT2S) reported " + agreeing
-                    + ", not PT2S\n      MAX over durations is failing outright; the text-order "
+                    + ", not PT1S PT2S\n      MAX over durations is failing outright; the text-order "
                     + "verdict is meaningless");
         }
-        String m = lastMax("PT9S", "PT10S");
-        return m == null ? "no row" : m;
+        return maxReports("PT9S", "PT10S") + " / " + maxReports("PT10S", "PT9S");
     }
 
-    /** Pushes two {@code xsd:duration} values and returns the last {@code ?m} MAX reported, or null. */
-    private static String lastMax(String first, String second) throws Exception {
+    /** Pushes two {@code xsd:duration} values and returns every {@code ?m} MAX reported, space-separated. */
+    private static String maxReports(String first, String second) throws Exception {
         IRI duration = VF.createIRI("http://www.w3.org/2001/XMLSchema#duration");
         List<Object> rows = run(null, """
             SELECT (MAX(?d) AS ?m) FROM STREAM S [TRIPLES 3]
@@ -794,11 +810,9 @@ public class CapabilityProbe {
                 s.push(VF.createStatement(VF.createIRI(C + "o2"), VF.createIRI(C + "d"),
                         VF.createLiteral(second, duration)), 1100L);
             });
-        if (rows.isEmpty()) {
-            return null;
-        }
-        Object m = ((Map<?, ?>) rows.get(rows.size() - 1)).get("m");
-        return m == null ? null : (m instanceof Literal l ? l.getLabel() : String.valueOf(m));
+        List<String> reports = new ArrayList<>();
+        rows.forEach(row -> reports.add(text(((Map<?, ?>) row).get("m"))));
+        return reports.isEmpty() ? "no row" : String.join(" ", reports);
     }
 
     /**
@@ -879,8 +893,12 @@ public class CapabilityProbe {
      * <p>The control is the documented workaround — {@code BIND(LANG(?l) AS ?lang)} and
      * {@code GROUP BY ?l ?lang} — which must report both tags, or grouping itself is failing.
      *
-     * <p>Returns {@code 1 group} as documented (the largest count is 2), {@code 2 groups} once fixed
-     * (every count is 1), or what was reported.
+     * <p>Both outputs are compared row by row, per arrival: the documented result is exactly
+     * {@code {cat,1}} then {@code {cat,2}}; a fix reports {@code {cat,1}}, then both tags at 1. The
+     * workaround control must be exactly {@code en:1}, then {@code en:1} and {@code fr:1}. Checking
+     * for "some count of 2" accepted extra rows and lost callbacks (codex, review of #116).
+     *
+     * <p>Returns {@code 1 group} as documented, {@code 2 groups} once fixed, or the rows.
      */
     private static String groupsOverLanguageTaggedKey() throws Exception {
         Pusher twoTags = s -> {
@@ -892,22 +910,22 @@ public class CapabilityProbe {
             SELECT ?l ?lang (COUNT(*) AS ?n) FROM STREAM S [TRIPLES 3]
             WHERE { STREAM S { ?o <%sl> ?l . } BIND(LANG(?l) AS ?lang) } GROUP BY ?l ?lang
             """.formatted(C), twoTags);
-        Set<String> tags = new TreeSet<>();
-        control.forEach(row -> tags.add(String.valueOf(((Map<?, ?>) row).get("lang"))));
-        if (!tags.equals(Set.of("en", "fr"))) {
-            DIVERGENCES.add("REGRESSED — the documented workaround (GROUP BY ?l ?lang) reported tags " + tags
-                    + ", not [en, fr]\n      fix the workaround in GETTING_STARTED.md before trusting the verdict");
+        if (!exactRows(control, List.of(row("l", "cat", "lang", "en", "n", "1"),
+                row("l", "cat", "lang", "en", "n", "1"), row("l", "cat", "lang", "fr", "n", "1")))) {
+            DIVERGENCES.add("REGRESSED — the documented workaround (GROUP BY ?l ?lang) reported " + control
+                    + "\n      fix the workaround in GETTING_STARTED.md before trusting the verdict");
         }
         List<Object> rows = run(null, """
             SELECT ?l (COUNT(*) AS ?n) FROM STREAM S [TRIPLES 3]
             WHERE { STREAM S { ?o <%sl> ?l . } } GROUP BY ?l
             """.formatted(C), twoTags);
-        if (rows.isEmpty()) {
-            return "no row";
+        if (exactRows(rows, List.of(row("l", "cat", "n", "1"), row("l", "cat", "n", "2")))) {
+            return "1 group";
         }
-        boolean anyTwo = rows.stream().anyMatch(row -> isNumber(((Map<?, ?>) row).get("n"), 2));
-        boolean allOne = rows.stream().allMatch(row -> isNumber(((Map<?, ?>) row).get("n"), 1));
-        return anyTwo ? "1 group" : allOne ? "2 groups" : String.valueOf(rows);
+        if (exactRows(rows, List.of(row("l", "cat", "n", "1"), row("l", "cat", "n", "1"), row("l", "cat", "n", "1")))) {
+            return "2 groups";
+        }
+        return String.valueOf(rows);
     }
 
     /**
@@ -932,7 +950,7 @@ public class CapabilityProbe {
         Pusher request = s -> s.push(VF.createStatement(VF.createIRI(C + "r1"), VF.createIRI(C + "person"),
                 VF.createIRI(C + "p1")));
         List<Object> control = run(seeded, shape.formatted(C, "?r ?p ?city"), request);
-        if (control.size() != 1) {
+        if (!exactRows(control, List.of(row("r", C + "r1", "p", C + "p1", "city", "Berlin")))) {
             DIVERGENCES.add("REGRESSED — the control (UNION with ?p projected) returned " + control
                     + ", not one row\n      the static UNION itself is failing; the projection verdict is meaningless");
         }
@@ -1006,7 +1024,7 @@ public class CapabilityProbe {
                     + "answers\n      the composed route now drops IRI-keyed rows too; the literal "
                     + "verdict is meaningless until that is understood");
         }
-        return C.concat("item1").equals(firstValue(literal, "item")) && unmatched.isEmpty();
+        return exactRows(literal, List.of(row("o", C + "o1", "item", C + "item1"))) && unmatched.isEmpty();
     }
 
     /**
@@ -1040,13 +1058,13 @@ public class CapabilityProbe {
             SELECT ?o ?y FROM STREAM S [NOW]
             WHERE { STREAM S { ?o <%1$sv> ?x . } ?o <%1$skind> <%1$sK> . BIND(?x * 2 AS ?y) FILTER(%2$s) }
             """;
-        Set<String> onBindTarget = subjects(run(seeded, shape.formatted(C, "?y > 5"), four));
+        List<Object> onBindTarget = run(seeded, shape.formatted(C, "?y > 5"), four);
         Set<String> onInput = subjects(run(seeded, shape.formatted(C, "?x > 2.5"), four));
         if (!onInput.equals(Set.of("o1"))) {
             DIVERGENCES.add("REGRESSED — the control (a FILTER on the BIND's input) no longer answers\n"
                     + "      the static lookup itself is failing; the BIND/FILTER verdict is meaningless");
         }
-        return onBindTarget.equals(Set.of("o1"));
+        return exactRows(onBindTarget, List.of(row("o", C + "o1", "y", "8")));
     }
 
     /**
@@ -1357,11 +1375,11 @@ public class CapabilityProbe {
                 conn.add(VF.createIRI(C + "a"), VF.createIRI(C + "label"), VF.createLiteral("Alpha"));
             }
         }, """
-            SELECT ?label FROM STREAM S [TRIPLES 1]
+            SELECT ?o ?label FROM STREAM S [TRIPLES 1]
             WHERE { STREAM S { ?o <%sof> ?x . } ?x <%slabel> ?label . }
             """.formatted(C, C),
                 s -> s.pushTriple(C + "o1", C + "of", C + "a"));
-        return rows.stream().anyMatch(r -> r.toString().contains("Alpha"));
+        return exactRows(rows, List.of(row("o", C + "o1", "label", "Alpha")));
     }
 
     private static boolean builtinsWork() throws Exception {
@@ -1377,12 +1395,13 @@ public class CapabilityProbe {
                 s -> s.push(C + "o1", C + "val", 250.0));
         // Assert the VALUES, not merely that the bindings exist: a wrong ABS or SUBSTR would
         // otherwise pass, and this check exists to catch behavioural regressions.
-        String r = rows.toString();
-        return r.contains("d=150.0")            // ABS(250 - 100)
-                && r.contains("c=x250.0")       // CONCAT("x", STR(250.0))
-                && r.contains("i=" + C + "250.0")
-                && r.contains("u=25")           // SUBSTR("250.0", 1, 2)
-                && r.contains("f=hi");          // IF(250 > 10, "hi", "lo")
+        // Compared as exact values per binding: substring matching accepted d=150.01 (codex, #116).
+        return exactRows(rows, List.of(row(
+                "d", "150.0",                   // ABS(250 - 100)
+                "c", "x250.0",                  // CONCAT("x", STR(250.0))
+                "i", C + "250.0",
+                "u", "25",                      // SUBSTR("250.0", 1, 2)
+                "f", "hi")));                   // IF(250 > 10, "hi", "lo")
     }
 
     private static boolean atomicElementJoins() throws Exception {
@@ -1396,8 +1415,7 @@ public class CapabilityProbe {
                             VF.createStatement(o, VF.createIRI(C + "val"), VF.createLiteral(1.0)),
                             VF.createStatement(o, VF.createIRI(C + "other"), VF.createLiteral(2.0))));
                 });
-        String r = rows.toString();
-        return r.contains("v=") && r.contains("w=");
+        return exactRows(rows, List.of(row("v", "1.0", "w", "2.0")));
     }
 
     private static boolean groupByWorks() throws Exception {
@@ -1409,30 +1427,86 @@ public class CapabilityProbe {
             """.formatted(C),
                 s -> {
                     // A windowed aggregate is evaluated when an element ARRIVES, not on a timer,
-                    // so the window needs a later element to close over the earlier ones. Pushing
-                    // all three at once would leave the aggregate unemitted and look like a
-                    // regression -- which is exactly the false alarm this pacing avoids.
-                    s.pushTriple(C + "o1", C + "group", C + "g1");
-                    s.pushTriple(C + "o2", C + "group", C + "g1");
-                    s.pushTriple(C + "o3", C + "group", C + "g2");
-                    Thread.sleep(1500);
-                    s.pushTriple(C + "o4", C + "group", C + "g2");
+                    // so the bucket needs a later element to close it. Event time decides the
+                    // bucket: the first three at 100-300 ms land in [0, 1000), and the fourth at
+                    // 1500 ms closes it. Wall-clock pacing used to let the scheduler split the
+                    // bucket and fail the check with a correct engine (codex, review of #116).
+                    s.push(st("o1", "group", "g1"), 100L);
+                    s.push(st("o2", "group", "g1"), 200L);
+                    s.push(st("o3", "group", "g2"), 300L);
+                    Thread.sleep(200);
+                    s.push(st("o4", "group", "g2"), 1500L);
                 });
-        // Require the group/count ASSOCIATION within a single row, and require BOTH expected
-        // groups. Checking substrings across rows passes on {g1,n=1}+{g2,n=2}; checking only g1
-        // passes on an engine that silently drops every second group (codex, rounds 2 and 3).
-        boolean g1 = false;
-        boolean g2 = false;
-        for (Object row : rows) {
-            String one = row.toString();
-            if (one.contains("g=" + C + "g1") && one.contains("n=2")) {
-                g1 = true;
-            }
-            if (one.contains("g=" + C + "g2") && one.contains("n=1")) {
-                g2 = true;
-            }
+        // Exactly the closed bucket: {g1, 2} and {g2, 1}, nothing else. Substring matching across
+        // rows passed on {g1,n=1}+{g2,n=2} and on tenfold counts (codex, rounds 2 and 3 of #66;
+        // review of #116).
+        return exactRows(rows, List.of(row("g", C + "g1", "n", "2"), row("g", C + "g2", "n", "1")));
+    }
+
+    private static Statement st(String s, String p, String o) {
+        return VF.createStatement(VF.createIRI(C + s), VF.createIRI(C + p), VF.createIRI(C + o));
+    }
+
+    // ---- exact-row oracle ------------------------------------------------------------------
+
+    /**
+     * A binding as text: a literal's label, an IRI's string, anything else's {@code toString}. Used
+     * so that checks compare values, never substrings of a row's {@code toString} — substring
+     * matching accepted {@code 150.01} for {@code 150.0} and {@code AlphaWRONG} for {@code Alpha}
+     * (codex, review of #116).
+     */
+    private static String text(Object value) {
+        return value == null ? "null" : (value instanceof Literal l ? l.getLabel() : String.valueOf(value));
+    }
+
+    /** One expected row: alternating variable names and values, e.g. {@code row("g", g1, "n", "2")}. */
+    private static Map<String, String> row(String... kv) {
+        Map<String, String> m = new java.util.LinkedHashMap<>();
+        for (int i = 0; i < kv.length; i += 2) {
+            m.put(kv[i], kv[i + 1]);
         }
-        return g1 && g2;
+        return m;
+    }
+
+    /** True when {@code actual} and {@code expected} denote the same value; numbers compare numerically. */
+    private static boolean sameValue(Object actual, String expected) {
+        String a = text(actual);
+        if (a.equals(expected)) {
+            return true;
+        }
+        try {
+            return Double.parseDouble(a) == Double.parseDouble(expected);
+        } catch (NumberFormatException e) {
+            return false;
+        }
+    }
+
+    /**
+     * True when the rows are exactly the expected ones, as a multiset: the same number of rows, and
+     * each expected row matched by a distinct actual row that binds every expected variable to the
+     * expected value. Variables an expected row does not name are not inspected.
+     */
+    private static boolean exactRows(List<Object> rows, List<Map<String, String>> expected) {
+        if (rows.size() != expected.size()) {
+            return false;
+        }
+        List<Object> left = new ArrayList<>(rows);
+        for (Map<String, String> want : expected) {
+            Object hit = null;
+            for (Object candidate : left) {
+                Map<?, ?> got = (Map<?, ?>) candidate;
+                if (want.entrySet().stream().allMatch(e -> got.containsKey(e.getKey())
+                        && sameValue(got.get(e.getKey()), e.getValue()))) {
+                    hit = candidate;
+                    break;
+                }
+            }
+            if (hit == null) {
+                return false;
+            }
+            left.remove(hit);
+        }
+        return true;
     }
 
     // ---- harness -------------------------------------------------------------------------
