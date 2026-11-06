@@ -202,6 +202,9 @@ fault.
 | Rules matching the background graph ([#58](https://github.com/cqels/CQELS4J/issues/58)) | The reasoner reads stream elements only, so an ontology in the store is invisible to rules | Push the ontology onto the stream at start-up |
 | `xsd:duration` in `ORDER BY`, `MIN` or `MAX` | Compared as text: `MAX` over `PT9S` and `PT10S` returns `PT9S` | Compare in a `FILTER`, which compares durations by value, or order in the result listener — see `CQELS-QL_SPEC.md` §9 |
 | `AVG` of a group in which no row binds the argument | `null`, where SPARQL 1.1 gives `0` | Treat `null` as `0` in the result listener |
+| An aggregate whose argument no solution binds, such as `COUNT(?v)` with `?v` in no pattern | No row at all, where SPARQL 1.1 gives `COUNT` 0 — and a `COUNT(*)` beside it disappears too | Aggregate only arguments every solution binds, or bind them through an `OPTIONAL` (counted correctly) — see `CQELS-QL_SPEC.md` §9 |
+| `GROUP BY` on a language-tagged or typed literal | The key keeps the label only: `"cat"@en` and `"cat"@fr` form one group | Add `BIND(LANG(?l) AS ?lang)` (or `DATATYPE`) and `GROUP BY ?l ?lang` |
+| A static `UNION` joined to the stream, when the join variable is not projected | Every row is dropped | Project the join variable — see `CQELS-QL_SPEC.md` §9 |
 
 `2.0.0-alpha.22` fixed six rows that this table carried for alpha.21: `REPLACE()`, a `FILTER`
 over a `BIND` target ([#83](https://github.com/cqels/CQELS4J/issues/83)) or an `OPTIONAL`
