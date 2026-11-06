@@ -14,7 +14,7 @@ import java.security.MessageDigest;
 import java.util.List;
 
 /**
- * The two request filters the launcher puts in front of the servlet. They are deliberately
+ * The request filters the launcher puts in front of the servlet. They are deliberately
  * small and generic so that, once {@code cqels-mcp} exposes a servlet mount point, the servlet
  * can run behind the MCP server's own bearer-token and origin filters instead and these are
  * simply not installed. They are public so that a program mounting the servlet in its own
@@ -51,6 +51,47 @@ public final class AccessFilters {
             resp.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
             resp.setContentType("text/plain; charset=UTF-8");
             resp.getWriter().write("a bearer token is required\n");
+        }
+    }
+
+    /**
+     * {@code Host} allow-list: the defence against DNS rebinding. An attacker's page on
+     * {@code rebind.attacker.example} can have that name re-resolve to {@code 127.0.0.1}; its
+     * requests are then same-origin as far as the browser is concerned — no {@code Origin}
+     * header, {@code Sec-Fetch-Site: same-origin} — and it can read the answers. Found
+     * reviewing #105: such a request returned the fleet's driver names. What the browser cannot
+     * change is the {@code Host} it sends, which still names the attacker's domain, so a request
+     * whose host is not one this endpoint is known by is refused (403).
+     *
+     * <p>The launcher installs it whenever no bearer token is set (a token defeats rebinding on
+     * its own: the browser never attaches it for the attacker's page), or when
+     * {@code CQELS_SPARQL_ALLOWED_HOSTS} is given. Names compare case-insensitively, without the
+     * port and without IPv6 brackets.
+     */
+    public static final class Hosts implements Filter {
+        private final List<String> allowed;
+
+        public Hosts(List<String> allowed) {
+            this.allowed = allowed.stream().map(Hosts::normalise).toList();
+        }
+
+        static String normalise(String host) {
+            String h = host.strip().toLowerCase(java.util.Locale.ROOT);
+            return h.startsWith("[") && h.endsWith("]") ? h.substring(1, h.length() - 1) : h;
+        }
+
+        @Override
+        public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain)
+                throws IOException, ServletException {
+            String host = normalise(request.getServerName());
+            if (!allowed.contains(host)) {
+                HttpServletResponse resp = (HttpServletResponse) response;
+                resp.setStatus(HttpServletResponse.SC_FORBIDDEN);
+                resp.setContentType("text/plain; charset=UTF-8");
+                resp.getWriter().write("host " + host + " is not allowed (CQELS_SPARQL_ALLOWED_HOSTS)\n");
+                return;
+            }
+            chain.doFilter(request, response);
         }
     }
 

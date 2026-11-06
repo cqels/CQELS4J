@@ -339,6 +339,43 @@ class SparqlProtocolServletTest {
         }
     }
 
+    /** java.net.http refuses to set Host, so these requests go over a raw socket. Returns the status code. */
+    static int statusWithHost(String url, String host) throws IOException {
+        URI u = URI.create(url);
+        try (java.net.Socket socket = new java.net.Socket(u.getHost(), u.getPort())) {
+            socket.setSoTimeout(5000);
+            String request = "GET " + u.getRawPath() + "?query=" + enc("ASK {}") + " HTTP/1.1\r\nHost: " + host
+                    + "\r\nSec-Fetch-Site: same-origin\r\nConnection: close\r\n\r\n";
+            socket.getOutputStream().write(request.getBytes(StandardCharsets.US_ASCII));
+            String status = new java.io.BufferedReader(new java.io.InputStreamReader(socket.getInputStream(),
+                    StandardCharsets.US_ASCII)).readLine();
+            return Integer.parseInt(status.split(" ")[1]);
+        }
+    }
+
+    /**
+     * DNS rebinding, found reviewing #105: the attacker's page is same-origin to the browser
+     * (no Origin, Sec-Fetch-Site: same-origin) — only the Host header still names its domain.
+     */
+    @Test
+    void reboundHostIsRefusedWithoutAToken() throws Exception {
+        int port = URI.create(shared.url()).getPort();
+        assertEquals(403, statusWithHost(shared.url(), "rebind.attacker.example:" + port));
+        for (String ok : List.of("127.0.0.1:" + port, "localhost:" + port, "LOCALHOST", "[::1]:" + port)) {
+            assertEquals(200, statusWithHost(shared.url(), ok), ok);
+        }
+        // a token defeats rebinding by itself, so no host check unless one is asked for
+        try (Endpoint locked = Endpoint.start(EndpointOptions.defaults().withAuthToken("s3cret"), 0)) {
+            assertEquals(401, statusWithHost(locked.url(), "rebind.attacker.example"));
+        }
+        try (Endpoint named = Endpoint.start(EndpointOptions.defaults().withAllowedHosts(List.of("sparql.fleet.example")), 0)) {
+            assertEquals(200, statusWithHost(named.url(), "sparql.fleet.example"));
+            assertEquals(403, statusWithHost(named.url(), "localhost"));
+        }
+        assertTrue(SparqlEndpointLauncher.allowedHosts("127.0.0.1",
+                EndpointOptions.defaults().withAllowedHosts(List.of("*"))).isEmpty());
+    }
+
     // ---- options that need their own endpoint ----------------------------------------------
 
     @Test
