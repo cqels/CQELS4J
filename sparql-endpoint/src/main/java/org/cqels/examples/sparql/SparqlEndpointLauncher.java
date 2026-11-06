@@ -47,6 +47,7 @@ import java.util.function.Supplier;
  *   CQELS_SPARQL_MAX_CONCURRENT_QUERIES   16          beyond it: 503 + Retry-After at once
  *   CQELS_SPARQL_MAX_ROWS                 0           0 = unlimited
  *   CQELS_SPARQL_UPDATE_ENABLED           false
+ *   CQELS_SPARQL_FEDERATION_ENABLED       false       accept SERVICE and LOAD (outbound requests)
  *   CQELS_SPARQL_STORE_PATH               (memory)    NativeStore directory for a durable graph
  *   CQELS_SPARQL_SEED_FLEET               false       seed the examples' V2G fleet world
  *   CQELS_SPARQL_MAX_THREADS              200         Jetty request threads; must exceed the query
@@ -84,7 +85,8 @@ public final class SparqlEndpointLauncher {
                 .withMaxConcurrentQueries(Integer.parseInt(env("CQELS_SPARQL_MAX_CONCURRENT_QUERIES",
                         Integer.toString(EndpointOptions.DEFAULT_MAX_CONCURRENT_QUERIES))))
                 .withMaxRows(Integer.parseInt(env("CQELS_SPARQL_MAX_ROWS", "0")))
-                .withUpdateEnabled(Boolean.parseBoolean(env("CQELS_SPARQL_UPDATE_ENABLED", "false")));
+                .withUpdateEnabled(Boolean.parseBoolean(env("CQELS_SPARQL_UPDATE_ENABLED", "false")))
+                .withFederationEnabled(Boolean.parseBoolean(env("CQELS_SPARQL_FEDERATION_ENABLED", "false")));
         boolean allowRemoteUnauthenticated = Boolean.parseBoolean(env("CQELS_SPARQL_ALLOW_UNAUTHENTICATED_REMOTE", "false"));
         String storePath = env("CQELS_SPARQL_STORE_PATH", null);
         boolean seedFleet = Boolean.parseBoolean(env("CQELS_SPARQL_SEED_FLEET", "false"));
@@ -141,8 +143,9 @@ public final class SparqlEndpointLauncher {
 
         System.out.println("listening on " + listeningUrl(host, bound, options.path()));
         System.out.flush();
-        log.info("SPARQL endpoint ready: update {}, token {}, execution limit {} s, {} query slots, max rows {}, store {}",
-                options.updateEnabled() ? "enabled" : "disabled", options.authToken() == null ? "none" : "set",
+        log.info("SPARQL endpoint ready: update {}, federation {}, token {}, execution limit {} s, {} query slots, max rows {}, store {}",
+                options.updateEnabled() ? "enabled" : "disabled", options.federationEnabled() ? "enabled" : "disabled",
+                options.authToken() == null ? "none" : "set",
                 options.maxExecutionSeconds(), options.maxConcurrentQueries(),
                 options.maxRows() == 0 ? "unlimited" : options.maxRows(), storePath == null ? "memory" : storePath);
         server.join();

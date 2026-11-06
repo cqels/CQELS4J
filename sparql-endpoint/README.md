@@ -49,6 +49,7 @@ All settings are environment variables, named like the MCP server's `CQELS_MCP_H
 | `CQELS_SPARQL_MAX_CONCURRENT_QUERIES` | `16` | Queries and updates evaluating at once. Beyond it the request is answered `503` with `Retry-After: 1` immediately, not queued. |
 | `CQELS_SPARQL_MAX_ROWS` | `0` | SELECT rows beyond this are dropped and `X-CQELS-Truncated: true` is set. `0` = unlimited. |
 | `CQELS_SPARQL_UPDATE_ENABLED` | `false` | Accept SPARQL Update. |
+| `CQELS_SPARQL_FEDERATION_ENABLED` | `false` | Accept `SERVICE` (in queries and updates) and `LOAD`. Both make the endpoint itself send requests to a URL the client names; see *Security*. |
 | `CQELS_SPARQL_STORE_PATH` | unset | NativeStore directory for a graph that survives restarts; unset = memory store. |
 | `CQELS_SPARQL_SEED_FLEET` | `false` | Seed the fleet world. |
 | `CQELS_SPARQL_MAX_THREADS` | `200` | Jetty request threads. Must cover the query slots, the connector's own threads and 4 spares, or start-up is refused: with fewer, requests would queue for a thread before reaching a slot, and neither the immediate `503` nor `/health` would hold. Ignored on virtual threads. |
@@ -73,7 +74,7 @@ All settings are environment variables, named like the MCP server's `CQELS_MCP_H
 |---|---|
 | `400` | malformed query or update, graph parameter that is not an absolute IRI, missing `query`, update dataset parameters plus `USING`/`WITH`, malformed percent-encoding |
 | `401` | token set and missing or wrong |
-| `403` | update while `CQELS_SPARQL_UPDATE_ENABLED` is false; `Origin` not in `CQELS_SPARQL_ALLOWED_ORIGINS` |
+| `403` | update while `CQELS_SPARQL_UPDATE_ENABLED` is false; `SERVICE` or `LOAD` while `CQELS_SPARQL_FEDERATION_ENABLED` is false; `Origin` not in `CQELS_SPARQL_ALLOWED_ORIGINS`; a browser request marked `Sec-Fetch-Site: cross-site` or `same-site` with no allowed `Origin` |
 | `405` | update sent via GET |
 | `406` | nothing in `Accept` matches a registered writer |
 | `413` | body over `CQELS_SPARQL_MAX_REQUEST_BYTES` |
@@ -144,13 +145,26 @@ requested upstream as cqels/claude#1387; the Jetty version here is pinned to the
 
 ## Security
 
-- Defaults are loopback, read-only, no browser origins, 30-second execution limit, 1 MiB bodies.
+- Defaults are loopback, read-only, no federation, no browser origins, 30-second execution limit, 1 MiB bodies.
+- **`SERVICE` and `LOAD` are refused unless `CQELS_SPARQL_FEDERATION_ENABLED=true`.** They make
+  the endpoint send requests of its own. A `SERVICE` clause sends the bindings it has so far,
+  taken from the graph, to whatever URL the query names, and the trigger can be a plain GET:
+  a cross-site `<img src="http://127.0.0.1:8089/sparql?query=…">` reads nothing back, but the
+  server has already posted the data to the attacker's service. CORS cannot stop that, since the
+  data never passes through the browser. The test suite reproduces it with federation on (the
+  stand-in remote receives the vehicles' IRIs) and checks that nothing leaves with it off.
+  Enable federation only behind a token.
 - **Browser requests from other origins are refused (`403`).** Loopback is not a boundary
   against a browser: any page the user visits can submit a cross-origin form POST — a CORS
   "simple" request, sent without a preflight — to `127.0.0.1:8089`. Withholding CORS headers
   only hides the response; the update would still run. Browsers attach `Origin` to every
   cross-origin POST, so the endpoint refuses any `Origin` not on `CQELS_SPARQL_ALLOWED_ORIGINS`.
   Setting that to `*` with update enabled and no token undoes this; don't.
+- A browser GET from an `<img>` or a link carries no `Origin`, so it also checks Fetch Metadata:
+  `Sec-Fetch-Site: cross-site` or `same-site` with no allowed `Origin` is refused (`403`).
+  `none` (a URL typed into the address bar), `same-origin`, and clients that send no
+  `Sec-Fetch-Site` at all (curl, rdflib, Jena) pass. Browsers that predate Fetch Metadata
+  are not covered; the federation default above does not depend on it.
 - Binding anything but a loopback address with no `CQELS_SPARQL_AUTH_TOKEN` is refused at
   start-up, unless `CQELS_SPARQL_ALLOW_UNAUTHENTICATED_REMOTE=true`.
 - TLS is not terminated here. Front the endpoint with a TLS-terminating proxy, as the MCP

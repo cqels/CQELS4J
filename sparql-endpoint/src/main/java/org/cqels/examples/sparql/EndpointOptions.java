@@ -22,6 +22,10 @@ import java.util.List;
  *                             decided before the body starts — the cap bounds that memory
  * @param updateEnabled        whether SPARQL Update is accepted at all; off by default because
  *                             an update rewrites the graph the engine joins its streams against
+ * @param federationEnabled    whether {@code SERVICE} (queries and updates) and {@code LOAD} are
+ *                             accepted. Off by default: both make this <em>server</em> send
+ *                             requests — with bindings from the graph — to any URL the request
+ *                             names, which no browser-side protection can see or stop
  * @param authToken            bearer token, or {@code null} for no authentication
  * @param allowedOrigins       browser origins allowed to call the endpoint, or {@code *}; they get
  *                             CORS headers. Enforced by {@link AccessFilters.Origins}, which
@@ -34,6 +38,7 @@ public record EndpointOptions(
         int maxConcurrentQueries,
         int maxRows,
         boolean updateEnabled,
+        boolean federationEnabled,
         String authToken,
         List<String> allowedOrigins,
         long maxRequestBytes) {
@@ -55,49 +60,45 @@ public record EndpointOptions(
         authToken = authToken == null || authToken.isBlank() ? null : authToken;
     }
 
-    /** Loopback-friendly defaults: {@code /sparql}, 30 s, 16 slots, unlimited rows, read-only, no token, no CORS, 1 MiB. */
+    /** Loopback-friendly defaults: {@code /sparql}, 30 s, 16 slots, unlimited rows, read-only, no federation, no token, no browser origins, 1 MiB. */
     public static EndpointOptions defaults() {
         return new EndpointOptions(DEFAULT_PATH, DEFAULT_MAX_EXECUTION_SECONDS, DEFAULT_MAX_CONCURRENT_QUERIES, 0,
-                false, null, List.of(), DEFAULT_MAX_REQUEST_BYTES);
+                false, false, null, List.of(), DEFAULT_MAX_REQUEST_BYTES);
     }
 
-    public EndpointOptions withPath(String p) {
-        return new EndpointOptions(p, maxExecutionSeconds, maxConcurrentQueries, maxRows, updateEnabled, authToken,
-                allowedOrigins, maxRequestBytes);
+    public EndpointOptions withPath(String v) {
+        return new EndpointOptions(v, maxExecutionSeconds, maxConcurrentQueries, maxRows, updateEnabled, federationEnabled, authToken, allowedOrigins, maxRequestBytes);
     }
 
-    public EndpointOptions withMaxExecutionSeconds(int s) {
-        return new EndpointOptions(path, s, maxConcurrentQueries, maxRows, updateEnabled, authToken, allowedOrigins,
-                maxRequestBytes);
+    public EndpointOptions withMaxExecutionSeconds(int v) {
+        return new EndpointOptions(path, v, maxConcurrentQueries, maxRows, updateEnabled, federationEnabled, authToken, allowedOrigins, maxRequestBytes);
     }
 
-    public EndpointOptions withMaxConcurrentQueries(int n) {
-        return new EndpointOptions(path, maxExecutionSeconds, n, maxRows, updateEnabled, authToken, allowedOrigins,
-                maxRequestBytes);
+    public EndpointOptions withMaxConcurrentQueries(int v) {
+        return new EndpointOptions(path, maxExecutionSeconds, v, maxRows, updateEnabled, federationEnabled, authToken, allowedOrigins, maxRequestBytes);
     }
 
-    public EndpointOptions withMaxRows(int n) {
-        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, n, updateEnabled, authToken,
-                allowedOrigins, maxRequestBytes);
+    public EndpointOptions withMaxRows(int v) {
+        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, v, updateEnabled, federationEnabled, authToken, allowedOrigins, maxRequestBytes);
     }
 
-    public EndpointOptions withUpdateEnabled(boolean b) {
-        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, maxRows, b, authToken,
-                allowedOrigins, maxRequestBytes);
+    public EndpointOptions withUpdateEnabled(boolean v) {
+        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, maxRows, v, federationEnabled, authToken, allowedOrigins, maxRequestBytes);
     }
 
-    public EndpointOptions withAuthToken(String t) {
-        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, maxRows, updateEnabled, t,
-                allowedOrigins, maxRequestBytes);
+    public EndpointOptions withFederationEnabled(boolean v) {
+        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, maxRows, updateEnabled, v, authToken, allowedOrigins, maxRequestBytes);
     }
 
-    public EndpointOptions withAllowedOrigins(List<String> o) {
-        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, maxRows, updateEnabled, authToken,
-                o, maxRequestBytes);
+    public EndpointOptions withAuthToken(String v) {
+        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, maxRows, updateEnabled, federationEnabled, v, allowedOrigins, maxRequestBytes);
     }
 
-    public EndpointOptions withMaxRequestBytes(long b) {
-        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, maxRows, updateEnabled, authToken,
-                allowedOrigins, b);
+    public EndpointOptions withAllowedOrigins(List<String> v) {
+        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, maxRows, updateEnabled, federationEnabled, authToken, v, maxRequestBytes);
+    }
+
+    public EndpointOptions withMaxRequestBytes(long v) {
+        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, maxRows, updateEnabled, federationEnabled, authToken, allowedOrigins, v);
     }
 }
