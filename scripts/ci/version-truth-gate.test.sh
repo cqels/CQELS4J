@@ -1713,6 +1713,38 @@ d=$(newfix); sed -i.bak "/--data-urlencode/d" "$d/sparql-endpoint/README.md"
 VTG_DEEP_CAPTURE="$WORK/t-good" checkmsg 1 "a README with no curl example left fails ('pass vacuously')" \
   "pass vacuously" "$d" --deep
 
+# The example is tokenised as the reader's shell would (review of #106). An
+# unescaped quote inside the single-quoted argument CLOSES it, so the shell
+# sends a bare Alice — the gate must send the same, and so fail as the reader
+# would. The correct '\'' escape must reach the endpoint as a quote.
+d=$(newfix)
+cat > "$d/sparql-endpoint/README.md" <<'EOF'
+```bash
+curl -G http://127.0.0.1:8089/sparql \
+  --data-urlencode 'query=SELECT ?v WHERE { ?v ?p ?name FILTER (?name = 'Alice') }'
+```
+EOF
+VTG_DEEP_CAPTURE="$WORK/t-good" checkmsg 0 "an unescaped inner quote is dropped, as the shell drops it" \
+  "FILTER (?name = Alice) }" "$d" --deep
+d=$(newfix)
+cat > "$d/sparql-endpoint/README.md" <<'EOF'
+```bash
+curl -G http://127.0.0.1:8089/sparql \
+  --data-urlencode 'query=SELECT ?v WHERE { ?v ?p ?name FILTER (?name = '\''Alice'\'') }'
+```
+EOF
+VTG_DEEP_CAPTURE="$WORK/t-good" checkmsg 0 "a correctly escaped quote reaches the endpoint as a quote" \
+  "FILTER (?name = 'Alice') }" "$d" --deep
+
+# Malformed answers are the endpoint's defect (exit 1), not a parser failure
+# (exit 3) and not a pass: a null binding used to count as a row.
+spcap s-nullrow '{"head":{},"boolean":true}' '{"head":{"vars":["v"]},"results":{"bindings":[null]}}' 12.0.16
+d=$(newfix); VTG_DEEP_CAPTURE="$WORK/t-good" VTG_SPARQL_CAPTURE="$WORK/s-nullrow" checkmsg 1 \
+  "a null binding is not a row" "did not return SPARQL JSON results" "$d" --deep
+spcap s-broken '{"head":{},"boolean":true}' '{"results":"broken"}' 12.0.16
+d=$(newfix); VTG_DEEP_CAPTURE="$WORK/t-good" VTG_SPARQL_CAPTURE="$WORK/s-broken" checkmsg 1 \
+  "a malformed results member is a defect, not an inconclusive parser crash" "did not return SPARQL JSON results" "$d" --deep
+
 d=$(newfix); sed -i.bak "/jetty.version/d" "$d/sparql-endpoint/pom.xml"
 VTG_DEEP_CAPTURE="$WORK/t-good" checkmsg 1 "a pom with no readable jetty.version fails" \
   "declares no readable <jetty.version>" "$d" --deep
