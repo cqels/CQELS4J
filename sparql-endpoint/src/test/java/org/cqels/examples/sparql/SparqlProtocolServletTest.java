@@ -566,7 +566,7 @@ class SparqlProtocolServletTest {
         CQELSEngine engine = CQELSEngine.builder().id("t-" + System.nanoTime()).withMemoryStore().build();
         engine.start();
         SlotHolder holder = new SlotHolder(engine, 1);
-        Server server = SparqlEndpointLauncher.startServer(holder, "127.0.0.1", 0,
+        Server server = SparqlEndpointLauncher.startServer(holder, null, "127.0.0.1", 0,
                 EndpointOptions.defaults().withMaxConcurrentQueries(1), 64, false);
         try {
             String url = "http://127.0.0.1:" + ((ServerConnector) server.getConnectors()[0]).getLocalPort() + "/sparql";
@@ -593,14 +593,14 @@ class SparqlProtocolServletTest {
         CQELSEngine engine = CQELSEngine.builder().id("t-" + System.nanoTime()).withMemoryStore().build();
         engine.start();
         int slots = 3;
-        Server probe = SparqlEndpointLauncher.startServer(engine::getRepository, "127.0.0.1", 0,
+        Server probe = SparqlEndpointLauncher.startServer(engine::getRepository, null, "127.0.0.1", 0,
                 EndpointOptions.defaults().withMaxConcurrentQueries(slots), 64, false);
         int leased = ((org.eclipse.jetty.util.thread.QueuedThreadPool) probe.getThreadPool()).getThreadPoolBudget().getLeasedThreads();
         probe.stop();
         int minimum = Math.max(8, SparqlEndpointLauncher.minimumThreads(slots, leased));
 
         SlotHolder holder = new SlotHolder(engine, slots);
-        Server server = SparqlEndpointLauncher.startServer(holder, "127.0.0.1", 0,
+        Server server = SparqlEndpointLauncher.startServer(holder, null, "127.0.0.1", 0,
                 EndpointOptions.defaults().withMaxConcurrentQueries(slots), minimum, false);
         try {
             String base = "http://127.0.0.1:" + ((ServerConnector) server.getConnectors()[0]).getLocalPort();
@@ -663,6 +663,142 @@ class SparqlProtocolServletTest {
             assertTrue(seen, "the continuous query's written-back row never became visible");
             var none = get(e.url(), "ASK { ?a <urn:ex:vehicle> <urn:ex:EV-3K8> }", null);
             assertTrue(none.body().replace(" ", "").contains("\"boolean\":false"));
+        }
+    }
+
+    // ---- the metadata graph -----------------------------------------------------------------
+
+    static final String META = "cqels://endpoint/metadata";
+    static final String CQE = "PREFIX cqe: <cqels://ontology/endpoint#> ";
+
+    static Endpoint withMetadata() throws Exception {
+        return Endpoint.start(EndpointOptions.defaults().withMetadataEnabled(true).withUpdateEnabled(true), 0);
+    }
+
+    static String csv(String url, String query) throws Exception {
+        var r = get(url, query, "text/csv");
+        assertEquals(200, r.statusCode(), r.body());
+        return r.body();
+    }
+
+    static boolean ask(String url, String query) throws Exception {
+        var r = get(url, query, null);
+        assertEquals(200, r.statusCode(), r.body());
+        return r.body().replace(" ", "").contains("\"boolean\":true");
+    }
+
+    @Test
+    void metadataGraphListsStreamsWithTheirAttributes() throws Exception {
+        try (Endpoint e = withMetadata()) {
+            e.engine().createStream("Telemetry", java.util.Map.of("unit", "km/h", "source", "can-bus"));
+            e.engine().createStream("https://example.org/fleet/stream/soc");
+            e.engine().createStream("fleet speed/raw");
+            String streams = csv(e.url(), CQE + "SELECT ?s ?name FROM <" + META + "> WHERE { "
+                    + "<cqels://endpoint/engine> cqe:stream ?s . ?s a cqe:Stream ; cqe:name ?name } ORDER BY ?name");
+            assertTrue(streams.contains("cqels://streams/Telemetry,Telemetry"), streams);
+            // an absolute IRI is the stream's node as it is; any other name is encoded under cqels://streams/
+            assertTrue(streams.contains("https://example.org/fleet/stream/soc,https://example.org/fleet/stream/soc"), streams);
+            assertTrue(streams.contains("cqels://streams/fleet%20speed%2Fraw,fleet speed/raw"), streams);
+            String attrs = csv(e.url(), CQE + "SELECT ?k ?v FROM <" + META + "> WHERE { "
+                    + "<cqels://streams/Telemetry> cqe:attribute [ cqe:key ?k ; cqe:value ?v ] } ORDER BY ?k");
+            assertTrue(attrs.contains("source,can-bus") && attrs.contains("unit,km/h"), attrs);
+        }
+    }
+
+    @Test
+    void metadataGraphCarriesTheEngineStatus() throws Exception {
+        try (Endpoint e = withMetadata()) {
+            e.engine().createStream("S");
+            e.engine().registerCqelsQuery("""
+                    REGISTER QUERY Q AS
+                    SELECT ?v FROM STREAM S [NOW] WHERE { STREAM S { ?v <urn:ex:p> ?o } }
+                    """, row -> { });
+            String status = csv(e.url(), CQE + "SELECT ?running ?queries ?persistence FROM NAMED <" + META + "> WHERE { "
+                    + "GRAPH <" + META + "> { ?e a cqe:Engine ; cqe:running ?running ; cqe:registeredQueries ?queries ; "
+                    + "cqe:persistence ?persistence ; cqe:snapshotAt ?at } }");
+            assertTrue(status.contains("true,1,NO_PERSISTENCE"), status);
+            // the protocol parameter selects the graph as FROM does
+            var byParam = HTTP.send(HttpRequest.newBuilder(URI.create(e.url() + "?query="
+                    + enc(CQE + "ASK { ?e cqe:running true }") + "&default-graph-uri=" + enc(META))).build(),
+                    HttpResponse.BodyHandlers.ofString());
+            assertEquals(200, byParam.statusCode(), byParam.body());
+            assertTrue(byParam.body().replace(" ", "").contains("\"boolean\":true"), byParam.body());
+        }
+    }
+
+    @Test
+    void metadataGraphIsASnapshotPerQuery() throws Exception {
+        try (Endpoint e = withMetadata()) {
+            String q = CQE + "ASK FROM <" + META + "> { ?s cqe:name \"Late\" }";
+            assertFalse(ask(e.url(), q));
+            e.engine().createStream("Late");
+            assertTrue(ask(e.url(), q), "a stream created after the first query must show in the next");
+            e.engine().removeStream("Late");
+            assertFalse(ask(e.url(), q), "a removed stream must be gone from the next query");
+        }
+    }
+
+    @Test
+    void metadataGraphStaysOutOfTheStore() throws Exception {
+        try (Endpoint e = withMetadata()) {
+            e.engine().createStream("Telemetry");
+            assertTrue(ask(e.url(), CQE + "ASK FROM <" + META + "> { ?s a cqe:Stream }"));
+            // not in the default graph every query without FROM sees — the engine's own included
+            assertFalse(ask(e.url(), CQE + "ASK { ?s a cqe:Stream }"));
+            try (RepositoryConnection c = e.engine().getRepository().getConnection()) {
+                assertFalse(c.hasStatement(null, null, null, false, VF.createIRI(META)));
+            }
+            // so it cannot share a dataset with the store's graphs …
+            var mixed = get(e.url(), "SELECT * FROM <" + META + "> FROM <urn:ex:g1> WHERE { ?s ?p ?o }", null);
+            assertEquals(400, mixed.statusCode(), mixed.body());
+            assertTrue(mixed.body().contains("on its own"), mixed.body());
+            // … and GRAPH <meta> without the dataset naming it says so instead of answering empty
+            var unnamed = get(e.url(), "SELECT * WHERE { GRAPH <" + META + "> { ?s ?p ?o } }", null);
+            assertEquals(400, unnamed.statusCode(), unnamed.body());
+            assertTrue(unnamed.body().contains("FROM NAMED"), unnamed.body());
+        }
+    }
+
+    @Test
+    void metadataGraphIsRefusedWhenNotEnabled() throws Exception {
+        assertFalse(EndpointOptions.defaults().metadataEnabled());
+        var r = get(shared.url(), "ASK FROM <" + META + "> { ?s ?p ?o }", null);
+        assertEquals(403, r.statusCode(), r.body());
+        assertTrue(r.body().contains("CQELS_SPARQL_METADATA_ENABLED"), r.body());
+    }
+
+    @Test
+    void updatesCannotWriteTheMetadataGraph() throws Exception {
+        try (Endpoint e = withMetadata()) {
+            String form = "application/x-www-form-urlencoded";
+            for (String update : List.of(
+                    "INSERT DATA { GRAPH <" + META + "> { <urn:ex:a> <urn:ex:b> <urn:ex:c> } }",
+                    // the prefixed form hides the IRI from the parse of INSERT DATA; the effect still shows it
+                    "PREFIX x: <cqels://endpoint/> INSERT DATA { GRAPH x:metadata { <urn:ex:a> <urn:ex:b> <urn:ex:c> } }",
+                    // WITH scopes the WHERE to that graph too, hence the empty pattern: one solution
+                    "WITH <" + META + "> INSERT { <urn:ex:a> <urn:ex:b> <urn:ex:c> } WHERE { }",
+                    "ADD <urn:ex:g1> TO <" + META + ">")) {
+                var r = post(e.url(), form, "update=" + enc(update), null);
+                assertEquals(403, r.statusCode(), update + " -> " + r.body());
+                assertTrue(r.body().contains("reserved"), r.body());
+            }
+            try (RepositoryConnection c = e.engine().getRepository().getConnection()) {
+                assertFalse(c.hasStatement(null, null, null, false, VF.createIRI(META)), "a refused update was not undone");
+            }
+            // any other graph is writable as before
+            var ok = post(e.url(), form, "update=" + enc("INSERT DATA { GRAPH <urn:ex:g3> { <urn:ex:a> <urn:ex:b> <urn:ex:c> } }"), null);
+            assertEquals(204, ok.statusCode(), ok.body());
+
+            // Triples put there behind the endpoint's back block every update that leaves them,
+            // and an update that removes them is accepted.
+            try (RepositoryConnection c = e.engine().getRepository().getConnection()) {
+                c.add(iri("x"), iri("y"), iri("z"), VF.createIRI(META));
+            }
+            var blocked = post(e.url(), form, "update=" + enc("INSERT DATA { <urn:ex:a> <urn:ex:b> <urn:ex:d> }"), null);
+            assertEquals(403, blocked.statusCode(), blocked.body());
+            assertFalse(ask(e.url(), "ASK { <urn:ex:a> <urn:ex:b> <urn:ex:d> }"), "the blocked update must be undone");
+            var cleared = post(e.url(), form, "update=" + enc("CLEAR GRAPH <" + META + ">"), null);
+            assertEquals(204, cleared.statusCode(), cleared.body());
         }
     }
 

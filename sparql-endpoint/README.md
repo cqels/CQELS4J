@@ -110,6 +110,7 @@ All settings are environment variables, named like the MCP server's `CQELS_MCP_H
 | `CQELS_SPARQL_MAX_ROWS` | `0` | SELECT rows beyond this are dropped and `X-CQELS-Truncated: true` is set. `0` = unlimited. |
 | `CQELS_SPARQL_UPDATE_ENABLED` | `false` | Accept SPARQL Update. |
 | `CQELS_SPARQL_FEDERATION_ENABLED` | `false` | Accept `SERVICE` (in queries and updates) and `LOAD`. Both make the endpoint itself send requests to a URL the client names; see *Security*. |
+| `CQELS_SPARQL_METADATA_ENABLED` | `false` | Serve the engine's streams and status as the read-only graph `cqels://endpoint/metadata`; see *The metadata graph*. |
 | `CQELS_SPARQL_STORE_PATH` | unset | NativeStore directory for a graph that survives restarts; unset = memory store. |
 | `CQELS_SPARQL_SEED_FLEET` | `false` | Seed the fleet world. |
 | `CQELS_SPARQL_MAX_THREADS` | `200` | Jetty request threads. Must cover the query slots, the connector's own threads and 4 spares, or start-up is refused: with fewer, requests would queue for a thread before reaching a slot, and neither the immediate `503` nor `/health` would hold. Ignored on virtual threads. |
@@ -165,6 +166,50 @@ why the fleet seed, written to the MCP server's long-term memory graph, answers 
   clients is not measured yet.
 - The `listening on` line is printed **after** `engine.start()`, so the first request can
   already join against the graph.
+
+## The metadata graph
+
+With `CQELS_SPARQL_METADATA_ENABLED=true`, a query whose dataset names
+`cqels://endpoint/metadata` reads what the engine says about itself instead of the store:
+
+```sparql
+PREFIX cqe: <cqels://ontology/endpoint#>
+SELECT ?stream ?name ?key ?value
+FROM <cqels://endpoint/metadata>
+WHERE {
+  <cqels://endpoint/engine> cqe:stream ?stream .
+  ?stream cqe:name ?name .
+  OPTIONAL { ?stream cqe:attribute [ cqe:key ?key ; cqe:value ?value ] }
+}
+```
+
+| Node | Triples |
+|---|---|
+| `<cqels://endpoint/engine>` | `a cqe:Engine`; `cqe:engineId`, `cqe:running`, `cqe:registeredQueries` (a count), `cqe:persistence` (`NO_PERSISTENCE`, `HEALTHY`, …), `cqe:snapshotAt`; with a persistence journal also `cqe:journalId`, `cqe:durablePosition`, `cqe:appliedPosition`; one `cqe:stream` per live stream |
+| each stream | `a cqe:Stream`; `cqe:name` (the name as given); `cqe:attribute [ cqe:key …; cqe:value … ]` per attribute. The node is the name itself when that is an absolute IRI, otherwise `cqels://streams/<name>` percent-encoded (the prefix `cqels-mcp` uses) |
+
+- **It is a snapshot, built for each query that names it.** Nothing is cached, so a stream
+  created or removed shows in the next query.
+- **It is not in the store.** Written into the engine's repository, these triples would turn up
+  in every query without `FROM` (RDF4J's default graph is the union of all graphs) — the
+  engine's own static joins included. So the snapshot is answered from a memory store of its
+  own, which has three consequences:
+  - The dataset must name **only** that graph (`FROM`, `FROM NAMED`, or the
+    `default-graph-uri` / `named-graph-uri` parameters). Joining it with the store's graphs in
+    one query is a `400`.
+  - `GRAPH <cqels://endpoint/metadata> { … }` without naming the graph in the dataset is a
+    `400` that says so, rather than an empty answer.
+  - The graph name is reserved: an update that would leave any triple under it in the store
+    is rolled back with a `403`, however it is written.
+- **Window contents and the registered queries' texts are not here.** The engine's public API
+  has no accessor for either at `2.0.0-alpha.22`; it reports how many queries are registered,
+  not which.
+- **Off by default**, and a query naming the graph is then a `403`. Stream attributes are
+  whatever the program that created the stream put there.
+- **The standalone launcher creates no streams**, so on its own it reports the engine's status
+  and an empty stream list. The graph pays off when the servlet runs beside an engine that has
+  streams: [embedded](#embedding-the-servlet) in your program, or, once the mount point exists,
+  in the MCP server's Jetty (see *Continuous queries*).
 
 ## The execution limit, measured
 
@@ -264,6 +309,10 @@ context.addFilter(new FilterHolder(new AccessFilters.Hosts(List.of("localhost", 
 context.addFilter(new FilterHolder(new AccessFilters.Origins(List.of())), "/sparql", requests);
 context.addServlet(new ServletHolder(new SparqlProtocolServlet(engine::getRepository, options)), "/sparql");
 ```
+
+To serve [the metadata graph](#the-metadata-graph), pass a third argument,
+`EngineMetadata.of(engine)`: `new SparqlProtocolServlet(engine::getRepository, options,
+EngineMetadata.of(engine))`.
 
 Give it the engine's `Repository` object, never a store path: a NativeStore holds a directory
 lock, and a second open on the same path fails. A repository you hand to
