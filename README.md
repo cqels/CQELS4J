@@ -22,9 +22,9 @@ rebuilt for edge-to-cloud deployments — code name **COSMO**.
 - **Reasoning & validation** — RDFS/OWL inference (RETE), SHACL validation, and
   Answer-Set Programming over windowed streams.
 - **Geospatial** — GeoSPARQL functions (JTS): spatial relations, plus `distance` and `buffer` in
-  metres. A stream-to-static `geof:distance(…) <= r` filter with a constant `r` under `[NOW]`
-  probes a spatial index; other measured shapes scan the static side
-  ([spec §9](CQELS-QL_SPEC.md#geosparql-cqels-geo)).
+  metres. On some query routes, a stream-to-static `geof:distance(…) <= r` filter with a
+  constant `r` probes a spatial index; other shapes scan the static side
+  ([spec §9](CQELS-QL_SPEC.md#geosparql-cqels-geo) lists which).
 - **Extensible functions** — call user-defined functions by IRI in queries (SPARQL 1.1 §17.6);
   `cqels-functions-ext` ships reference functions (`cqfn:haversine`, `cqfn:levenshtein`) that
   self-register via `ServiceLoader` — on the classpath, no Java glue.

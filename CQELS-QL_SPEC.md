@@ -759,16 +759,26 @@ Measured on `2.0.0-alpha.22`, that covers:
 - an unknown `geof:` name;
 - the unit cases above.
 
-**Spatial index.** Since `2.0.0-alpha.22`, a stream-to-static join under `[NOW]` filtered by
-`geof:distance(?streamGeom, ?staticGeom, uom:metre) <= r`, with `r` a **constant**, probes a
-spatial index over the static geometries ([#97](https://github.com/cqels/CQELS4J/issues/97)).
-Measured with 10,000 static geometries, these shapes scan the static side instead, with the same
-rows and the same cost as a non-geo filter:
+**Spatial index.** Since `2.0.0-alpha.22`, a stream-to-static join filtered by
+`geof:distance(?streamGeom, ?staticGeom, uom:metre) <= r`, with `r` a **constant**, can probe a
+spatial index over the static geometries instead of scanning them
+([#97](https://github.com/cqels/CQELS4J/issues/97)). Whether it does depends on the route the
+query takes, not on the filter alone. With 10,000 static geometries, measured on
+`2.0.0-alpha.22`:
 
-- the same filter under `[RANGE 5s]`;
-- the threshold taken from a variable (`BIND(25 AS ?r)`, then `<= ?r`);
-- the nested `sfWithin(…, geof:buffer(…))` form. Measured under `[NOW]` with 20 stream points against 10,000 stored points, median time per
-element:
+- **These used the index:**
+  - a multi-pattern `STREAM` block under `[NOW]`;
+  - a single stream pattern (`STREAM A { ?id ex:pos ?pt }`) under `[RANGE 5s]`, `[TRIPLES 5]`
+    or `[SLIDE 5s STEP 1s]`.
+- **These scanned:**
+  - the same multi-pattern block under `[RANGE 5s]`;
+  - the threshold taken from a variable (`BIND(25 AS ?r)`, then `<= ?r`);
+  - the indexed `[NOW]` query with an `OPTIONAL` added;
+  - a static pattern with a variable predicate;
+  - an aggregate under `[NOW]`;
+  - the nested `sfWithin(…, geof:buffer(…))` form.
+
+Measured with 20 stream points under `[NOW]`, median time per element:
 
 | Filter | Median per element |
 |--------|--------------------|
@@ -776,11 +786,14 @@ element:
 | `geof:sfWithin(?pp, geof:buffer(?pt, 25, uom:metre))` | 592 ms |
 | a non-geo baseline `FILTER(STR(?pp) = "none")` | 205 ms |
 
-On this fixture both geo filters return the same 431 matches. To get the index, write a
-containment-in-a-radius test as a constant distance threshold under `[NOW]`. The two forms are not
-exactly equivalent: a buffer is a polygon that approximates the circle. Measured, a point
-24.95 m away is within the distance threshold but outside the 25 m buffer. On a second fixture
-the distance form returned 400 matches and the buffer form 397.
+On a second fixture, a scanned distance filter cost close to the baseline: 160 to 169 ms against
+139 ms. The buffer form cost 529 ms, nearly four times the baseline.
+
+On this fixture both geo filters return the same 431 matches, but the two forms are not exactly
+equivalent: a buffer is a polygon that approximates the circle. Measured, a point 24.95 m away
+is within the distance threshold but outside the 25 m buffer. On a second fixture the distance
+form returned 400 matches and the buffer form 397. Prefer the distance form, and check that
+your query shape is one of those indexed above.
 
 ---
 
