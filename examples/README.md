@@ -29,7 +29,9 @@ vehicle-to-grid (V2G) scenario.
 > row or aggregate **printed multiple times** as a reading streams in, and counts climb while the
 > window fills. That repetition is the engine working, not a
 > bug; the **latest / distinct values** are the answer. The demos print every emission so the dynamics
-> are visible.
+> are visible. Since `2.0.0-alpha.22`, a windowed join of several patterns over one stream can
+> report only its new rows with `SELECT Istream(?a ?b)`
+> ([spec §8](../CQELS-QL_SPEC.md#8-stream-output-operators-rsp-ql)).
 
 ## Prerequisites
 

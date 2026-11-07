@@ -14,11 +14,15 @@ import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
  * point) alongside the depot geofence outline; {@code geof:sfWithin} keeps only the vehicles currently
  * inside the depot zone (e.g. plugged in and chargeable).
  *
- * <p>Note: CQELS-QL has no inline {@code "…"^^geo:wktLiteral} literal syntax — geometries are supplied
- * as typed RDF literals in the data ({@code Fleet.GEO_WKT}) and compared as variables. To keep the
- * demo single-stream and self-contained the geofence polygon is shipped with each reading; in practice
- * you would seed it once into the static graph (cf. {@link Fleet#seedStatic}, which stores the same
- * {@code zone:depot} outline) and join it as in {@code StreamStaticJoin}.
+ * <p>Here both geometries are typed RDF literals in the data ({@code Fleet.GEO_WKT}), compared as
+ * variables. A query can also write a fixed geometry inline, for example
+ * {@code FILTER(geof:sfWithin(?loc, "POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))"^^geo:wktLiteral))}.
+ * Since 2.0.0-alpha.22 it can also build one with {@code STRDT("POLYGON((…))", geo:wktLiteral)}.
+ * The geofence travels in the data here because a real deployment keeps it in the static graph,
+ * not in the query: seed it once (cf. {@link Fleet#seedStatic}, which stores the same
+ * {@code zone:depot} outline) and join it as in {@code StreamStaticJoin}. To keep the demo
+ * single-stream and self-contained, the polygon is shipped with each reading instead. Function
+ * list, units, CRS axis order and the spatial index: CQELS-QL_SPEC.md §9, "GeoSPARQL".
  *
  * <p>Add-on dependency: {@code org.cqels:cqels-geo}.
  *
