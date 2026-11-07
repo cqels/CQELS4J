@@ -438,7 +438,7 @@ How window contents are turned back into an output stream follows the RSP-QL ope
 
 | Operator | Emits | In CQELS-QL (measured on `2.0.0-alpha.22`) |
 |----------|-------|---------------------------------------------|
-| **RStream** | the complete window contents on each update (stateful) | No keyword: `SELECT Rstream(…)` is refused at parse. A windowed join of several stream patterns already re-reports the whole window on each arrival. |
+| **RStream** | the complete window contents on each update (stateful) | No keyword: `SELECT Rstream(…)` is refused at parse. A windowed join of several patterns over **one** stream already re-reports the whole window on each arrival. A join across several streams does not: it emits only the pairs the arrival creates. |
 | **IStream** | only newly added elements per update | `SELECT Istream(?a ?b)` since `2.0.0-alpha.22`, on the route below |
 | **DStream** | only removed elements per update | Not available: `SELECT Dstream(…)` is refused at parse. |
 
@@ -462,9 +462,12 @@ static graph pattern. The delta is over the window's solutions:
 `Istream(…)` runs on a windowed join of several patterns over **one** stream, with or without
 static graph patterns. Other shapes are refused at registration:
 
-- a single stream pattern under `[RANGE]`, `[TRIPLES]` or `[NOW]`. The refusal explains that a
-  single fixed-predicate pattern, or a `[NOW]` window, runs per arrival. Measured, the plain
-  projection of such a query already reports each arrival once.
+- a single stream pattern with a **fixed predicate** under `[RANGE]` or `[TRIPLES]`, and a single
+  pattern under `[NOW]`. The refusal explains that these run per arrival. Measured, the plain
+  projection of such a query already reports each arrival once. A single pattern with a
+  **variable** predicate is accepted. Measured, `STREAM A { ?c ?p ?s }` under `[RANGE 3s]` with
+  `Istream(?s)` emits one new row per arrival, where the plain projection emits one and then
+  two.
 - a join across several streams;
 - `DISTINCT`. `SELECT DISTINCT Istream(…)` is refused with a hint to write
   `Istream(DISTINCT …)`, which is then refused too.
@@ -678,7 +681,8 @@ could run before a `BIND` ([#83](https://github.com/cqels/CQELS4J/issues/83)) or
 ### GeoSPARQL (`cqels-geo`)
 
 With `org.cqels:cqels-geo` on the classpath, the [GeoSPARQL](https://www.ogc.org/standard/geosparql/)
-functions are available in `FILTER`, `BIND` and `SELECT` expressions. The prefixes used below are:
+functions are available in `FILTER` and `BIND`. In a `SELECT` expression they need an aggregate
+query, like any non-aggregate `SELECT` expression. The prefixes used below are:
 
 ```sparql
 PREFIX geo:  <http://www.opengis.net/ont/geosparql#>
@@ -704,13 +708,14 @@ A geometry result can be passed straight to another function, as in
 
 Since `2.0.0-alpha.22`:
 
-- `distance` works for any two geometries, not only two points
-  ([#95](https://github.com/cqels/CQELS4J/issues/95)).
+- `distance` is no longer limited to two points
+  ([#95](https://github.com/cqels/CQELS4J/issues/95)). Measured, it returns a value for
+  point-to-polygon, polygon-to-polygon and line-to-point pairs.
 - `ehEquals` is true for equal polygons ([#96](https://github.com/cqels/CQELS4J/issues/96)).
 
 **Units.** `distance` and `buffer` take `uom:metre`, `uom:degree` or `uom:radian`. Distances are
-great-circle. Measured from `POINT(13.355 52.617)` to a polygon whose nearest edge lies at
-longitude 13.352, `distance` reports:
+measured on the sphere, not in planar degrees. Measured from `POINT(13.355 52.617)` to a polygon
+whose nearest edge lies at longitude 13.352, `distance` reports:
 
 - 202.53 with `uom:metre`;
 - 0.001821 with `uom:degree` (a planar distance would be 0.003);
@@ -720,6 +725,15 @@ longitude 13.352, `distance` reports:
 latitude 52.6 is about 20 m × 20 m ([#94](https://github.com/cqels/CQELS4J/issues/94)). Other
 units leave the result unbound; measured with `uom:kilometre`, `uom:m`, `uom:km` and QUDT's
 `unit:M`. A call with no unit is unbound too.
+
+For geometries other than two points, treat `distance` as approximate, and expect it to be
+unbound near the poles and across the antimeridian. Measured on `2.0.0-alpha.22`:
+
+- From `POINT(0 0)` to `MULTIPOINT((50 0), (0 49))` it reports 50°, although the nearer point is
+  49° away.
+- It is unbound from a line at latitude 86° to a point on it, and from a line crossing
+  longitude ±180° to a point on it.
+- A 10 m `buffer` at latitude 86° is unbound.
 
 **Literal forms.**
 
@@ -745,11 +759,15 @@ Measured on `2.0.0-alpha.22`, that covers:
 - an unknown `geof:` name;
 - the unit cases above.
 
-**Spatial index.** Since `2.0.0-alpha.22`, a stream-to-static join filtered by
-`geof:distance(?streamGeom, ?staticGeom, uom:metre) <= r` probes a spatial index over the static
-geometries ([#97](https://github.com/cqels/CQELS4J/issues/97)). The nested
-`sfWithin(…, geof:buffer(…))` form, the only other geo shape measured, still scans the static
-side. Measured under `[NOW]` with 20 stream points against 10,000 stored points, median time per
+**Spatial index.** Since `2.0.0-alpha.22`, a stream-to-static join under `[NOW]` filtered by
+`geof:distance(?streamGeom, ?staticGeom, uom:metre) <= r`, with `r` a **constant**, probes a
+spatial index over the static geometries ([#97](https://github.com/cqels/CQELS4J/issues/97)).
+Measured with 10,000 static geometries, these shapes scan the static side instead, with the same
+rows and the same cost as a non-geo filter:
+
+- the same filter under `[RANGE 5s]`;
+- the threshold taken from a variable (`BIND(25 AS ?r)`, then `<= ?r`);
+- the nested `sfWithin(…, geof:buffer(…))` form. Measured under `[NOW]` with 20 stream points against 10,000 stored points, median time per
 element:
 
 | Filter | Median per element |
@@ -758,8 +776,11 @@ element:
 | `geof:sfWithin(?pp, geof:buffer(?pt, 25, uom:metre))` | 592 ms |
 | a non-geo baseline `FILTER(STR(?pp) = "none")` | 205 ms |
 
-Both geo filters return the same 431 matches. To get the index, write a containment-in-a-radius
-test as a distance threshold.
+On this fixture both geo filters return the same 431 matches. To get the index, write a
+containment-in-a-radius test as a constant distance threshold under `[NOW]`. The two forms are not
+exactly equivalent: a buffer is a polygon that approximates the circle. Measured, a point
+24.95 m away is within the distance threshold but outside the 25 m buffer. On a second fixture
+the distance form returned 400 matches and the buffer form 397.
 
 ---
 
