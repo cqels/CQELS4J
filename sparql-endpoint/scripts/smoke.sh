@@ -5,7 +5,8 @@
 # line ("listening on http://…"), then drives the protocol with curl: ASK over the seeded
 # fleet (the same fleet:assignedDriver fact mcp-server/scripts/smoke.sh queries first), SELECT
 # as JSON, CONSTRUCT as Turtle, direct-POST query, an Update (must be 403: read-only by
-# default), a malformed query (400), an unmatchable Accept (406), and /health. Then stops it.
+# default), a malformed query (400), an unmatchable Accept (406), the metadata graph (enabled
+# here: the engine reports itself running), and /health. Then stops it.
 #
 # Usage: scripts/smoke.sh   (builds target/cqels-sparql-endpoint.jar if missing)
 
@@ -21,7 +22,7 @@ fi
 OUT=$(mktemp)
 trap 'kill $PID 2>/dev/null; wait $PID 2>/dev/null; rm -f "$OUT"' EXIT
 
-CQELS_SPARQL_PORT=0 CQELS_SPARQL_SEED_FLEET=true java -jar "$JAR" > "$OUT" 2>/dev/null &
+CQELS_SPARQL_PORT=0 CQELS_SPARQL_SEED_FLEET=true CQELS_SPARQL_METADATA_ENABLED=true java -jar "$JAR" > "$OUT" 2>/dev/null &
 PID=$!
 
 # The launcher prints exactly one stdout line once the engine is started and Jetty is bound.
@@ -53,6 +54,7 @@ req() { # method, url, [curl args...] -> sets STATUS and BODY
 Q_DRIVER='ASK { <https://example.org/fleet/vehicle/EV-7Q2> <https://covesa.global/fleet#assignedDriver> ?d }'
 Q_SELECT='SELECT ?v ?name WHERE { ?v <https://covesa.global/fleet#assignedDriver> ?d . ?d <https://covesa.global/fleet#name> ?name } ORDER BY ?v'
 Q_CONSTRUCT='CONSTRUCT WHERE { ?z <https://covesa.global/zone#speedLimit> ?l }'
+Q_META='ASK FROM <cqels://endpoint/metadata> { <cqels://endpoint/engine> <cqels://ontology/endpoint#running> true }'
 
 req -G "$URL" --data-urlencode "query=$Q_DRIVER";                                   check "ASK over the seeded fleet"         200 "$STATUS" "$BODY" '"boolean" : true'
 req -G "$URL" --data-urlencode "query=$Q_SELECT";                                   check "SELECT as JSON (default)"          200 "$STATUS" "$BODY" 'Alice'
@@ -62,6 +64,7 @@ req -X POST "$URL" -H 'Content-Type: application/sparql-query' --data "$Q_DRIVER
 req -X POST "$URL" --data-urlencode 'update=INSERT DATA { <urn:x> <urn:y> <urn:z> }'; check "Update is refused (read-only)"   403 "$STATUS" "$BODY"
 req -G "$URL" --data-urlencode 'query=SELEKT';                                      check "malformed query"                   400 "$STATUS" "$BODY" 'malformed'
 req -G "$URL" -H 'Accept: application/vnd.nothing' --data-urlencode "query=$Q_SELECT"; check "unmatchable Accept"            406 "$STATUS" "$BODY"
+req -G "$URL" --data-urlencode "query=$Q_META";                                     check "metadata graph: engine running"    200 "$STATUS" "$BODY" '"boolean" : true'
 req "${URL%/sparql}/health";                                                        check "/health"                           200 "$STATUS" "$BODY" 'ok'
 
 [ $fail -eq 0 ] && echo "smoke: all checks passed" || { echo "smoke: FAILED"; exit 1; }
