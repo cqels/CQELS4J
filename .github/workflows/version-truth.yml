@@ -16,8 +16,11 @@
 #                   documents. Red = a caveat is no longer true (upstream fixed
 #                   it and the prose now lies), or a relied-on feature regressed.
 #   sparql-endpoint builds sparql-endpoint/ with its tests, then drives the shaded
-#                   jar with curl. Red = the endpoint is broken. The only job
-#                   that runs its unit tests at all.
+#                   jar with curl, then builds its Docker image and drives
+#                   containers of it. Red = the endpoint is broken, or the image
+#                   no longer does what the README's "Run in Docker" says (fails
+#                   closed, non-root, SIGTERM reaches the JVM, a durable volume).
+#                   The only job that runs its unit tests at all.
 #   tools-reality   builds the server and the SPARQL endpoint. Red = the docs
 #                   describe a surface the server does not have, the endpoint
 #                   README's own example does not work, or the endpoint's Jetty
@@ -199,7 +202,10 @@ jobs:
     needs: version-truth
     if: github.event_name != 'push'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # 25, not 15: the image build resolves every Maven dependency again inside Docker,
+    # with no access to the runner's ~/.m2 cache (that is the point: it proves the
+    # Dockerfile builds from a clean machine).
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: actions/setup-java@3a4f6e1af504cf6a31855fa899c6aa5355ba6c12 # v4.7.0
@@ -209,6 +215,9 @@ jobs:
           cache: maven
       - run: mvn -B -f sparql-endpoint/pom.xml package
       - run: sparql-endpoint/scripts/smoke.sh
+      # ubuntu-latest runners ship Docker with BuildKit, which the Dockerfile's cache
+      # mount needs.
+      - run: sparql-endpoint/scripts/docker-smoke.sh
 
   tools-reality:
     needs: version-truth
