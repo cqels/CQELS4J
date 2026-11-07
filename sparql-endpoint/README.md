@@ -51,6 +51,11 @@ applies: **`docker run` with no options refuses to start** (exit 2). Choose one 
 docker run --rm -p 8089:8089 \
   -e CQELS_SPARQL_AUTH_TOKEN=change-me -e CQELS_SPARQL_SEED_FLEET=true \
   cqels-sparql-endpoint
+```
+
+It runs in the foreground; from another terminal, once it prints its `listening on` line:
+
+```bash
 curl -G http://127.0.0.1:8089/sparql -H 'Authorization: Bearer change-me' \
   --data-urlencode 'query=ASK { ?s ?p ?o }'
 ```

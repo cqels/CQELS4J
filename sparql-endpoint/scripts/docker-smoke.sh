@@ -38,9 +38,14 @@ fail=0
 ok()  { echo "ok:   $1"; }
 bad() { echo "FAIL: $1"; fail=1; }
 
+# A transport failure must fail the check, not just leave a status behind: curl still prints
+# %{http_code} when the body is cut short (exit 18) or the deadline hits mid-body (exit 28),
+# and a truncated body can already contain the needle. So a non-zero curl exit replaces the
+# status with "curl-exit-N", which no check accepts.
 req() { # url, [curl args...] -> sets STATUS and BODY
-  local tmp; tmp=$(mktemp)
-  STATUS=$(curl -s -o "$tmp" -w '%{http_code}' --connect-timeout 10 --max-time 60 "$@")
+  local tmp rc; tmp=$(mktemp)
+  STATUS=$(curl -s -o "$tmp" -w '%{http_code}' --connect-timeout 10 --max-time 60 "$@"); rc=$?
+  [ $rc -eq 0 ] || STATUS="curl-exit-$rc"
   BODY=$(cat "$tmp"); rm -f "$tmp"
 }
 
@@ -95,8 +100,13 @@ if start -e CQELS_SPARQL_AUTH_TOKEN="$TOKEN" -e CQELS_SPARQL_SEED_FLEET=true; th
   req "$URL" -G -H "Authorization: Bearer $TOKEN" --data-urlencode "query=$ASK_FLEET"
   { [ "$STATUS" = 200 ] && printf '%s' "$BODY" | grep -qF '"boolean" : true'; } \
     && ok "token mode: ASK over the seeded fleet -> true" || bad "token mode: ASK -> $STATUS $BODY"
-  uid=$(docker exec "$CID" id -u)
-  [ "$uid" != 0 ] && ok "runs as uid $uid, not root" || bad "runs as root"
+  # Require the exact uid the Dockerfile creates and the README names: a failed `docker exec`
+  # leaves uid empty, which a mere "not 0" test would pass.
+  if uid=$(docker exec "$CID" id -u) && [ "$uid" = 10001 ]; then
+    ok "runs as uid 10001, not root"
+  else
+    bad "runs as uid '${uid:-?}', wanted 10001"
+  fi
   stop_graceful "token mode"
 fi
 
