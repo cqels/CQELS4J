@@ -30,8 +30,9 @@ plain triple store. The standard SPARQL surface is summarized briefly in
 | Named windows (RSP-QL) | `FROM NAMED WINDOW :w ON <s> […]` + `WINDOW :w { … }` | [§5](#5-named-windows-rsp-ql) |
 | Stream–static composition | `FROM [STATIC] <iri> [WITH DEPTH n] [CACHE d]` (lookup join) | [§6](#6-streamstatic-composition) |
 | Complex Event Processing | `FILTER(SEQ(?a ; ?b ; …))` with quantifiers & negation | [§7](#7-complex-event-processing-cep) |
-| Stream output operators | RStream / IStream / DStream | [§8](#8-stream-output-operators-rsp-ql) |
+| Stream output operators | `SELECT Istream(?a ?b)` (IStream; RStream / DStream have no syntax) | [§8](#8-stream-output-operators-rsp-ql) |
 | Extension functions (§17.6) | `PREFIX cqfn: <urn:cqels:fn:> … FILTER(cqfn:haversine(…) <= 5.0)` | [§9](#9-standard-sparql-features-supported-as-is) |
+| GeoSPARQL functions | `FILTER(geof:distance(?a, ?b, uom:metre) <= 25)`, `geof:sfWithin(?g, "POLYGON(…)"^^geo:wktLiteral)` | [§9](#geosparql-cqels-geo) |
 
 CQELS-QL also has a property-graph dialect, **CypherQL** ([§10](#10-cypherql-property-graph-dialect)).
 
@@ -178,9 +179,30 @@ match per anchor (see [§7](#7-complex-event-processing-cep)).
 > one already seen depends on the route. Measured on `2.0.0-alpha.22` with `COUNT(*)` over
 > elements at 2800, 2900 and then 2850 ms: the on-close aggregate (`[RANGE 3s]`, or
 > `[RANGE 3s EMIT ON_CLOSE]`) drops the late element **silently** and reports 2. The per-arrival
-> forms (`[RANGE 3s EMIT ON_UPDATE]`, `[SLIDE 3s STEP 1s]`) count it and report 3. `[NOW]` and
-> `[TRIPLES n]` use no watermark, so lateness does not apply. If late data matters, say so in the
-> window spec.
+> forms (`[RANGE 3s EMIT ON_UPDATE]`, `[SLIDE 3s STEP 1s]`) count it and report 3.
+> Non-aggregate queries over one stream keep a late element as well: measured under `[RANGE 3s]`,
+> a plain `SELECT` and a two-pattern join within one stream both emit the late element's row. A
+> join across **two streams** drops a late element. Measured under `[RANGE 3s]`, with stream A
+> at 1000 and 4000 ms and stream B at 2600 and 4100 ms, an A element at 2500 ms was dropped.
+> With `[RANGE 3s LATENESS 2s]` on both streams, the same element joins. `[NOW]` and `[TRIPLES n]`
+> use no watermark, so lateness does not apply. If late data matters, say so in the window spec.
+>
+> **Counting dropped elements.** Since `2.0.0-alpha.22`, `CQELSEngine.lateDropCount(queryId)`
+> returns an `OptionalLong` with the number of elements the query dropped as late. Measured, it
+> reports 1 for the on-close aggregate and the two-stream join above, and 0 for the routes that
+> keep the element.
+>
+> **Closing a window when the stream goes quiet.** An event-time window closes when the stream's
+> event time passes its end, which normally happens only when a newer element arrives. Since
+> `2.0.0-alpha.22`, `DataStream.advanceTo(long eventTime)` moves the stream's event time forward
+> without pushing an element. Measured with `SUM` under `[RANGE 2s]` over elements at T0, T0+1000
+> and T0+2000, then nothing: only the first window's `sum=11` is reported. `advanceTo(T0 + 4000)`
+> then reports the second window's `sum=100`. An element pushed afterwards with an older event
+> time counts as late: one pushed at T0+3000 was dropped, and `lateDropCount` rose to 1. Pushing
+> an empty element (`push(List.of(), t)`) or an unrelated triple also closes the window, as on
+> earlier alphas, but adds an element to the stream. The method returns a `boolean`. Measured, it
+> returned `true` on the first call, including one whose time was earlier than the last element,
+> and `false` when repeated with the same time, so do not read `true` as "a window closed".
 
 ---
 
@@ -414,11 +436,41 @@ SELECT ?v WHERE { ?e1 … FILTER(SEQ(?e1 ; ?e2)) BIND(?e1 AS ?v) }
 
 How window contents are turned back into an output stream follows the RSP-QL operators:
 
-| Operator | Emits |
-|----------|-------|
-| **RStream** | the complete window contents on each update (stateful) |
-| **IStream** | only newly added elements per update |
-| **DStream** | only removed elements per update |
+| Operator | Emits | In CQELS-QL (measured on `2.0.0-alpha.22`) |
+|----------|-------|---------------------------------------------|
+| **RStream** | the complete window contents on each update (stateful) | No keyword: `SELECT Rstream(…)` is refused at parse. A windowed join of several stream patterns already re-reports the whole window on each arrival. |
+| **IStream** | only newly added elements per update | `SELECT Istream(?a ?b)` since `2.0.0-alpha.22`, on the route below |
+| **DStream** | only removed elements per update | Not available: `SELECT Dstream(…)` is refused at parse. |
+
+**`Istream(…)`.** Wrap the projection: `SELECT Istream(?speed ?angle)`. The keyword is
+case-insensitive, commas between the variables are optional, and the parentheses are required:
+`SELECT ISTREAM ?speed ?angle` is refused with "Istream needs parentheses". Measured with
+`STREAM Signals { ?car ex:speed ?speed . ?car ex:angle ?angle }` under `[RANGE 5s]`, `angle=10`
+at 0 and then `speed` 50, 60 and 70 one second apart:
+
+- `SELECT ?speed ?angle` emits 1, then 2, then 3 rows, re-reporting the window each time.
+- `SELECT Istream(?speed ?angle)` emits only the new row each time.
+
+It behaves the same under `[TRIPLES 10]` and `[SLIDE 5s STEP 1s]`, with a `FILTER`, and beside a
+static graph pattern. The delta is over the window's solutions:
+
+- A row that leaves the window and comes back is new again. Under `[RANGE 2s]`, the same pair
+  pushed at 0 / 1000 and again at 4000 / 4500 is reported twice.
+- Projecting fewer variables does not merge solutions. `Istream(?angle)` reports `angle=10` once
+  per arrival that adds a solution.
+
+`Istream(…)` runs on a windowed join of several patterns over **one** stream, with or without
+static graph patterns. Other shapes are refused at registration:
+
+- a single stream pattern under `[RANGE]`, `[TRIPLES]` or `[NOW]`. The refusal explains that a
+  single fixed-predicate pattern, or a `[NOW]` window, runs per arrival. Measured, the plain
+  projection of such a query already reports each arrival once.
+- a join across several streams;
+- `DISTINCT`. `SELECT DISTINCT Istream(…)` is refused with a hint to write
+  `Istream(DISTINCT …)`, which is then refused too.
+
+The refusal message also lists aggregates, `GROUP BY`, `HAVING`, `ORDER BY`, `LIMIT` and
+`FILTER(SEQ(...))`.
 
 ---
 
@@ -623,6 +675,92 @@ Since `2.0.0-alpha.22` that order holds on every route; on earlier alphas a `FIL
 could run before a `BIND` ([#83](https://github.com/cqels/CQELS4J/issues/83)) or an `OPTIONAL`
 ([#85](https://github.com/cqels/CQELS4J/issues/85)) on some routes.
 
+### GeoSPARQL (`cqels-geo`)
+
+With `org.cqels:cqels-geo` on the classpath, the [GeoSPARQL](https://www.ogc.org/standard/geosparql/)
+functions are available in `FILTER`, `BIND` and `SELECT` expressions. The prefixes used below are:
+
+```sparql
+PREFIX geo:  <http://www.opengis.net/ont/geosparql#>
+PREFIX geof: <http://www.opengis.net/def/function/geosparql/>
+PREFIX uom:  <http://www.opengis.net/def/uom/OGC/1.0/>
+```
+
+**Functions.** Measured on `2.0.0-alpha.22`, each of these returns a value over a polygon and a
+point:
+
+| Group | Functions | Returns |
+|-------|-----------|---------|
+| Simple Features | `sfEquals`, `sfDisjoint`, `sfIntersects`, `sfTouches`, `sfCrosses`, `sfWithin`, `sfContains`, `sfOverlaps` | boolean |
+| Egenhofer | `ehEquals`, `ehDisjoint`, `ehMeet`, `ehOverlap`, `ehCovers`, `ehCoveredBy`, `ehInside`, `ehContains` | boolean |
+| RCC8 | `rcc8eq`, `rcc8dc`, `rcc8ec`, `rcc8po`, `rcc8tppi`, `rcc8tpp`, `rcc8ntpp`, `rcc8ntppi` | boolean |
+| DE-9IM | `relate(?a, ?b, "T*****FF*")` | boolean |
+| Distance | `distance(?a, ?b, unit)` | number |
+| Geometry | `buffer(?g, r, unit)`, `convexHull`, `intersection`, `union`, `difference`, `symDifference`, `envelope`, `boundary` | WKT geometry |
+| CRS | `getSRID(?g)` | the literal's CRS (`http://www.opengis.net/def/crs/OGC/1.3/CRS84` when it has no CRS prefix) |
+
+A geometry result can be passed straight to another function, as in
+`geof:sfWithin(?p, geof:buffer(?pt, 25, uom:metre))`.
+
+Since `2.0.0-alpha.22`:
+
+- `distance` works for any two geometries, not only two points
+  ([#95](https://github.com/cqels/CQELS4J/issues/95)).
+- `ehEquals` is true for equal polygons ([#96](https://github.com/cqels/CQELS4J/issues/96)).
+
+**Units.** `distance` and `buffer` take `uom:metre`, `uom:degree` or `uom:radian`. Distances are
+great-circle. Measured from `POINT(13.355 52.617)` to a polygon whose nearest edge lies at
+longitude 13.352, `distance` reports:
+
+- 202.53 with `uom:metre`;
+- 0.001821 with `uom:degree` (a planar distance would be 0.003);
+- 3.179e-5 with `uom:radian`.
+
+`buffer` in metres is metric in both directions: since `2.0.0-alpha.22`, a 10 m buffer at
+latitude 52.6 is about 20 m × 20 m ([#94](https://github.com/cqels/CQELS4J/issues/94)). Other
+units leave the result unbound; measured with `uom:kilometre`, `uom:m`, `uom:km` and QUDT's
+`unit:M`. A call with no unit is unbound too.
+
+**Literal forms.**
+
+- A `geo:wktLiteral` with no CRS prefix is CRS84, written `POINT(lon lat)`.
+- Since `2.0.0-alpha.22` a CRS IRI prefix is read
+  ([#93](https://github.com/cqels/CQELS4J/issues/93)):
+  - `<http://www.opengis.net/def/crs/OGC/1.3/CRS84> POINT(lon lat)`.
+  - `<http://www.opengis.net/def/crs/EPSG/0/4326> POINT(lat lon)`. EPSG:4326 takes **latitude
+    first**, as that CRS defines. Written longitude first, the measured point lands about
+    5,575 km away and `sfWithin` is false.
+  - EWKT `SRID=4326;POINT(lon lat)` is read longitude first.
+  - An unknown CRS IRI is a type error.
+- A geometry can be written inline: `FILTER(geof:sfWithin(?pt, "POLYGON((…))"^^geo:wktLiteral))`.
+  Since `2.0.0-alpha.22` it can also be built with `STRDT("POLYGON((…))", geo:wktLiteral)`.
+- `geo:geoJSONLiteral`, `geo:gmlLiteral` and plain strings are not read as geometries.
+
+**Silently unbound.** As with any function (see *Extension functions* above), a call that does
+not evaluate is a type error: a `FILTER` drops the row and a `BIND` leaves the variable unbound.
+Measured on `2.0.0-alpha.22`, that covers:
+
+- the GeoSPARQL 1.1 additions: `area`, `length`, `centroid`, `isEmpty`, `isSimple`,
+  `dimension`, `minX` / `maxY`, `numGeometries`, `asGeoJSON` and `transform`;
+- an unknown `geof:` name;
+- the unit cases above.
+
+**Spatial index.** Since `2.0.0-alpha.22`, a stream-to-static join filtered by
+`geof:distance(?streamGeom, ?staticGeom, uom:metre) <= r` probes a spatial index over the static
+geometries ([#97](https://github.com/cqels/CQELS4J/issues/97)). The nested
+`sfWithin(…, geof:buffer(…))` form, the only other geo shape measured, still scans the static
+side. Measured under `[NOW]` with 20 stream points against 10,000 stored points, median time per
+element:
+
+| Filter | Median per element |
+|--------|--------------------|
+| `geof:distance(?pt, ?pp, uom:metre) <= 25` | 1.5 ms |
+| `geof:sfWithin(?pp, geof:buffer(?pt, 25, uom:metre))` | 592 ms |
+| a non-geo baseline `FILTER(STR(?pp) = "none")` | 205 ms |
+
+Both geo filters return the same 431 matches. To get the index, write a containment-in-a-radius
+test as a distance threshold.
+
 ---
 
 ## 10. CypherQL (property-graph dialect)
@@ -663,6 +801,7 @@ selectQuery     ::= 'SELECT' selectList fromClause+ 'WHERE' whereClause
                     groupByClause? havingClause? orderByClause? limitClause?
 
 selectList      ::= 'DISTINCT'? selectElement (','? selectElement)*
+                  | 'ISTREAM' '(' selectElement (','? selectElement)* ')'   -- §8; case-insensitive, one route
 selectElement   ::= Var | '(' expression 'AS' Var ')'
 
 fromClause      ::= fromStream | fromStatic | fromNamedWindow | fromNamed
@@ -687,6 +826,7 @@ whereClause     ::= '{' patternGroup+ '}'
 patternGroup    ::= streamPattern | windowPattern | triplePattern+
                   | filterConstraint | bindPattern | optionalPattern | unionPattern | minusPattern
 streamPattern   ::= 'STREAM' Name '{' triplePattern+ '}'
+triplePattern   ::= term (predicate | path) term   -- a path (/ ^ + * ? |) runs on one route only (§9)
 windowPattern   ::= 'WINDOW' PrefixedName '{' triplePattern+ '}'
 filterConstraint::= 'FILTER' '(' expression ')'
                   | 'FILTER' 'NOT'? 'EXISTS' '{' (triplePattern | filterConstraint)+ '}'   -- §9
