@@ -21,10 +21,17 @@ cd "$(dirname "$0")/.." || exit 1
 IMAGE=${IMAGE:-cqels-sparql-endpoint:smoke}
 TOKEN="smoke-$$-$RANDOM"
 VOL="cqels-sparql-smoke-$$"
-CIDS=""   # a plain string, not an array: "${a[@]}" on an empty array trips set -u in bash 3.2
+# Every container this run creates carries this label, and cleanup removes by label rather
+# than by remembered ID. Remembering IDs leaks: a signal arriving after the daemon has
+# created a container but before `docker run -d` has printed its ID runs the EXIT trap with
+# that container unknown, leaving it running (and, in the durable-store step, holding the
+# volume so it cannot be removed either). The label is on the container from creation.
+LABEL="org.cqels.sparql-smoke=$$-$RANDOM"
 
 cleanup() {
-  for c in $CIDS; do docker rm -f "$c" >/dev/null 2>&1; done
+  local ids; ids=$(docker ps -aq --filter "label=$LABEL" 2>/dev/null)
+  # shellcheck disable=SC2086  # one word per container ID
+  [ -z "$ids" ] || docker rm -f $ids >/dev/null 2>&1
   docker volume rm -f "$VOL" >/dev/null 2>&1
 }
 trap cleanup EXIT
@@ -51,8 +58,7 @@ req() { # url, [curl args...] -> sets STATUS and BODY
 
 # start [docker run options...] -> sets CID and URL (the published loopback port), or fails.
 start() {
-  CID=$(docker run -d -p 127.0.0.1::8089 "$@" "$IMAGE") || { bad "docker run $*"; return 1; }
-  CIDS="$CIDS $CID"
+  CID=$(docker run -d --label "$LABEL" -p 127.0.0.1::8089 "$@" "$IMAGE") || { bad "docker run $*"; return 1; }
   for _ in $(seq 1 120); do
     docker logs "$CID" 2>/dev/null | grep -q '^listening on ' && break
     [ "$(docker inspect -f '{{.State.Running}}' "$CID")" = true ] || {
@@ -77,7 +83,7 @@ ASK_FLEET='ASK { <https://example.org/fleet/vehicle/EV-7Q2> <https://covesa.glob
 # 1. fail closed. Detached with a deadline, not `docker run --rm` in the foreground: if the
 #    image ever regressed to serving, a foreground run would never return and the job would
 #    hang until CI's timeout instead of failing here.
-CID=$(docker run -d "$IMAGE"); CIDS="$CIDS $CID"
+CID=$(docker run -d --label "$LABEL" "$IMAGE") || { echo "FAIL: docker run"; exit 1; }
 for _ in $(seq 1 60); do
   [ "$(docker inspect -f '{{.State.Running}}' "$CID")" = true ] || break
   sleep 1
