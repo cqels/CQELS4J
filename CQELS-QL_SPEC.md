@@ -775,7 +775,7 @@ query takes, not on the filter alone. With 10,000 static geometries, measured on
   - the threshold taken from a variable (`BIND(25 AS ?r)`, then `<= ?r`);
   - the indexed `[NOW]` query with an `OPTIONAL` added;
   - a static pattern with a variable predicate;
-  - an aggregate under `[NOW]`;
+  - the single-pattern `[NOW]` query with `COUNT(*)` and `GROUP BY ?id`;
   - the nested `sfWithin(…, geof:buffer(…))` form.
 
 Measured with 20 stream points under `[NOW]`, median time per element:
@@ -789,7 +789,7 @@ Measured with 20 stream points under `[NOW]`, median time per element:
 On a second fixture, a scanned distance filter cost close to the baseline: 160 to 169 ms against
 139 ms. The buffer form cost 529 ms, nearly four times the baseline.
 
-On this fixture both geo filters return the same 431 matches, but the two forms are not exactly
+On the first fixture both geo filters return the same 431 matches, but the two forms are not exactly
 equivalent: a buffer is a polygon that approximates the circle. Measured, a point 24.95 m away
 is within the distance threshold but outside the 25 m buffer. On a second fixture the distance
 form returned 400 matches and the buffer form 397. Prefer the distance form, and check that
