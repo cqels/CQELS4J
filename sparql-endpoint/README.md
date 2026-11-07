@@ -32,6 +32,61 @@ scripts/smoke.sh        # starts it on an ephemeral port and drives the protocol
 facts `mcp-server` seeds). Without it the graph starts empty; load it with SPARQL Update once
 `CQELS_SPARQL_UPDATE_ENABLED=true`, or from your own code.
 
+## Run in Docker
+
+No image is published; build one from this directory. The build compiles the jar inside
+Docker, so it needs no JDK or Maven on the host:
+
+```bash
+cd sparql-endpoint && docker build -t cqels-sparql-endpoint .
+```
+
+Inside a container, `127.0.0.1` is the container's own loopback and a published port cannot
+reach it, so the image binds `0.0.0.0`. The non-loopback rule under *Security* therefore
+applies: **`docker run` with no options refuses to start** (exit 2). Choose one of two modes.
+
+**With a token.** Use this whenever anything beyond your own machine can reach the port:
+
+```bash
+docker run --rm -p 8089:8089 \
+  -e CQELS_SPARQL_AUTH_TOKEN=change-me -e CQELS_SPARQL_SEED_FLEET=true \
+  cqels-sparql-endpoint
+curl -G http://127.0.0.1:8089/sparql -H 'Authorization: Bearer change-me' \
+  --data-urlencode 'query=ASK { ?s ?p ?o }'
+```
+
+**Local only, no token.** Publish the port on the host's loopback **only** and opt in:
+
+```bash
+docker run --rm -p 127.0.0.1:8089:8089 \
+  -e CQELS_SPARQL_ALLOW_UNAUTHENTICATED_REMOTE=true -e CQELS_SPARQL_SEED_FLEET=true \
+  cqels-sparql-endpoint
+```
+
+Never combine this mode with `-p 8089:8089`, which publishes the port on every interface of
+the host. The `Host` check still accepts only the loopback names and the bind address `0.0.0.0`, but that
+check guards against browsers (DNS rebinding), not against people: anyone who can reach the
+port can send `Host: localhost`.
+
+The `listening on http://0.0.0.0:8089/sparql` line names the container's address; connect to
+the port you published. Set any other variable in the *Configuration* table below with `-e`.
+
+**A durable graph.** Mount a named volume at `/data` and point the store at it:
+
+```bash
+docker run --rm -p 8089:8089 -v cqels-data:/data -e CQELS_SPARQL_STORE_PATH=/data \
+  -e CQELS_SPARQL_AUTH_TOKEN=change-me -e CQELS_SPARQL_UPDATE_ENABLED=true \
+  cqels-sparql-endpoint
+```
+
+The container runs as uid 10001, not root. A new named volume takes the image's `/data`
+ownership, so it is writable. A host directory mounted there must be writable by uid 10001.
+`docker stop` sends SIGTERM to the JVM, which stops Jetty, the engine and the store cleanly.
+
+```bash
+scripts/docker-smoke.sh   # builds the image and checks every claim in this section
+```
+
 ## Configuration
 
 All settings are environment variables, named like the MCP server's `CQELS_MCP_HTTP_*`.

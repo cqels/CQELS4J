@@ -1,0 +1,5 @@
+# The image builds the jar from source; a local target/ (~50 MB shaded jar plus classes)
+# would only slow the context upload and could never be used.
+target/
+*.iml
+.idea/
