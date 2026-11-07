@@ -12,6 +12,7 @@ import org.eclipse.jetty.server.Server;
 import org.eclipse.jetty.server.ServerConnector;
 import org.eclipse.jetty.util.VirtualThreads;
 import org.eclipse.jetty.util.thread.QueuedThreadPool;
+import org.eclipse.rdf4j.model.Statement;
 import org.eclipse.rdf4j.repository.Repository;
 import org.eclipse.rdf4j.repository.sail.SailRepository;
 import org.eclipse.rdf4j.sail.nativerdf.NativeStore;
@@ -24,6 +25,7 @@ import java.net.UnknownHostException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.concurrent.Executor;
@@ -50,6 +52,8 @@ import java.util.function.Supplier;
  *   CQELS_SPARQL_MAX_ROWS                 0           0 = unlimited
  *   CQELS_SPARQL_UPDATE_ENABLED           false
  *   CQELS_SPARQL_FEDERATION_ENABLED       false       accept SERVICE and LOAD (outbound requests)
+ *   CQELS_SPARQL_METADATA_ENABLED         false       serve the engine's streams and status as the
+ *                                                     graph cqels://endpoint/metadata (EngineMetadata)
  *   CQELS_SPARQL_STORE_PATH               (memory)    NativeStore directory for a durable graph
  *   CQELS_SPARQL_SEED_FLEET               false       seed the examples' V2G fleet world
  *   CQELS_SPARQL_MAX_THREADS              200         Jetty request threads; must exceed the query
@@ -89,7 +93,8 @@ public final class SparqlEndpointLauncher {
                         Integer.toString(EndpointOptions.DEFAULT_MAX_CONCURRENT_QUERIES))))
                 .withMaxRows(Integer.parseInt(env("CQELS_SPARQL_MAX_ROWS", "0")))
                 .withUpdateEnabled(Boolean.parseBoolean(env("CQELS_SPARQL_UPDATE_ENABLED", "false")))
-                .withFederationEnabled(Boolean.parseBoolean(env("CQELS_SPARQL_FEDERATION_ENABLED", "false")));
+                .withFederationEnabled(Boolean.parseBoolean(env("CQELS_SPARQL_FEDERATION_ENABLED", "false")))
+                .withMetadataEnabled(Boolean.parseBoolean(env("CQELS_SPARQL_METADATA_ENABLED", "false")));
         boolean allowRemoteUnauthenticated = Boolean.parseBoolean(env("CQELS_SPARQL_ALLOW_UNAUTHENTICATED_REMOTE", "false"));
         String storePath = env("CQELS_SPARQL_STORE_PATH", null);
         boolean seedFleet = Boolean.parseBoolean(env("CQELS_SPARQL_SEED_FLEET", "false"));
@@ -146,8 +151,9 @@ public final class SparqlEndpointLauncher {
 
         System.out.println("listening on " + listeningUrl(host, bound, options.path()));
         System.out.flush();
-        log.info("SPARQL endpoint ready: update {}, federation {}, token {}, execution limit {} s, {} query slots, max rows {}, store {}",
+        log.info("SPARQL endpoint ready: update {}, federation {}, metadata graph {}, token {}, execution limit {} s, {} query slots, max rows {}, store {}",
                 options.updateEnabled() ? "enabled" : "disabled", options.federationEnabled() ? "enabled" : "disabled",
+                options.metadataEnabled() ? "enabled" : "disabled",
                 options.authToken() == null ? "none" : "set",
                 options.maxExecutionSeconds(), options.maxConcurrentQueries(),
                 options.maxRows() == 0 ? "unlimited" : options.maxRows(), storePath == null ? "memory" : storePath);
@@ -161,7 +167,8 @@ public final class SparqlEndpointLauncher {
      */
     public static Server startServer(CQELSEngine engine, String host, int port, EndpointOptions options,
                                      int maxThreads, boolean virtualThreads) throws Exception {
-        return startServer(engine::getRepository, host, port, options, maxThreads, virtualThreads);
+        return startServer(engine::getRepository, options.metadataEnabled() ? EngineMetadata.of(engine) : null,
+                host, port, options, maxThreads, virtualThreads);
     }
 
     /**
@@ -175,7 +182,8 @@ public final class SparqlEndpointLauncher {
         return maxConcurrentQueries + SPARE_THREADS + leasedThreads;
     }
 
-    static Server startServer(Supplier<Repository> repository, String host, int port, EndpointOptions options,
+    static Server startServer(Supplier<Repository> repository, Supplier<? extends Collection<Statement>> metadata,
+                              String host, int port, EndpointOptions options,
                               int maxThreads, boolean virtualThreads) throws Exception {
         QueuedThreadPool pool = new QueuedThreadPool(Math.max(maxThreads, 8));
         pool.setName("sparql-endpoint");
@@ -214,7 +222,7 @@ public final class SparqlEndpointLauncher {
             context.addFilter(new FilterHolder(new AccessFilters.BearerToken(options.authToken())),
                     options.path(), EnumSet.of(DispatcherType.REQUEST));
         }
-        context.addServlet(new ServletHolder(new SparqlProtocolServlet(repository, options)), options.path());
+        context.addServlet(new ServletHolder(new SparqlProtocolServlet(repository, options, metadata)), options.path());
         context.addServlet(new ServletHolder(new TextServlet("ok")), "/health");
         context.addServlet(new ServletHolder(new TextServlet("ready")), "/ready");
         server.setHandler(context);

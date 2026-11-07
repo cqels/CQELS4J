@@ -7,6 +7,7 @@ import org.eclipse.rdf4j.common.lang.FileFormat;
 import org.eclipse.rdf4j.common.net.ParsedIRI;
 import org.eclipse.rdf4j.common.lang.service.FileFormatServiceRegistry;
 import org.eclipse.rdf4j.model.IRI;
+import org.eclipse.rdf4j.model.Statement;
 import org.eclipse.rdf4j.model.ValueFactory;
 import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
 import org.eclipse.rdf4j.query.BindingSet;
@@ -25,7 +26,9 @@ import org.eclipse.rdf4j.query.impl.SimpleDataset;
 import org.eclipse.rdf4j.query.algebra.Load;
 import org.eclipse.rdf4j.query.algebra.QueryModelNode;
 import org.eclipse.rdf4j.query.algebra.Service;
+import org.eclipse.rdf4j.query.algebra.StatementPattern;
 import org.eclipse.rdf4j.query.algebra.helpers.AbstractQueryModelVisitor;
+import org.eclipse.rdf4j.query.parser.ParsedQuery;
 import org.eclipse.rdf4j.query.parser.ParsedUpdate;
 import org.eclipse.rdf4j.query.parser.QueryParserUtil;
 import org.eclipse.rdf4j.query.resultio.BooleanQueryResultFormat;
@@ -37,9 +40,11 @@ import org.eclipse.rdf4j.query.resultio.TupleQueryResultWriter;
 import org.eclipse.rdf4j.query.resultio.TupleQueryResultWriterRegistry;
 import org.eclipse.rdf4j.repository.Repository;
 import org.eclipse.rdf4j.repository.RepositoryConnection;
+import org.eclipse.rdf4j.repository.sail.SailRepository;
 import org.eclipse.rdf4j.rio.RDFFormat;
 import org.eclipse.rdf4j.rio.RDFWriter;
 import org.eclipse.rdf4j.rio.RDFWriterRegistry;
+import org.eclipse.rdf4j.sail.memory.MemoryStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -50,6 +55,7 @@ import java.net.URISyntaxException;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -57,6 +63,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.Semaphore;
 import java.util.function.Supplier;
 
@@ -99,6 +106,17 @@ import java.util.function.Supplier;
  * committed — the execution limit tripping mid-stream — aborts the response instead.
  * Origins and tokens are the filters' business ({@link AccessFilters}), not this class's.
  *
+ * <p><strong>The metadata graph.</strong> {@link #METADATA_GRAPH} is reserved. A query whose
+ * dataset ({@code FROM} / {@code FROM NAMED}, or {@code default-graph-uri} /
+ * {@code named-graph-uri}) names it is answered from a fresh snapshot the constructor's
+ * {@code metadata} supplier builds, in a memory store of its own, under the same slots and
+ * execution limit as any query — never from the repository, so the snapshot cannot reach the
+ * default graph other queries (the engine's included) see. Hence the rules: that graph is the
+ * only graph such a dataset may name (400 otherwise: the two cannot be joined); naming it in
+ * {@code GRAPH} without naming it in the dataset is a 400 that says so rather than an empty
+ * answer; with no supplier configured, naming it is a 403. An update that leaves any triple in
+ * that graph in the repository is rolled back with a 403, whatever syntax put it there.
+ *
  * <p><strong>Why there are query slots.</strong> {@code setMaxExecutionTime} is checked by RDF4J
  * at operator boundaries. Measured on 4.3.8's memory store with a 1-second limit over 300
  * triples: a streaming 4-way cross product and an {@code ORDER BY} over it stop within 1.1 s, a
@@ -115,14 +133,30 @@ public final class SparqlProtocolServlet extends HttpServlet {
 
     static final String TRUNCATED_HEADER = "X-CQELS-Truncated";
 
+    /** The reserved graph a query names to read the {@code metadata} snapshot; see the class comment. */
+    public static final IRI METADATA_GRAPH = VF.createIRI("cqels://endpoint/metadata");
+
     private final transient Supplier<Repository> repository;
     private final EndpointOptions options;
     private final transient Semaphore slots;
+    private final transient Supplier<? extends Collection<Statement>> metadata;
 
+    /** Without a metadata graph: a query naming {@link #METADATA_GRAPH} is refused with 403. */
     public SparqlProtocolServlet(Supplier<Repository> repository, EndpointOptions options) {
+        this(repository, options, null);
+    }
+
+    /**
+     * @param metadata builds the statements of {@link #METADATA_GRAPH} afresh for each query that
+     *                 names it, or {@code null} for none. Statements are added in that graph
+     *                 whatever context they carry
+     */
+    public SparqlProtocolServlet(Supplier<Repository> repository, EndpointOptions options,
+                                 Supplier<? extends Collection<Statement>> metadata) {
         this.repository = repository;
         this.options = options;
         this.slots = new Semaphore(options.maxConcurrentQueries());
+        this.metadata = metadata;
     }
 
     @Override
@@ -221,23 +255,93 @@ public final class SparqlProtocolServlet extends HttpServlet {
 
     private void evaluateQuery(HttpServletRequest req, HttpServletResponse resp, Params params, String queryString)
             throws IOException {
-        try (RepositoryConnection conn = repository.get().getConnection()) {
-            Query query;
+        Repository target = null;
+        boolean snapshot = false;
+        try {
+            // §2.3: with no BASE in the request, the service defines the base IRI. The request
+            // URL is the obvious one, and without any base a relative IRI that the SPARQL
+            // grammar allows would be rejected as malformed.
+            String base = baseIri(req);
+            ParsedQuery parsed;
             try {
-                // §2.3: with no BASE in the request, the service defines the base IRI. The
-                // request URL is the obvious one, and without any base a relative IRI that the
-                // SPARQL grammar allows would be rejected as malformed.
-                query = conn.prepareQuery(QueryLanguage.SPARQL, queryString, baseIri(req));
+                // Parsed before any connection is opened: which repository answers depends on
+                // the dataset the query names (the metadata graph is not in the repository).
+                parsed = QueryParserUtil.parseQuery(QueryLanguage.SPARQL, queryString, base);
             } catch (MalformedQueryException e) {
                 fail(resp, HttpServletResponse.SC_BAD_REQUEST, "malformed query: " + e.getMessage());
                 return;
             }
-            if (!options.federationEnabled()
-                    && reachesOut(QueryParserUtil.parseQuery(QueryLanguage.SPARQL, queryString, baseIri(req)).getTupleExpr())) {
+            if (!options.federationEnabled() && reachesOut(parsed.getTupleExpr())) {
                 federationDisabled(resp);
                 return;
             }
             Dataset dataset = dataset(params, "default-graph-uri", "named-graph-uri");
+            // The protocol parameters replace the query's own FROM / FROM NAMED (§2.1.4), and
+            // setDataset below makes RDF4J do exactly that, so they decide the routing too.
+            Dataset effective = dataset != null ? dataset : parsed.getDataset();
+            if (names(effective, METADATA_GRAPH) || inGraphPattern(parsed.getTupleExpr(), METADATA_GRAPH)) {
+                if (metadata == null) {
+                    fail(resp, HttpServletResponse.SC_FORBIDDEN, "the metadata graph <" + METADATA_GRAPH
+                            + "> is not enabled on this endpoint (CQELS_SPARQL_METADATA_ENABLED=true enables it)");
+                    return;
+                }
+                if (!names(effective, METADATA_GRAPH)) {
+                    fail(resp, HttpServletResponse.SC_BAD_REQUEST, "the metadata graph <" + METADATA_GRAPH
+                            + "> is visible only to a query whose dataset names it: add FROM NAMED <"
+                            + METADATA_GRAPH + "> (or FROM, or the named-graph-uri / default-graph-uri parameter)");
+                    return;
+                }
+                if (!namesOnly(effective, METADATA_GRAPH)) {
+                    fail(resp, HttpServletResponse.SC_BAD_REQUEST, "the metadata graph <" + METADATA_GRAPH
+                            + "> is a snapshot kept apart from the store, so a dataset that names it cannot "
+                            + "name other graphs too; query it on its own");
+                    return;
+                }
+                target = snapshotRepository();
+                snapshot = true;
+            } else {
+                target = repository.get();
+            }
+            evaluate(req, resp, target, queryString, base, dataset);
+        } catch (IllegalArgumentException e) {
+            fail(resp, HttpServletResponse.SC_BAD_REQUEST, e.getMessage());
+        } catch (RuntimeException e) {
+            if (!resp.isCommitted()) {
+                log.warn("unexpected failure answering a query", e);
+            }
+            fail(resp, HttpServletResponse.SC_INTERNAL_SERVER_ERROR, "internal error: " + e.getMessage());
+        } finally {
+            if (snapshot && target != null) {
+                target.shutDown();
+            }
+        }
+    }
+
+    /** A memory store holding one snapshot of the metadata graph; the caller shuts it down. */
+    private Repository snapshotRepository() {
+        Repository repo = new SailRepository(new MemoryStore());
+        repo.init();
+        try (RepositoryConnection c = repo.getConnection()) {
+            for (Statement st : metadata.get()) {
+                c.add(st.getSubject(), st.getPredicate(), st.getObject(), METADATA_GRAPH);
+            }
+        } catch (RuntimeException e) {
+            repo.shutDown();
+            throw e;
+        }
+        return repo;
+    }
+
+    private void evaluate(HttpServletRequest req, HttpServletResponse resp, Repository target, String queryString,
+                          String base, Dataset dataset) throws IOException {
+        try (RepositoryConnection conn = target.getConnection()) {
+            Query query;
+            try {
+                query = conn.prepareQuery(QueryLanguage.SPARQL, queryString, base);
+            } catch (MalformedQueryException e) {
+                fail(resp, HttpServletResponse.SC_BAD_REQUEST, "malformed query: " + e.getMessage());
+                return;
+            }
             if (dataset != null) {
                 query.setDataset(dataset);
             }
@@ -392,9 +496,29 @@ public final class SparqlProtocolServlet extends HttpServlet {
             if (options.maxExecutionSeconds() > 0) {
                 update.setMaxExecutionTime(options.maxExecutionSeconds());
             }
-            // The engine sees the change on its next element: it listens to its own Sail for
-            // lookup-cache invalidation (measured on 2.0.0-alpha.22, even under FROM <g> CACHE 5m).
-            update.execute();
+            // The reserved metadata graph is checked by its effect, not by reading the request:
+            // INSERT DATA keeps its triples as an unparsed text block in RDF4J's algebra, where a
+            // prefixed name (x:metadata) would hide the IRI from any check of the parse. Inside
+            // one transaction, an update that leaves anything in that graph is undone before
+            // anything — the engine included — can see it. So is one that finds data already
+            // there and does not remove it; an update that empties the graph is accepted.
+            conn.begin();
+            try {
+                update.execute();
+                if (conn.hasStatement(null, null, null, false, METADATA_GRAPH)) {
+                    conn.rollback();
+                    fail(resp, HttpServletResponse.SC_FORBIDDEN, "the graph <" + METADATA_GRAPH + "> is reserved "
+                            + "for the endpoint's metadata snapshot; an update may not leave triples in it");
+                    return;
+                }
+                // The engine sees the change on its next element: it listens to its own Sail for
+                // lookup-cache invalidation (measured on 2.0.0-alpha.22, even under FROM <g> CACHE 5m).
+                conn.commit();
+            } finally {
+                if (conn.isActive()) {
+                    conn.rollback();
+                }
+            }
             resp.setStatus(HttpServletResponse.SC_NO_CONTENT);
         } catch (IllegalArgumentException e) {
             fail(resp, HttpServletResponse.SC_BAD_REQUEST, e.getMessage());
@@ -461,6 +585,32 @@ public final class SparqlProtocolServlet extends HttpServlet {
             @Override
             public void meet(Load load) {
                 found[0] = true;
+            }
+        });
+        return found[0];
+    }
+
+    /** Whether {@code d} names {@code g} as a default or a named graph. */
+    static boolean names(Dataset d, IRI g) {
+        return d != null && (d.getDefaultGraphs().contains(g) || d.getNamedGraphs().contains(g));
+    }
+
+    /** Whether every graph {@code d} names is {@code g}. */
+    static boolean namesOnly(Dataset d, IRI g) {
+        Set<IRI> all = new java.util.HashSet<>(d.getDefaultGraphs());
+        all.addAll(d.getNamedGraphs());
+        return all.equals(Set.of(g));
+    }
+
+    /** Whether a {@code GRAPH <g>} pattern anywhere in {@code node} names {@code g} as a constant. */
+    static boolean inGraphPattern(QueryModelNode node, IRI g) {
+        boolean[] found = {false};
+        node.visit(new AbstractQueryModelVisitor<RuntimeException>() {
+            @Override
+            public void meet(StatementPattern sp) {
+                if (sp.getContextVar() != null && g.equals(sp.getContextVar().getValue())) {
+                    found[0] = true;
+                }
             }
         });
         return found[0];
