@@ -836,6 +836,269 @@ class SparqlProtocolServletTest {
         }
     }
 
+    // ---- the audit after #121: resources and outbound requests ------------------------------
+
+    /**
+     * A POST whose body trickles in used to hold a request thread the slots never counted, so
+     * with enough of them neither the 503 nor /health answered. It now holds a slot: the next
+     * request is turned away at once, /health answers, and the upload deadline gives the slot back.
+     */
+    @Test
+    void aSlowUploadHoldsASlotNotAThreadAndIsCutOff() throws Exception {
+        try (Endpoint ep = Endpoint.start(EndpointOptions.defaults().withMaxConcurrentQueries(1).withMaxUploadSeconds(2), 0);
+             java.net.Socket slow = new java.net.Socket("127.0.0.1", URI.create(ep.url()).getPort())) {
+            var out = slow.getOutputStream();
+            out.write(("POST /sparql HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/sparql-query\r\n"
+                    + "Content-Length: 1000\r\n\r\nASK").getBytes(StandardCharsets.US_ASCII));
+            out.flush();
+            String ask = ep.url() + "?query=" + enc("ASK {}");
+            HttpResponse<String> busy = null;
+            for (int i = 0; i < 50 && (busy == null || busy.statusCode() != 503); i++) {   // until the upload holds the slot
+                busy = getWithin(ask, java.time.Duration.ofSeconds(2));
+            }
+            assertEquals(503, busy.statusCode(), "the trickling upload never held the slot");
+            String base = ep.url().substring(0, ep.url().length() - "/sparql".length());
+            assertEquals(200, getWithin(base + "/health", java.time.Duration.ofSeconds(2)).statusCode());
+            // keep trickling, a byte every 300 ms, until the server answers
+            slow.setSoTimeout(15_000);
+            var in = new java.io.BufferedReader(new java.io.InputStreamReader(slow.getInputStream(), StandardCharsets.US_ASCII));
+            Thread trickle = new Thread(() -> {
+                try {
+                    for (int i = 0; i < 40; i++) {
+                        Thread.sleep(300);
+                        out.write(' ');
+                        out.flush();
+                    }
+                } catch (Exception ignored) {
+                    // the server closed the connection: done
+                }
+            });
+            trickle.setDaemon(true);
+            long t0 = System.nanoTime();
+            trickle.start();
+            String status = in.readLine();
+            assertTrue(status != null && status.contains(" 408 "), "status line: " + status);
+            assertTrue((System.nanoTime() - t0) / 1e9 < 8, "the deadline took too long");
+            assertEquals(200, getWithin(ask, java.time.Duration.ofSeconds(5)).statusCode(), "the slot was not given back");
+        }
+    }
+
+    /** 2,000 nested parentheses (4 KB) overflowed RDF4J's parser into Jetty's HTML error page. */
+    @Test
+    void aDeeplyNestedQueryIs400NotAStackOverflowPage() throws Exception {
+        String deep = "SELECT (" + "(".repeat(2000) + "1" + ")".repeat(2000) + " AS ?x) WHERE {}";
+        var r = post(shared.url(), "application/sparql-query", deep, null);
+        assertEquals(400, r.statusCode(), r.body());
+        assertTrue(type(r).startsWith("text/plain"), type(r));
+        assertTrue(r.body().contains("nests too deeply"), r.body());
+        assertFalse(r.body().contains("Jetty"), r.body());
+        assertEquals(200, get(shared.url(), "ASK {}", null).statusCode());   // and the slot came back
+    }
+
+    /** An OutOfMemoryError gets a plain answer and gives its slot back; the supplier stands in for a heap blow-up. */
+    @Test
+    void runningOutOfHeapIsAnsweredAndTheSlotReturned() throws Exception {
+        CQELSEngine engine = CQELSEngine.builder().id("t-" + System.nanoTime()).withMemoryStore().build();
+        engine.start();
+        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.function.Supplier<org.eclipse.rdf4j.repository.Repository> blowsUpOnce = () -> {
+            if (calls.getAndIncrement() == 0) {
+                throw new OutOfMemoryError("stand-in for a GROUP BY that filled the heap");
+            }
+            return engine.getRepository();
+        };
+        Server server = SparqlEndpointLauncher.startServer(blowsUpOnce, null, "127.0.0.1", 0,
+                EndpointOptions.defaults().withMaxConcurrentQueries(1), 64, false);
+        try {
+            String url = "http://127.0.0.1:" + ((ServerConnector) server.getConnectors()[0]).getLocalPort() + "/sparql";
+            var r = get(url, "ASK {}", null);
+            assertEquals(500, r.statusCode(), r.body());
+            assertTrue(type(r).startsWith("text/plain"), type(r));
+            assertTrue(r.body().contains("ran out of server memory"), r.body());
+            assertEquals(200, get(url, "ASK {}", null).statusCode(), "the slot was not given back");
+        } finally {
+            server.stop();
+            engine.close();
+        }
+    }
+
+    /**
+     * {@code maxRows} capped rows, not memory: one computed literal was an 8 MB row under
+     * {@code maxRows=1}. The buffer now stops at {@code maxBufferedBytes} too — and the cap covers
+     * CONSTRUCT and DESCRIBE, which streamed whatever it said.
+     */
+    @Test
+    void theRowCapAlsoBoundsBytesAndGraphResults() throws Exception {
+        try (Endpoint capped = Endpoint.start(EndpointOptions.defaults().withMaxRows(1000).withMaxBufferedBytes(50_000), 10)) {
+            // each row carries a 10,000-character string (about 20 KB estimated): two fit, the third does not
+            var big = post(capped.url(), "application/sparql-query", "SELECT ?s (CONCAT(STR(?s), \"" + "x".repeat(10_000)
+                    + "\") AS ?big) WHERE { ?s <urn:ex:v> ?x }", "text/csv");
+            assertEquals(200, big.statusCode(), big.body());
+            assertEquals("true", big.headers().firstValue(SparqlProtocolServlet.TRUNCATED_HEADER).orElse(""));
+            assertEquals(3, big.body().strip().split("\n").length);   // header + 2 rows
+            var small = get(capped.url(), "SELECT ?s WHERE { ?s <urn:ex:v> ?x }", "text/csv");
+            assertTrue(small.headers().firstValue(SparqlProtocolServlet.TRUNCATED_HEADER).isEmpty(), "10 small rows fit");
+        }
+        try (Endpoint capped = Endpoint.start(EndpointOptions.defaults().withMaxRows(2), 10)) {
+            var graph = get(capped.url(), "CONSTRUCT { ?s <urn:ex:v> ?x } WHERE { ?s <urn:ex:v> ?x }", "application/n-triples");
+            assertEquals(200, graph.statusCode(), graph.body());
+            assertEquals("true", graph.headers().firstValue(SparqlProtocolServlet.TRUNCATED_HEADER).orElse(""));
+            assertEquals(2, graph.body().strip().split("\n").length, graph.body());
+            var turtle = get(capped.url(), "CONSTRUCT { ?v <urn:ex:depot> <urn:ex:North> } WHERE { ?v <urn:ex:depot> <urn:ex:North> }", null);
+            assertTrue(turtle.headers().firstValue(SparqlProtocolServlet.TRUNCATED_HEADER).isEmpty());
+            assertTrue(turtle.body().contains("EV-7Q2"), turtle.body());
+        }
+    }
+
+    @Test
+    void constructIsAvailableAsRdfXmlAndJsonLd() throws Exception {
+        String q = "CONSTRUCT { ?v <urn:ex:depot> ?d } WHERE { ?v <urn:ex:depot> ?d }";
+        for (String type : List.of("application/rdf+xml", "application/ld+json")) {
+            var r = get(shared.url(), q, type);
+            assertEquals(200, r.statusCode(), type + ": " + r.body());
+            assertTrue(type(r).startsWith(type), type(r));
+            assertTrue(r.body().contains("EV-7Q2"), r.body());
+        }
+    }
+
+    /** A tiny HTTP server answering each path with a handler. */
+    static com.sun.net.httpserver.HttpServer serve(java.util.Map<String, com.sun.net.httpserver.HttpHandler> paths)
+            throws IOException {
+        var server = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
+        paths.forEach(server::createContext);
+        server.setExecutor(java.util.concurrent.Executors.newCachedThreadPool());
+        server.start();
+        return server;
+    }
+
+    static com.sun.net.httpserver.HttpHandler respond(int status, String type, String body, long delayMillis,
+                                                      String... headers) {
+        return ex -> {
+            try {
+                Thread.sleep(delayMillis);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+            ex.getResponseHeaders().add("Content-Type", type);
+            for (int i = 0; i + 1 < headers.length; i += 2) {
+                ex.getResponseHeaders().add(headers[i], headers[i + 1]);
+            }
+            ex.sendResponseHeaders(status, bytes.length == 0 ? -1 : bytes.length);
+            ex.getResponseBody().write(bytes);
+            ex.close();
+        };
+    }
+
+    static String base(com.sun.net.httpserver.HttpServer s) {
+        return "http://127.0.0.1:" + s.getAddress().getPort();
+    }
+
+    /** With federation on, {@code LOAD <file:…>} read an RDF file off the server's disk into the store. */
+    @Test
+    void federationNamesOnlyHttpTargets(@org.junit.jupiter.api.io.TempDir java.nio.file.Path dir) throws Exception {
+        java.nio.file.Path secret = dir.resolve("secret.ttl");
+        java.nio.file.Files.writeString(secret, "<urn:ex:secret> <urn:ex:p> \"server-side file\" .\n");
+        try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true).withUpdateEnabled(true), 0)) {
+            var load = post(fed.url(), "application/sparql-update", "LOAD <" + secret.toUri() + ">", null);
+            assertEquals(403, load.statusCode(), load.body());
+            assertTrue(load.body().contains("http and https"), load.body());
+            assertFalse(get(fed.url(), "ASK { <urn:ex:secret> ?p ?o }", null).body().replace(" ", "").contains("true"));
+            var service = get(fed.url(), "SELECT * WHERE { SERVICE <" + secret.toUri() + "> { ?s ?p ?o } }", null);
+            assertEquals(403, service.statusCode(), service.body());
+            var upper = post(fed.url(), "application/sparql-update", "LOAD <FILE:" + secret.toUri().getPath() + ">", null);
+            assertEquals(403, upper.statusCode(), upper.body());
+        }
+    }
+
+    /** RDF4J's SERVICE client had no socket timeout, so a stalled remote held the slot past the execution limit. */
+    @Test
+    void aStalledServiceIs504WithinTheLimit() throws Exception {
+        var remote = serve(java.util.Map.of("/sparql", respond(200, "application/sparql-results+json",
+                "{\"head\":{\"vars\":[]},\"results\":{\"bindings\":[]}}", 5_000)));
+        try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true).withMaxExecutionSeconds(1), 0)) {
+            long t0 = System.nanoTime();
+            var r = get(fed.url(), "SELECT * WHERE { SERVICE <" + base(remote) + "/sparql> { ?s ?p ?o } }", null);
+            double took = (System.nanoTime() - t0) / 1e9;
+            assertEquals(504, r.statusCode(), r.body());
+            assertTrue(took < 4, "took " + took + " s");
+        } finally {
+            remote.stop(0);
+        }
+    }
+
+    /** The launcher's main, in a JVM of its own: JVM-wide settings (LOAD's redirects and timeouts) need a fresh one. */
+    static final class Launched implements AutoCloseable {
+        final Process process;
+        final String url;
+
+        Launched(java.util.Map<String, String> env) throws Exception {
+            ProcessBuilder pb = new ProcessBuilder(
+                    java.nio.file.Path.of(System.getProperty("java.home"), "bin", "java").toString(),
+                    "-cp", System.getProperty("java.class.path"), SparqlEndpointLauncher.class.getName());
+            pb.environment().keySet().removeIf(k -> k.startsWith("CQELS_SPARQL_"));
+            pb.environment().put("CQELS_SPARQL_PORT", "0");
+            pb.environment().putAll(env);
+            pb.redirectError(ProcessBuilder.Redirect.DISCARD);
+            process = pb.start();
+            var lines = new java.io.BufferedReader(new java.io.InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8));
+            String line = java.util.concurrent.CompletableFuture.supplyAsync(() -> {
+                try {
+                    return lines.readLine();
+                } catch (IOException e) {
+                    return null;
+                }
+            }).get(60, java.util.concurrent.TimeUnit.SECONDS);
+            if (line == null || !line.startsWith("listening on ")) {
+                process.destroyForcibly();
+                throw new IllegalStateException("the launcher did not start: " + line);
+            }
+            url = line.substring("listening on ".length());
+        }
+
+        @Override
+        public void close() throws Exception {
+            process.destroy();
+            if (!process.waitFor(20, java.util.concurrent.TimeUnit.SECONDS)) {
+                process.destroyForcibly();
+            }
+        }
+    }
+
+    /**
+     * RDF4J's LOAD follows redirects by hand, to any scheme: an http URL that redirects to
+     * {@code file:} read the file. The launcher turns redirect-following off and gives LOAD a
+     * deadline; a plain LOAD still works.
+     */
+    @Test
+    void launchedLoadFollowsNoRedirectAndHasADeadline(@org.junit.jupiter.api.io.TempDir java.nio.file.Path dir) throws Exception {
+        java.nio.file.Path secret = dir.resolve("secret.ttl");
+        java.nio.file.Files.writeString(secret, "<urn:ex:secret> <urn:ex:p> \"server-side file\" .\n");
+        var remote = serve(java.util.Map.of(
+                "/data.ttl", respond(200, "text/turtle", "<urn:ex:loaded> <urn:ex:p> \"fetched\" .\n", 0),
+                "/redirect.ttl", respond(302, "text/plain", "", 0, "Location", secret.toUri().toString()),
+                "/stalled.ttl", respond(200, "text/turtle", "<urn:ex:late> <urn:ex:p> 1 .\n", 6_000)));
+        try (Launched ep = new Launched(java.util.Map.of("CQELS_SPARQL_FEDERATION_ENABLED", "true",
+                "CQELS_SPARQL_UPDATE_ENABLED", "true", "CQELS_SPARQL_MAX_EXECUTION_SECONDS", "2"))) {
+            var plain = post(ep.url, "application/sparql-update", "LOAD <" + base(remote) + "/data.ttl>", null);
+            assertEquals(204, plain.statusCode(), plain.body());
+            assertTrue(get(ep.url, "ASK { <urn:ex:loaded> ?p ?o }", null).body().replace(" ", "").contains("true"));
+
+            var redirected = post(ep.url, "application/sparql-update", "LOAD <" + base(remote) + "/redirect.ttl>", null);
+            assertTrue(redirected.statusCode() >= 400, redirected.statusCode() + " " + redirected.body());
+            assertFalse(get(ep.url, "ASK { <urn:ex:secret> ?p ?o }", null).body().replace(" ", "").contains("true"),
+                    "LOAD followed a redirect into a local file");
+
+            long t0 = System.nanoTime();
+            var stalled = post(ep.url, "application/sparql-update", "LOAD <" + base(remote) + "/stalled.ttl>", null);
+            double took = (System.nanoTime() - t0) / 1e9;
+            assertEquals(504, stalled.statusCode(), stalled.body());
+            assertTrue(took < 5, "took " + took + " s");
+        } finally {
+            remote.stop(0);
+        }
+    }
+
     // ---- start-up refusal -------------------------------------------------------------------
 
     @Test
@@ -846,6 +1109,21 @@ class SparqlProtocolServletTest {
         SparqlEndpointLauncher.requireTokenForRemoteBind("0.0.0.0", null, true);
         SparqlEndpointLauncher.requireTokenForRemoteBind("127.0.0.1", null, false);
         SparqlEndpointLauncher.requireTokenForRemoteBind("localhost", null, false);
+    }
+
+    /** The refusal was in main only, so a program embedding through startServer opened an unauthenticated 0.0.0.0. */
+    @Test
+    void startServerItselfRefusesAnUnauthenticatedRemoteBind() throws Exception {
+        CQELSEngine engine = CQELSEngine.builder().id("t-" + System.nanoTime()).withMemoryStore().build();
+        try {
+            var e = assertThrows(IllegalStateException.class, () -> SparqlEndpointLauncher.startServer(engine,
+                    "0.0.0.0", 0, EndpointOptions.defaults(), 64, false));
+            assertTrue(e.getMessage().contains("CQELS_SPARQL_AUTH_TOKEN"), e.getMessage());
+            assertThrows(IllegalStateException.class, () -> SparqlEndpointLauncher.startServer(engine::getRepository,
+                    null, "0.0.0.0", 0, EndpointOptions.defaults(), 64, false));
+        } finally {
+            engine.close();
+        }
     }
 
     @Test

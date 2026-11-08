@@ -87,6 +87,20 @@
             <artifactId>rdf4j-queryresultio-text</artifactId>
             <version>${rdf4j.version}</version>
         </dependency>
+        <!-- CONSTRUCT / DESCRIBE as RDF/XML and JSON-LD. The README promised both, but the engine
+             carries only the Turtle, N-Triples, N-Quads and TriG writers, so both answered 406
+             (found in the audit after #121). jsonld-java is already on the classpath through
+             the engine; its Jackson is the one pinned below. -->
+        <dependency>
+            <groupId>org.eclipse.rdf4j</groupId>
+            <artifactId>rdf4j-rio-rdfxml</artifactId>
+            <version>${rdf4j.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.rdf4j</groupId>
+            <artifactId>rdf4j-rio-jsonld</artifactId>
+            <version>${rdf4j.version}</version>
+        </dependency>
         <!-- A durable background graph (CQELS_SPARQL_STORE_PATH). The engine itself only
              carries the memory store. -->
         <dependency>

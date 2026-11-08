@@ -191,7 +191,7 @@ jobs:
       - run: scripts/ci/capability-probe.sh
 
   # The SPARQL endpoint is the one project here with real product code — a servlet
-  # with security filters (origin, Host, token) and protocol handling, 45 tests on a
+  # with security filters (origin, Host, token) and protocol handling, 54 tests on a
   # real Jetty and engine. Until this job existed they ran on nobody's machine but
   # the author's: version-truth never builds Java, capability-truth builds examples/
   # only, and tools-reality's deep tier packages the jar with -DskipTests because its

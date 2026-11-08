@@ -49,9 +49,12 @@ import java.util.function.Supplier;
  *   CQELS_SPARQL_MAX_REQUEST_BYTES        1048576
  *   CQELS_SPARQL_MAX_EXECUTION_SECONDS    30          0 = unlimited; best effort, see the servlet
  *   CQELS_SPARQL_MAX_CONCURRENT_QUERIES   16          beyond it: 503 + Retry-After at once
- *   CQELS_SPARQL_MAX_ROWS                 0           0 = unlimited
+ *   CQELS_SPARQL_MAX_ROWS                 0           0 = unlimited; also caps CONSTRUCT/DESCRIBE statements
+ *   CQELS_SPARQL_MAX_BUFFERED_BYTES       33554432    what a MAX_ROWS buffer may hold, estimated
+ *   CQELS_SPARQL_MAX_UPLOAD_SECONDS       30          a POST body must arrive within this; 0 = none
  *   CQELS_SPARQL_UPDATE_ENABLED           false
- *   CQELS_SPARQL_FEDERATION_ENABLED       false       accept SERVICE and LOAD (outbound requests)
+ *   CQELS_SPARQL_FEDERATION_ENABLED       false       accept SERVICE and LOAD (outbound requests), http(s)
+ *                                                     only, bounded by limitOutboundRequests
  *   CQELS_SPARQL_METADATA_ENABLED         false       serve the engine's streams and status as the
  *                                                     graph cqels://endpoint/metadata (EngineMetadata)
  *   CQELS_SPARQL_STORE_PATH               (memory)    NativeStore directory for a durable graph
@@ -63,7 +66,8 @@ import java.util.function.Supplier;
  * </pre>
  *
  * <p><strong>The one refusal.</strong> Binding a non-loopback host with no token is refused at
- * start-up unless {@code CQELS_SPARQL_ALLOW_UNAUTHENTICATED_REMOTE=true}. The graph the engine
+ * start-up unless {@code CQELS_SPARQL_ALLOW_UNAUTHENTICATED_REMOTE=true} — by {@link #startServer}
+ * itself, so a program embedding the endpoint through it gets the same refusal. The graph the engine
  * joins its streams against is not something to expose by accident; with update enabled it is
  * writable. TLS is not terminated here — front the endpoint, as the MCP README says.
  *
@@ -92,17 +96,23 @@ public final class SparqlEndpointLauncher {
                 .withMaxConcurrentQueries(Integer.parseInt(env("CQELS_SPARQL_MAX_CONCURRENT_QUERIES",
                         Integer.toString(EndpointOptions.DEFAULT_MAX_CONCURRENT_QUERIES))))
                 .withMaxRows(Integer.parseInt(env("CQELS_SPARQL_MAX_ROWS", "0")))
+                .withMaxBufferedBytes(Long.parseLong(env("CQELS_SPARQL_MAX_BUFFERED_BYTES",
+                        Long.toString(EndpointOptions.DEFAULT_MAX_BUFFERED_BYTES))))
+                .withMaxUploadSeconds(Integer.parseInt(env("CQELS_SPARQL_MAX_UPLOAD_SECONDS",
+                        Integer.toString(EndpointOptions.DEFAULT_MAX_UPLOAD_SECONDS))))
                 .withUpdateEnabled(Boolean.parseBoolean(env("CQELS_SPARQL_UPDATE_ENABLED", "false")))
                 .withFederationEnabled(Boolean.parseBoolean(env("CQELS_SPARQL_FEDERATION_ENABLED", "false")))
-                .withMetadataEnabled(Boolean.parseBoolean(env("CQELS_SPARQL_METADATA_ENABLED", "false")));
-        boolean allowRemoteUnauthenticated = Boolean.parseBoolean(env("CQELS_SPARQL_ALLOW_UNAUTHENTICATED_REMOTE", "false"));
+                .withMetadataEnabled(Boolean.parseBoolean(env("CQELS_SPARQL_METADATA_ENABLED", "false")))
+                .withAllowUnauthenticatedRemote(Boolean.parseBoolean(env("CQELS_SPARQL_ALLOW_UNAUTHENTICATED_REMOTE", "false")));
         String storePath = env("CQELS_SPARQL_STORE_PATH", null);
         boolean seedFleet = Boolean.parseBoolean(env("CQELS_SPARQL_SEED_FLEET", "false"));
         int maxThreads = Integer.parseInt(env("CQELS_SPARQL_MAX_THREADS", "200"));
         boolean virtualThreads = Boolean.parseBoolean(env("CQELS_SPARQL_VIRTUAL_THREADS", "false"));
 
+        // Checked here too, not only in startServer, so the refusal exits 2 before an engine
+        // (and a NativeStore lock) exists.
         try {
-            requireTokenForRemoteBind(host, options.authToken(), allowRemoteUnauthenticated);
+            requireTokenForRemoteBind(host, options.authToken(), options.allowUnauthenticatedRemote());
         } catch (IllegalStateException e) {
             log.error("refusing to start: {}", e.getMessage());
             System.exit(2);
@@ -151,12 +161,13 @@ public final class SparqlEndpointLauncher {
 
         System.out.println("listening on " + listeningUrl(host, bound, options.path()));
         System.out.flush();
-        log.info("SPARQL endpoint ready: update {}, federation {}, metadata graph {}, token {}, execution limit {} s, {} query slots, max rows {}, store {}",
+        log.info("SPARQL endpoint ready: update {}, federation {}, metadata graph {}, token {}, execution limit {} s, {} query slots, max rows {}, upload limit {} s, store {}",
                 options.updateEnabled() ? "enabled" : "disabled", options.federationEnabled() ? "enabled" : "disabled",
                 options.metadataEnabled() ? "enabled" : "disabled",
                 options.authToken() == null ? "none" : "set",
                 options.maxExecutionSeconds(), options.maxConcurrentQueries(),
-                options.maxRows() == 0 ? "unlimited" : options.maxRows(), storePath == null ? "memory" : storePath);
+                options.maxRows() == 0 ? "unlimited" : options.maxRows() + " / " + options.maxBufferedBytes() + " bytes",
+                options.maxUploadSeconds(), storePath == null ? "memory" : storePath);
         server.join();
     }
 
@@ -167,8 +178,83 @@ public final class SparqlEndpointLauncher {
      */
     public static Server startServer(CQELSEngine engine, String host, int port, EndpointOptions options,
                                      int maxThreads, boolean virtualThreads) throws Exception {
-        return startServer(engine::getRepository, options.metadataEnabled() ? EngineMetadata.of(engine) : null,
-                host, port, options, maxThreads, virtualThreads);
+        requireTokenForRemoteBind(host, options.authToken(), options.allowUnauthenticatedRemote());
+        AutoCloseable outbound = options.federationEnabled()
+                ? limitOutboundRequests(engine.getRepository(), options.maxExecutionSeconds()) : () -> { };
+        Server server;
+        try {
+            server = startServer(engine::getRepository, options.metadataEnabled() ? EngineMetadata.of(engine) : null,
+                    host, port, options, maxThreads, virtualThreads);
+        } catch (Exception | Error e) {
+            outbound.close();
+            throw e;
+        }
+        server.addEventListener(new org.eclipse.jetty.util.component.LifeCycle.Listener() {
+            @Override
+            public void lifeCycleStopped(org.eclipse.jetty.util.component.LifeCycle event) {
+                try {
+                    outbound.close();
+                } catch (Exception e) {
+                    log.warn("could not close the SERVICE HTTP client: {}", e.toString());
+                }
+            }
+        });
+        return server;
+    }
+
+    /**
+     * Bounds the requests {@code SERVICE} and {@code LOAD} make, for an endpoint with federation
+     * enabled. {@link #startServer(CQELSEngine, String, int, EndpointOptions, int, boolean)} calls
+     * it; a program mounting the servlet itself should call it once, before the first request.
+     * Found in the audit after #121:
+     *
+     * <ul>
+     *   <li><strong>{@code LOAD} follows redirects into local files.</strong> RDF4J 4.3.8's
+     *       {@code RDFLoader} follows a redirect itself, to whatever URL the {@code Location}
+     *       names, {@code file:} included — Java's own HTTP client refuses to change protocol, but
+     *       RDF4J turns that off and loops by hand. The servlet's check of the IRI the request
+     *       names cannot see a redirect, so this sets {@code http.maxRedirects} to {@code 0}
+     *       <em>for the whole JVM</em>: {@code RDFLoader} reads it on every load and refuses the
+     *       first redirect, so a {@code LOAD} must name the final URL and a redirect answers 500.
+     *       Turning redirect-following off instead was tried first: {@code RDFLoader} then parses
+     *       the redirect's own (empty) body and reports success having loaded nothing.</li>
+     *   <li><strong>Neither waits with a deadline.</strong> RDF4J's {@code SERVICE} client is
+     *       built with no connect or socket timeout, and {@code LOAD}'s connection with none
+     *       either, so a target that stops answering held the slot — and an update's
+     *       transaction — past the execution limit (2.6 s under a 1 s limit). Both now give up
+     *       after {@code timeoutSeconds}, answered 504. For {@code SERVICE} that is a client set on
+     *       {@code repository}'s own federated-service resolver, closed by the returned handle.
+     *       For {@code LOAD} it is the JDK's {@code sun.net.client.defaultConnectTimeout} /
+     *       {@code defaultReadTimeout}, again JVM-wide, which the JDK reads once — so this must
+     *       run before the JVM's first {@code HttpURLConnection}, as the launcher's {@code main}
+     *       ensures, and a value already set (say, with {@code -D}) is kept.</li>
+     * </ul>
+     *
+     * @param timeoutSeconds the deadline; {@code 0} sets none (redirects are still refused)
+     * @return closes the {@code SERVICE} client, if one was set
+     */
+    public static AutoCloseable limitOutboundRequests(Repository repository, int timeoutSeconds) {
+        System.setProperty("http.maxRedirects", "0");
+        if (timeoutSeconds <= 0) {
+            return () -> { };
+        }
+        int ms = (int) Math.min(Integer.MAX_VALUE, timeoutSeconds * 1000L);
+        System.getProperties().putIfAbsent("sun.net.client.defaultConnectTimeout", Integer.toString(ms));
+        System.getProperties().putIfAbsent("sun.net.client.defaultReadTimeout", Integer.toString(ms));
+        if (repository instanceof SailRepository sail
+                && sail.getFederatedServiceResolver() instanceof org.eclipse.rdf4j.http.client.HttpClientDependent dependent) {
+            org.apache.http.impl.client.CloseableHttpClient client = org.apache.http.impl.client.HttpClientBuilder.create()
+                    .useSystemProperties()
+                    .setDefaultRequestConfig(org.apache.http.client.config.RequestConfig.custom()
+                            .setCookieSpec("standard")   // what RDF4J's own client sets
+                            .setConnectTimeout(ms).setConnectionRequestTimeout(ms).setSocketTimeout(ms).build())
+                    .build();
+            dependent.setHttpClient(client);
+            return client;
+        }
+        log.warn("SERVICE requests have no deadline: the repository ({}) exposes no federated-service HTTP client",
+                repository == null ? "null" : repository.getClass().getName());
+        return () -> { };
     }
 
     /**
@@ -185,6 +271,7 @@ public final class SparqlEndpointLauncher {
     static Server startServer(Supplier<Repository> repository, Supplier<? extends Collection<Statement>> metadata,
                               String host, int port, EndpointOptions options,
                               int maxThreads, boolean virtualThreads) throws Exception {
+        requireTokenForRemoteBind(host, options.authToken(), options.allowUnauthenticatedRemote());
         QueuedThreadPool pool = new QueuedThreadPool(Math.max(maxThreads, 8));
         pool.setName("sparql-endpoint");
         boolean onVirtualThreads = false;
