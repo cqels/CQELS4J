@@ -562,9 +562,18 @@ public final class SparqlProtocolServlet extends HttpServlet {
         // JSON-LD and streamed fine as N-Triples (found in co-review of #123). Such a format is
         // always buffered here, within maxBufferedBytes; with no row cap configured, a result
         // beyond that is refused rather than silently cut short.
-        boolean writerHoldsAll = fmt.format().equals(RDFFormat.JSONLD);
+        //
+        // NDJSON-LD's writer groups a fixed 1,024 statements of any size, which no setting changes
+        // (it ran a 128 MB heap out of memory; found in co-review of #123), so it is held the same
+        // way. Turtle and TriG — Turtle is the CONSTRUCT default — buffer while pretty-printing or
+        // inlining blank nodes, both of which RDF4J turns on, so a streamed result turns them off:
+        // grouping by subject is lost, and memory stays flat.
+        boolean writerHoldsAll = fmt.format().equals(RDFFormat.JSONLD) || fmt.format().equals(RDFFormat.NDJSONLD);
         if (options.maxRows() == 0 && !writerHoldsAll) {
-            gq.evaluate(factory.getWriter(begin(resp, fmt)));
+            RDFWriter writer = factory.getWriter(begin(resp, fmt));
+            writer.getWriterConfig().set(org.eclipse.rdf4j.rio.helpers.BasicWriterSettings.PRETTY_PRINT, false);
+            writer.getWriterConfig().set(org.eclipse.rdf4j.rio.helpers.BasicWriterSettings.INLINE_BLANK_NODES, false);
+            gq.evaluate(writer);
             return;
         }
         long rowCap = options.maxRows() == 0 ? Long.MAX_VALUE : options.maxRows();
@@ -780,6 +789,13 @@ public final class SparqlProtocolServlet extends HttpServlet {
                     "LOAD <" + source + "> answered HTTP " + fetched.statusCode());
             return;
         }
+        byte[] body;
+        try {
+            body = decoded(fetched);
+        } catch (IOException e) {
+            loadFailed(resp, load, HttpServletResponse.SC_BAD_GATEWAY, "LOAD <" + source + ">: " + e.getMessage());
+            return;
+        }
         String type = fetched.headers().firstValue("Content-Type").map(SparqlProtocolServlet::mediaType).orElse("");
         Optional<RDFFormat> format = org.eclipse.rdf4j.rio.Rio.getParserFormatForMIMEType(type)
                 .or(() -> org.eclipse.rdf4j.rio.Rio.getParserFormatForFileName(fetched.uri().getPath()));
@@ -800,7 +816,7 @@ public final class SparqlProtocolServlet extends HttpServlet {
                 restrict(parser.getParserConfig(), contexts);
                 parser.setRDFHandler(inserter);
                 try {
-                    parser.parse(new java.io.ByteArrayInputStream(fetched.body()), fetched.uri().toString());
+                    parser.parse(new java.io.ByteArrayInputStream(body), fetched.uri().toString());
                 } catch (IOException e) {
                     throw new java.io.UncheckedIOException(e);
                 }
@@ -885,7 +901,7 @@ public final class SparqlProtocolServlet extends HttpServlet {
                     }
                 }
                 return new com.github.jsonldjava.core.RemoteDocument(url,
-                        com.github.jsonldjava.utils.JsonUtils.fromInputStream(new java.io.ByteArrayInputStream(fetched.body())));
+                        com.github.jsonldjava.utils.JsonUtils.fromInputStream(new java.io.ByteArrayInputStream(decoded(fetched))));
             } catch (java.util.concurrent.TimeoutException e) {
                 timedOut = true;
                 throw new com.github.jsonldjava.core.JsonLdError(refused, url + " did not answer in time");
@@ -941,6 +957,38 @@ public final class SparqlProtocolServlet extends HttpServlet {
             pending.cancel(true);
             throw e;
         }
+    }
+
+    /**
+     * The body with its {@code Content-Encoding} undone ({@code gzip}, {@code deflate}), held to
+     * {@code maxBufferedBytes} after decoding as well. RDF4J's own LOAD decoded a gzip-encoded
+     * source; passed straight to the parser it failed on the gzip magic byte (found in
+     * co-review of #123). Any other encoding is refused.
+     */
+    private byte[] decoded(java.net.http.HttpResponse<byte[]> fetched) throws IOException {
+        String encoding = fetched.headers().firstValue("Content-Encoding").orElse("identity").trim().toLowerCase(Locale.ROOT);
+        InputStream in;
+        switch (encoding) {
+            case "identity", "" -> {
+                return fetched.body();
+            }
+            case "gzip", "x-gzip" -> in = new java.util.zip.GZIPInputStream(new java.io.ByteArrayInputStream(fetched.body()));
+            case "deflate" -> in = new java.util.zip.InflaterInputStream(new java.io.ByteArrayInputStream(fetched.body()));
+            default -> throw new IOException("unsupported Content-Encoding '" + encoding + "'");
+        }
+        long cap = options.maxBufferedBytes();
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        byte[] buf = new byte[8192];
+        try (in) {
+            int n;
+            while ((n = in.read(buf)) >= 0) {
+                if (out.size() + (long) n > cap) {
+                    throw new IOException("the decoded body exceeds " + cap + " bytes");
+                }
+                out.write(buf, 0, n);
+            }
+        }
+        return out.toByteArray();
     }
 
     /** A response body held in memory up to {@code cap} bytes; beyond it the fetch fails. */

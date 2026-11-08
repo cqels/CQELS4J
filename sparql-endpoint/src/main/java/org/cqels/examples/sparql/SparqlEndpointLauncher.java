@@ -222,20 +222,18 @@ public final class SparqlEndpointLauncher {
      * replaces the client and closes the one this method installed before. Nothing here is
      * JVM-wide.
      *
-     * @param timeoutSeconds the deadline; {@code 0} installs nothing
+     * @param timeoutSeconds the deadline; {@code 0} sets none — the client is installed all the
+     *                       same, since its refusal of XML answers does not depend on it
      * @return releases the client's connections (the client stays installed)
      */
     public static AutoCloseable limitOutboundRequests(Repository repository, int timeoutSeconds) {
-        if (timeoutSeconds <= 0) {
-            return () -> { };
-        }
         if (!(repository instanceof SailRepository sail)
                 || !(sail.getFederatedServiceResolver() instanceof org.eclipse.rdf4j.http.client.HttpClientDependent dependent)) {
             log.warn("SERVICE requests have no deadline: the repository ({}) exposes no federated-service HTTP client",
                     repository == null ? "null" : repository.getClass().getName());
             return () -> { };
         }
-        TimedServiceClient client = new TimedServiceClient((int) Math.min(Integer.MAX_VALUE, timeoutSeconds * 1000L));
+        TimedServiceClient client = new TimedServiceClient((int) Math.min(Integer.MAX_VALUE, Math.max(0, timeoutSeconds) * 1000L));
         dependent.setHttpClient(client);
         TimedServiceClient earlier = INSTALLED.put(dependent, client);
         if (earlier != null) {
