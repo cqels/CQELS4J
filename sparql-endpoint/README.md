@@ -316,7 +316,8 @@ requested upstream as cqels/claude#1387; the Jetty version here is pinned to the
   engine's own `SERVICE` calls get the deadline too (with `MAX_EXECUTION_SECONDS=0` it is
   installed with no deadline, for the format rule below); its connections are released when Jetty
   stops and reopen if it is used again. A `SERVICE` endpoint must answer SPARQL JSON, TSV or
-  CSV: SPARQL XML is refused, because RDF4J parses it with settings under which an XML entity
+  CSV, in exactly one `Content-Type` header (an allow-list, not a deny-list: an empty header
+  followed by an XML one got past a check of the first): SPARQL XML is refused, because RDF4J parses it with settings under which an XML entity
   read a local file into the results, and so is RDF4J's binary format, whose parser sizes arrays
   from counts in the stream (a 12-byte answer ran it out of heap, and the query then reported an
   empty result). Nothing is set JVM-wide.

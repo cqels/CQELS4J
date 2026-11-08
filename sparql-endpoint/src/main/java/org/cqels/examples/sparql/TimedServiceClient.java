@@ -70,10 +70,28 @@ final class TimedServiceClient extends CloseableHttpClient {
     static final String ACCEPT = "application/sparql-results+json, application/json;q=0.9, "
             + "text/tab-separated-values;q=0.7, text/csv;q=0.6, text/boolean;q=0.5";
 
-    /** Whether a SERVICE answer of this {@code Content-Type} is refused unread; see {@link #ACCEPT}. */
-    static boolean refused(String contentType) {
-        String t = contentType.toLowerCase(java.util.Locale.ROOT);
-        return t.contains("xml") || t.contains("x-binary-rdf-results-table");
+    /** The only media types a SERVICE answer may declare; see {@link #ACCEPT}. */
+    private static final java.util.Set<String> ALLOWED = java.util.Set.of("application/sparql-results+json",
+            "application/json", "text/tab-separated-values", "text/csv", "text/boolean");
+
+    /**
+     * Whether a SERVICE answer with these {@code Content-Type} headers is refused unread. An
+     * allow-list, over every header: refusing XML by reading the first header let
+     * {@code Content-Type:} (empty) followed by {@code Content-Type: application/sparql-results+xml}
+     * through, since RDF4J skips the empty one and parses the XML (found in co-review of #123).
+     * So there must be one header, naming one media type, and it must be on the list. No header at
+     * all is left to RDF4J, which refuses an answer it cannot type.
+     */
+    static boolean refused(org.apache.http.Header[] contentTypes) {
+        if (contentTypes.length == 0) {
+            return false;
+        }
+        if (contentTypes.length > 1) {
+            return true;
+        }
+        org.apache.http.HeaderElement[] elements = contentTypes[0].getElements();
+        return elements.length != 1
+                || !ALLOWED.contains(elements[0].getName().trim().toLowerCase(java.util.Locale.ROOT));
     }
 
     private final int timeoutMillis;
@@ -176,12 +194,13 @@ final class TimedServiceClient extends CloseableHttpClient {
             deadline.cancel(false);
             throw e;
         }
-        org.apache.http.Header type = response.getFirstHeader("Content-Type");
-        if (type != null && refused(type.getValue())) {
+        org.apache.http.Header[] types = response.getHeaders("Content-Type");
+        if (refused(types)) {
             deadline.cancel(false);
             response.close();
-            throw new IOException("the SERVICE endpoint answered " + type.getValue() + "; this endpoint accepts "
-                    + "SPARQL JSON, TSV or CSV results from SERVICE, not XML or binary");
+            throw new IOException("the SERVICE endpoint answered Content-Type " + java.util.Arrays.stream(types)
+                    .map(h -> "'" + h.getValue() + "'").collect(java.util.stream.Collectors.joining(", "))
+                    + "; this endpoint accepts one of " + ALLOWED + " from SERVICE");
         }
         // The body is read after execute returns, so the deadline stays armed until the
         // response is closed, and a read it cuts short reports a timeout too: an abort
