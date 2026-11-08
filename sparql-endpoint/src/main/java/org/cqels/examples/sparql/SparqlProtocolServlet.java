@@ -26,9 +26,17 @@ import org.eclipse.rdf4j.query.impl.SimpleDataset;
 import org.eclipse.rdf4j.query.algebra.Load;
 import org.eclipse.rdf4j.query.algebra.QueryModelNode;
 import org.eclipse.rdf4j.query.algebra.Service;
-import org.eclipse.rdf4j.query.algebra.StatementPattern;
 import org.eclipse.rdf4j.query.algebra.helpers.AbstractQueryModelVisitor;
 import org.eclipse.rdf4j.query.parser.ParsedQuery;
+import org.eclipse.rdf4j.query.parser.sparql.BaseDeclProcessor;
+import org.eclipse.rdf4j.query.parser.sparql.PrefixDeclProcessor;
+import org.eclipse.rdf4j.query.parser.sparql.ast.ASTGraphGraphPattern;
+import org.eclipse.rdf4j.query.parser.sparql.ast.ASTIRI;
+import org.eclipse.rdf4j.query.parser.sparql.ast.ASTQueryContainer;
+import org.eclipse.rdf4j.query.parser.sparql.ast.Node;
+import org.eclipse.rdf4j.query.parser.sparql.ast.ParseException;
+import org.eclipse.rdf4j.query.parser.sparql.ast.SyntaxTreeBuilder;
+import org.eclipse.rdf4j.query.parser.sparql.ast.TokenMgrError;
 import org.eclipse.rdf4j.query.parser.ParsedUpdate;
 import org.eclipse.rdf4j.query.parser.QueryParserUtil;
 import org.eclipse.rdf4j.query.resultio.BooleanQueryResultFormat;
@@ -279,7 +287,7 @@ public final class SparqlProtocolServlet extends HttpServlet {
             // The protocol parameters replace the query's own FROM / FROM NAMED (§2.1.4), and
             // setDataset below makes RDF4J do exactly that, so they decide the routing too.
             Dataset effective = dataset != null ? dataset : parsed.getDataset();
-            if (names(effective, METADATA_GRAPH) || inGraphPattern(parsed.getTupleExpr(), METADATA_GRAPH)) {
+            if (names(effective, METADATA_GRAPH) || inGraphClause(queryString, base, METADATA_GRAPH)) {
                 if (metadata == null) {
                     fail(resp, HttpServletResponse.SC_FORBIDDEN, "the metadata graph <" + METADATA_GRAPH
                             + "> is not enabled on this endpoint (CQELS_SPARQL_METADATA_ENABLED=true enables it)");
@@ -602,18 +610,38 @@ public final class SparqlProtocolServlet extends HttpServlet {
         return all.equals(Set.of(g));
     }
 
-    /** Whether a {@code GRAPH <g>} pattern anywhere in {@code node} names {@code g} as a constant. */
-    static boolean inGraphPattern(QueryModelNode node, IRI g) {
-        boolean[] found = {false};
-        node.visit(new AbstractQueryModelVisitor<RuntimeException>() {
-            @Override
-            public void meet(StatementPattern sp) {
-                if (sp.getContextVar() != null && g.equals(sp.getContextVar().getValue())) {
-                    found[0] = true;
-                }
+    /**
+     * Whether a {@code GRAPH <g> { … }} clause anywhere in the query names {@code g}, after its
+     * prefixes and base are resolved — {@code m:metadata} and {@code <metadata>} under a matching
+     * {@code BASE} count. Read from RDF4J's syntax tree rather than the algebra: the algebra
+     * keeps the graph only on statement patterns, so a clause that reads no triples
+     * ({@code GRAPH <g> { BIND(1 AS ?x) }}, {@code GRAPH <g> { }}, a {@code VALUES} block) leaves
+     * no trace there — found in co-review of #121, where such a query answered 200 from the
+     * store instead of the 400 below. Called only after the query has parsed.
+     */
+    static boolean inGraphClause(String query, String base, IRI g) {
+        try {
+            ASTQueryContainer tree = SyntaxTreeBuilder.parseQuery(query);
+            // The same two steps RDF4J's own parser takes before building the algebra.
+            BaseDeclProcessor.process(tree, base);
+            PrefixDeclProcessor.process(tree, Map.of());
+            return graphClauseNames(tree, g.stringValue());
+        } catch (ParseException | TokenMgrError | MalformedQueryException e) {
+            return false;   // unreachable for a query that parsed; the parse already answered for it
+        }
+    }
+
+    private static boolean graphClauseNames(Node node, String iri) {
+        if (node instanceof ASTGraphGraphPattern && node.jjtGetNumChildren() > 0
+                && node.jjtGetChild(0) instanceof ASTIRI name && iri.equals(name.getValue())) {
+            return true;
+        }
+        for (int i = 0; i < node.jjtGetNumChildren(); i++) {
+            if (graphClauseNames(node.jjtGetChild(i), iri)) {
+                return true;
             }
-        });
-        return found[0];
+        }
+        return false;
     }
 
     private static void federationDisabled(HttpServletResponse resp) throws IOException {

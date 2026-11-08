@@ -58,6 +58,8 @@ import java.util.function.Supplier;
  * A stream whose name is an absolute IRI (as CQELS-QL's {@code STREAM <…>} uses them) is that
  * IRI; any other name becomes {@code cqels://streams/<name>}, percent-encoded — the prefix
  * {@code cqels-mcp} gives its streams — and {@code cqe:name} always carries the name as given.
+ * When that generated IRI is itself another stream's name, the stream gets a blank node instead
+ * ({@link #streamNode}).
  */
 public final class EngineMetadata {
 
@@ -99,13 +101,14 @@ public final class EngineMetadata {
         // getStreamNames, not liveStreamCatalog: the catalog is the persistence journal's view and
         // is empty on an engine without persistence (measured on 2.0.0-alpha.22). Sorted, so the
         // graph reads the same way twice. A stream removed between the two calls is skipped.
-        for (String name : new TreeSet<>(engine.getStreamNames())) {
+        TreeSet<String> names = new TreeSet<>(engine.getStreamNames());
+        for (String name : names) {
             DataStream stream = engine.getStream(name);
             if (stream == null) {
                 continue;
             }
             Map<String, String> attributes = stream.attributes();
-            IRI s = streamIri(name);
+            Resource s = streamNode(name, names);
             add(out, e, term("stream"), s, g);
             add(out, s, RDF.TYPE, term("Stream"), g);
             add(out, s, term("name"), VF.createLiteral(name), g);
@@ -117,6 +120,18 @@ public final class EngineMetadata {
             });
         }
         return out;
+    }
+
+    /**
+     * {@link #streamIri}, unless that IRI is also the name of another stream: then a blank node.
+     * Streams {@code Telemetry} and {@code cqels://streams/Telemetry} are two streams, and one
+     * node for both would give each the other's attributes — found in co-review of #121. Only a
+     * generated IRI can collide (the encoding is injective, and two absolute names that are equal
+     * are one stream), so the absolute name keeps its IRI and the other gets the blank node.
+     */
+    static Resource streamNode(String name, java.util.Set<String> allNames) {
+        IRI iri = streamIri(name);
+        return !iri.stringValue().equals(name) && allNames.contains(iri.stringValue()) ? VF.createBNode() : iri;
     }
 
     static IRI streamIri(String name) {

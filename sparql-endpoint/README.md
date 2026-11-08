@@ -186,7 +186,7 @@ WHERE {
 | Node | Triples |
 |---|---|
 | `<cqels://endpoint/engine>` | `a cqe:Engine`; `cqe:engineId`, `cqe:running`, `cqe:registeredQueries` (a count), `cqe:persistence` (`NO_PERSISTENCE`, `HEALTHY`, …), `cqe:snapshotAt`; with a persistence journal also `cqe:journalId`, `cqe:durablePosition`, `cqe:appliedPosition`; one `cqe:stream` per live stream |
-| each stream | `a cqe:Stream`; `cqe:name` (the name as given); `cqe:attribute [ cqe:key …; cqe:value … ]` per attribute. The node is the name itself when that is an absolute IRI, otherwise `cqels://streams/<name>` percent-encoded (the prefix `cqels-mcp` uses) |
+| each stream | `a cqe:Stream`; `cqe:name` (the name as given); `cqe:attribute [ cqe:key …; cqe:value … ]` per attribute. The node is the name itself when that is an absolute IRI, otherwise `cqels://streams/<name>` percent-encoded (the prefix `cqels-mcp` uses) — or a blank node, if that IRI is itself another stream's name |
 
 - **It is a snapshot, built for each query that names it.** Nothing is cached, so a stream
   created or removed shows in the next query.

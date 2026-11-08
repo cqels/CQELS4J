@@ -706,6 +706,20 @@ class SparqlProtocolServletTest {
     }
 
     @Test
+    void streamsWhoseNodesWouldCollideStayApart() throws Exception {
+        // found in co-review of #121: both mapped to <cqels://streams/Telemetry>, and each
+        // stream then appeared to carry the other's unit
+        try (Endpoint e = withMetadata()) {
+            e.engine().createStream("Telemetry", java.util.Map.of("unit", "speed"));
+            e.engine().createStream("cqels://streams/Telemetry", java.util.Map.of("unit", "temperature"));
+            String rows = csv(e.url(), CQE + "SELECT ?name ?unit FROM <" + META + "> WHERE { "
+                    + "?s cqe:name ?name ; cqe:attribute [ cqe:key \"unit\" ; cqe:value ?unit ] } ORDER BY ?name ?unit");
+            assertEquals("name,unit\r\nTelemetry,speed\r\ncqels://streams/Telemetry,temperature\r\n", rows);
+            assertTrue(ask(e.url(), CQE + "ASK FROM <" + META + "> { <cqels://streams/Telemetry> cqe:name \"cqels://streams/Telemetry\" }"));
+        }
+    }
+
+    @Test
     void metadataGraphCarriesTheEngineStatus() throws Exception {
         try (Endpoint e = withMetadata()) {
             e.engine().createStream("S");
@@ -756,6 +770,18 @@ class SparqlProtocolServletTest {
             var unnamed = get(e.url(), "SELECT * WHERE { GRAPH <" + META + "> { ?s ?p ?o } }", null);
             assertEquals(400, unnamed.statusCode(), unnamed.body());
             assertTrue(unnamed.body().contains("FROM NAMED"), unnamed.body());
+            // RDF4J's algebra keeps no trace of a GRAPH clause that reads no triples, so the
+            // check reads the syntax tree: found in co-review of #121, where these answered 200
+            for (String q : List.of(
+                    "ASK { GRAPH <" + META + "> { BIND(1 AS ?x) } }",
+                    "ASK { GRAPH <" + META + "> { } }",
+                    "SELECT * WHERE { ?v <urn:ex:depot> ?d GRAPH <" + META + "> { VALUES ?x { 1 } } }",
+                    "PREFIX m: <cqels://endpoint/> ASK { GRAPH m:metadata { BIND(1 AS ?x) } }",
+                    "BASE <cqels://endpoint/> ASK { GRAPH <metadata> { BIND(1 AS ?x) } }",
+                    "ASK { FILTER EXISTS { GRAPH <" + META + "> { BIND(1 AS ?x) } } }")) {
+                var r = get(e.url(), q, null);
+                assertEquals(400, r.statusCode(), q + " -> " + r.body());
+            }
         }
     }
 
