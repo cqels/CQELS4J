@@ -185,11 +185,22 @@ public final class SparqlProtocolServlet extends HttpServlet {
 
     @Override
     public void init() {
-        uploadWatch = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+        var watch = new java.util.concurrent.ScheduledThreadPoolExecutor(1, r -> {
             Thread t = new Thread(r, "sparql-upload-deadline");
             t.setDaemon(true);
             return t;
         });
+        // A cancelled deadline leaves the queue at once; by default it stayed for the whole
+        // deadline, so 100 finished uploads under a 24 h limit kept 100 tasks (found in
+        // co-review of #123).
+        watch.setRemoveOnCancelPolicy(true);
+        uploadWatch = watch;
+    }
+
+    /** Upload deadlines armed and neither fired nor cancelled; for tests. */
+    int armedUploadDeadlines() {
+        var watch = uploadWatch;
+        return watch instanceof java.util.concurrent.ScheduledThreadPoolExecutor pool ? pool.getQueue().size() : 0;
     }
 
     @Override
@@ -817,14 +828,12 @@ public final class SparqlProtocolServlet extends HttpServlet {
         }
         List<RDFFormat> formats = new ArrayList<>();
         for (Part part : parts) {
-            Optional<RDFFormat> format = org.eclipse.rdf4j.rio.Rio.getParserFormatForMIMEType(part.type())
-                    .or(() -> org.eclipse.rdf4j.rio.Rio.getParserFormatForFileName(part.name()));
-            if (format.isEmpty()) {
+            if (part.format().isEmpty()) {
                 loadFailed(resp, load, HttpServletResponse.SC_BAD_GATEWAY, "LOAD <" + source + ">: no RDF format for "
-                        + (part.type().isEmpty() ? "" : "Content-Type '" + part.type() + "' or ") + "'" + part.name() + "'");
+                        + "'" + part.name() + "'" + (type.isEmpty() ? "" : " (Content-Type '" + type + "')"));
                 return;
             }
-            formats.add(format.get());
+            formats.add(part.format().get());
         }
         ContextLoader contexts = new ContextLoader(deadline);
         boolean committed;
@@ -938,8 +947,8 @@ public final class SparqlProtocolServlet extends HttpServlet {
         }
     }
 
-    /** One RDF document of a LOAD source: its name (for the format), media type (may be empty), bytes. */
-    record Part(String name, String type, byte[] bytes) { }
+    /** One RDF document of a LOAD source: its name, its format (if any could be told), its bytes. */
+    record Part(String name, Optional<RDFFormat> format, byte[] bytes) { }
 
     /**
      * A LOAD source as RDF4J's own loader read it: gzip unpacked and zip archives opened, one part
@@ -964,12 +973,28 @@ public final class SparqlProtocolServlet extends HttpServlet {
 
     private static void unpack(String name, String type, byte[] bytes, long[] budget, int depth, List<Part> into)
             throws IOException {
+        unpack(name, type, Optional.empty(), bytes, budget, depth, into);
+    }
+
+    /**
+     * {@code inherited} is the format the enclosing source was known to have: a gzipped body
+     * labelled {@code text/turtle} with no extension is Turtle once unpacked, and a zip entry
+     * named {@code part} in {@code archive.ttl.zip} is Turtle too — as RDF4J's loader read them
+     * (found in co-review of #123). A media type travels through gzip, which packs one
+     * document; not into a zip, whose entries name themselves.
+     */
+    private static void unpack(String name, String type, Optional<RDFFormat> inherited, byte[] bytes, long[] budget,
+                               int depth, List<Part> into) throws IOException {
+        boolean packedType = type.equals("application/gzip") || type.equals("application/x-gzip")
+                || type.equals("application/zip") || type.equals("application/octet-stream");
+        String plainType = packedType ? "" : type;
+        Optional<RDFFormat> here = org.eclipse.rdf4j.rio.Rio.getParserFormatForMIMEType(plainType)
+                .or(() -> org.eclipse.rdf4j.rio.Rio.getParserFormatForFileName(unpackedName(name)))
+                .or(() -> inherited);
         boolean gzip = bytes.length >= 2 && (bytes[0] & 0xff) == 0x1f && (bytes[1] & 0xff) == 0x8b;
         boolean zip = bytes.length >= 4 && bytes[0] == 'P' && bytes[1] == 'K' && bytes[2] == 3 && bytes[3] == 4;
         if (!gzip && !zip) {
-            boolean packedType = type.equals("application/gzip") || type.equals("application/x-gzip")
-                    || type.equals("application/zip") || type.equals("application/octet-stream");
-            into.add(new Part(unpackedName(name), packedType ? "" : type, bytes));
+            into.add(new Part(name, here, bytes));
             return;
         }
         if (depth >= 4) {
@@ -977,14 +1002,14 @@ public final class SparqlProtocolServlet extends HttpServlet {
         }
         if (gzip) {
             try (var in = new java.util.zip.GZIPInputStream(new java.io.ByteArrayInputStream(bytes))) {
-                unpack(unpackedName(name), "", readCapped(in, budget), budget, depth + 1, into);
+                unpack(unpackedName(name), plainType, here, readCapped(in, budget), budget, depth + 1, into);
             }
             return;
         }
         try (var in = new java.util.zip.ZipInputStream(new java.io.ByteArrayInputStream(bytes))) {
             for (var entry = in.getNextEntry(); entry != null; entry = in.getNextEntry()) {
                 if (!entry.isDirectory()) {
-                    unpack(entry.getName(), "", readCapped(in, budget), budget, depth + 1, into);
+                    unpack(entry.getName(), "", here, readCapped(in, budget), budget, depth + 1, into);
                 }
             }
         }
