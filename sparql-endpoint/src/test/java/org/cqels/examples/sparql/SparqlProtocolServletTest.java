@@ -1150,6 +1150,52 @@ class SparqlProtocolServletTest {
         }
     }
 
+    static byte[] gzip(String text) throws IOException {
+        var bytes = new java.io.ByteArrayOutputStream();
+        try (var gz = new java.util.zip.GZIPOutputStream(bytes)) {
+            gz.write(text.getBytes(StandardCharsets.UTF_8));
+        }
+        return bytes.toByteArray();
+    }
+
+    static com.sun.net.httpserver.HttpHandler bytes(byte[] body, String... headers) {
+        return ex -> {
+            for (int i = 0; i + 1 < headers.length; i += 2) {
+                ex.getResponseHeaders().add(headers[i], headers[i + 1]);
+            }
+            ex.sendResponseHeaders(200, body.length);
+            ex.getResponseBody().write(body);
+            ex.close();
+        };
+    }
+
+    /**
+     * Packing is told by the bytes, not the name: a .ttl.gz whose Content-Encoding the client
+     * already undid was unpacked twice, and a gzipped file inside a zip reached the parser packed.
+     */
+    @Test
+    void loadUnpacksByContentNotByName() throws Exception {
+        var zipped = new java.io.ByteArrayOutputStream();
+        try (var zip = new java.util.zip.ZipOutputStream(zipped)) {
+            zip.putNextEntry(new java.util.zip.ZipEntry("data.ttl.gz"));
+            zip.write(gzip("<urn:ex:nested> <urn:ex:p> \"inner\" .\n"));
+        }
+        var remote = serve(java.util.Map.of(
+                "/encoded.ttl.gz", bytes(gzip("<urn:ex:encoded> <urn:ex:p> \"once\" .\n"),
+                        "Content-Type", "text/turtle", "Content-Encoding", "gzip"),
+                "/archive.ttl.zip", bytes(zipped.toByteArray(), "Content-Type", "application/zip")));
+        try (Endpoint ep = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true).withUpdateEnabled(true), 0)) {
+            var once = post(ep.url(), "application/sparql-update", "LOAD <" + base(remote) + "/encoded.ttl.gz>", null);
+            assertEquals(204, once.statusCode(), once.body());
+            assertTrue(ask(ep.url(), "ASK { <urn:ex:encoded> ?p \"once\" }"));
+            var nested = post(ep.url(), "application/sparql-update", "LOAD <" + base(remote) + "/archive.ttl.zip>", null);
+            assertEquals(204, nested.statusCode(), nested.body());
+            assertTrue(ask(ep.url(), "ASK { <urn:ex:nested> ?p \"inner\" }"));
+        } finally {
+            remote.stop(0);
+        }
+    }
+
     /**
      * What a LOAD's parser fetches on its own is held to the same rules: a JSON-LD
      * {@code @context} read {@code file:///…} and waited past the deadline through jsonld-java's
