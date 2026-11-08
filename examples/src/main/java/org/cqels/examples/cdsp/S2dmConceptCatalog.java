@@ -31,7 +31,7 @@ import org.cqels.examples.Fleet;
  * every consumer follows — no query is edited.
  *
  * <p><strong>Against current s2dm output, both queries need adjusting.</strong> The current
- * command, {@code s2dm export rdf} (measured on s2dm commit {@code d97b449}), writes two files:
+ * command, {@code s2dm export rdf} (measured on s2dm commit {@code d97b449}), writes two graphs (by default each in two formats):
  * <ul>
  *   <li>{@code skos.ttl} gives {@code skos:definition} to types and enums only, never to fields.
  *       The first query requires {@code ?field skos:definition}, so it returns no rows for an

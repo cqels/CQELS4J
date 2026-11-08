@@ -50,12 +50,16 @@ What it took to get there, so the next person does not repeat it:
    merges schema files or exports VSPEC (the two cases tried). The lockfile pins graphql-core 3.2.6, and with it the
    crash is gone. The Dockerfile installs with `uv sync --frozen`. The RDF export itself gave
    triple-for-triple identical output under both installs.
-2. **Only the trailer's pre-merged schema exports.** At this commit:
-   - the modular trailer and seat schemas fail with `Unknown directive '@instanceTag'` and
+2. **Not every example schema exports.** Of the s2dm schemas tried at this commit:
+   - `examples/trailer/full_schema.graphl` (the one used here) and
+     `docs-gen/static/examples/seat-to-vspec/full_sdl.graphql` export;
+   - the modular `examples/trailer/modular_trailer_example/` and
+     `examples/seat-to-vspec/modular_seat_spec/` fail with `Unknown directive '@instanceTag'` and
      `Unknown directive '@metadata'`: they use s2dm's directives without declaring them;
-   - the seat example's merged schema in the documentation site has a GraphQL syntax error;
-   - the small `graphql-to-skos` and `schema-rdf` samples fail with `Unknown type 'VelocityUnit'`
-     and `Unknown directive '@instanceTag'`.
+   - `docs-gen/static/examples/seat-capabilities/full_schema.graphql` has a GraphQL syntax error
+     (an unquoted description at line 69);
+   - `examples/graphql-to-skos/sample.graphql` and `examples/schema-rdf/sample.graphql` fail with
+     `Unknown type 'VelocityUnit'` and `Unknown directive '@instanceTag'`.
 3. **The exporters that carry units and ranges reject the trailer schema.** Reading the s2dm
    source: the VSPEC exporter writes units (through its own symbol table), `@range` min/max and
    instances; the LinkML exporter writes units and `@range` min/max; the JSON Schema exporter
@@ -115,7 +119,7 @@ That encoding is the demo's own: s2dm defines the model, not an RDF form for ins
 | Query | What it reads from the model | Measured result |
 |---|---|---|
 | `PlacedReading` | the field's owning type, the slot that type fills, the slot's owner, and the owning type's definition | a tire pressure reading is placed as `VehicleTrailerWheel.tire` → `TrailerWheelTire`, "Tire signals for wheel."; a brake reading as `VehicleTrailerWheel.brake` → `TrailerWheelBrake` |
-| `BooleanAlarm` | which fields return `s2dm:Boolean` | `isPressureLow = true` and `isBrakesWorn = true` raise alarms; `isBrakesWorn = false` and numeric readings do not; none of the three boolean fields is named in the query |
+| `BooleanAlarm` | which fields return `s2dm:Boolean` | `isPressureLow = true` and `isBrakesWorn = true` raise alarms; `isBrakesWorn = false` and numeric readings do not; none of the three boolean fields is named in the query. This treats every `true` boolean as an alarm, which holds for this schema's three boolean fields; a boolean where `true` is good news (an `isHealthy`) would raise a false alarm |
 | `LowestPressure` | nothing (instance tags only) | lowest tire pressure per trailer and axle over 10 s |
 
 One reading is deliberately wrong: `TrailerWheelTire.isPresureLow = true`, a misspelled field. It

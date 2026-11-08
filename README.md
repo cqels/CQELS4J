@@ -170,7 +170,7 @@ electric-vehicle fleet / vehicle-to-grid (V2G) scenario.)
 **S2DM model from a real export** (`org.cqels.examples.s2dm`)
 | Demo | Feature | Scenario |
 |------|---------|----------|
-| [`TrailerHealthMonitor`](examples/src/main/java/org/cqels/examples/s2dm/TrailerHealthMonitor.java) | Stream–static joins over the RDF that COVESA s2dm's own exporter wrote (`data_graph.ttl` + `skos.ttl`), plus a windowed `GROUP BY` over instance tags | Trailer wheel telemetry: each reading is placed in the model (wheel → tire or brake, with its description), every boolean alarm is caught without the query naming one, and the lowest tire pressure is tracked per trailer and axle. A misspelled field matches nothing, because the model does not contain it. |
+| [`TrailerHealthMonitor`](examples/src/main/java/org/cqels/examples/s2dm/TrailerHealthMonitor.java) | Stream–static joins over the RDF that COVESA s2dm's own exporter wrote (`data_graph.ttl` + `skos.ttl`), plus a windowed `GROUP BY` over instance tags | Trailer wheel telemetry: each reading is placed in the model (wheel → tire or brake, with its description), every boolean alarm is caught without the query naming one (all three boolean fields in this schema are fault flags), and the lowest tire pressure is tracked per trailer and axle. A misspelled field matches nothing, because the model does not contain it. |
 
 **Query dialects**
 | Demo | Feature |

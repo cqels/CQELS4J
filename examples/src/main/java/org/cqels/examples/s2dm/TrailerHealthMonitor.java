@@ -64,7 +64,10 @@ import org.eclipse.rdf4j.rio.RDFFormat;
  *       returns {@code s2dm:Boolean} and whose value is {@code true}. On this schema that is
  *       {@code isPressureLow}, {@code isBrakesWorn} and {@code isFluidLevelLow}; none of the
  *       three appears in the query text. A boolean field added to the schema is covered after the
- *       next export, with no query edit.</li>
+ *       next export, with no query edit. That is only right while every boolean in the model is a
+ *       fault flag, as all three here are: a field where {@code true} is good news, such as an
+ *       {@code isHealthy}, would raise a false alarm, and the model has no marking that tells the
+ *       two kinds apart.</li>
  *   <li><em>Lowest tire pressure per trailer and axle.</em> A windowed {@code GROUP BY} over the
  *       instance tags, restricted to the tire-pressure field. It prints its current groups on
  *       every arrival, including readings it filters out, so the same {@code [lowest]} line
@@ -147,7 +150,8 @@ public class TrailerHealthMonitor {
                     """;
             engine.registerCqelsQuery(placed, row -> System.out.println("  [placed] " + brief(row)));
 
-            // 2 — every boolean alarm: the field's output type is read from the model.
+            // 2 — every true boolean is an alarm (all three in this schema are fault flags); the
+            // field's output type is read from the model.
             String alarms = PREFIXES + """
                     REGISTER QUERY BooleanAlarm AS
                     SELECT ?vehicle ?trailer ?axle ?side ?nth ?field

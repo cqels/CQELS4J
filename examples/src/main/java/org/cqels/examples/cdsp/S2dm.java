@@ -36,7 +36,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * ({@code s2dm:ObjectType}, {@code s2dm:Field}) is no longer there, because it moved to the
  * separate {@code data_graph.ttl} with the rest of the schema's structure; and only types and
  * enums get a {@code skos:definition}, never fields. So the seeded graph corresponds to the
- * older exporter, or to both current files loaded together minus the field definitions.
+ * older exporter only.
  * {@code org.cqels.examples.s2dm.TrailerHealthMonitor} loads both files from a real export.
  * The concepts seeded in {@link #seedConceptGraph} follow the <em>shape</em> the exporter emits —
  * the typing, labelling and collection structure read off its {@code skos.py} — so the demos
