@@ -1403,10 +1403,18 @@ class SparqlProtocolServletTest {
                         "Content-Type", "application/x-binary-rdf-results-table"),
                 // an empty Content-Type first: RDF4J skips it and parses the XML that follows
                 "/twotypes", bytes(xml.getBytes(StandardCharsets.UTF_8),
-                        "Content-Type", "", "Content-Type", "application/sparql-results+xml")));
+                        "Content-Type", "", "Content-Type", "application/sparql-results+xml"),
+                "/empty", ex -> {   // 204: no entity, which RDF4J never closes
+                    ex.getResponseHeaders().add("Content-Type", "application/sparql-results+json");
+                    ex.sendResponseHeaders(204, -1);
+                    ex.close();
+                }));
         try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true), 0)) {
             for (int i = 0; i < 20; i++) {
                 assertEquals(200, get(fed.url(), "SELECT * WHERE { SERVICE <" + base(remote) + "/json> { ?s ?p ?o } }", null).statusCode());
+            }
+            for (int i = 0; i < 3; i++) {   // answers without a body too
+                get(fed.url(), "SELECT * WHERE { SERVICE <" + base(remote) + "/empty> { ?s ?p ?o } }", null);
             }
             assertEquals(0, TimedServiceClient.armedDeadlines(), "finished SERVICE calls left deadlines armed");
             // and finished uploads leave no upload deadline armed (every POST arms one)
