@@ -154,13 +154,13 @@ public final class SparqlProtocolServlet extends HttpServlet {
     private final transient Supplier<Repository> repository;
     private final EndpointOptions options;
     private final transient Semaphore slots;
-    /** Ends uploads that outlive {@code maxUploadSeconds}; see {@link #readBody}. */
-    private final transient java.util.concurrent.ScheduledExecutorService uploadWatch =
-            java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
-                Thread t = new Thread(r, "sparql-upload-deadline");
-                t.setDaemon(true);
-                return t;
-            });
+    /**
+     * Ends uploads that outlive {@code maxUploadSeconds}; see {@link #readBody}. Made in
+     * {@link #init()} and shut down in {@link #destroy()}: Jetty reuses the servlet instance
+     * across a stop and start, and an executor made once in the constructor stayed shut down
+     * after the first stop, failing every POST (found in co-review of #123).
+     */
+    private transient volatile java.util.concurrent.ScheduledExecutorService uploadWatch;
     /** Fetches LOAD sources; built on first use. See {@link #executeLoad}. */
     private transient volatile java.net.http.HttpClient loadClient;
     private final transient Supplier<? extends Collection<Statement>> metadata;
@@ -184,8 +184,21 @@ public final class SparqlProtocolServlet extends HttpServlet {
     }
 
     @Override
+    public void init() {
+        uploadWatch = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "sparql-upload-deadline");
+            t.setDaemon(true);
+            return t;
+        });
+    }
+
+    @Override
     public void destroy() {
-        uploadWatch.shutdownNow();
+        java.util.concurrent.ScheduledExecutorService watch = uploadWatch;
+        uploadWatch = null;
+        if (watch != null) {
+            watch.shutdownNow();
+        }
         super.destroy();
     }
 
@@ -510,9 +523,11 @@ public final class SparqlProtocolServlet extends HttpServlet {
                     break;
                 }
                 BindingSet row = result.next();
-                long size = 0;
+                // a row costs something even with nothing bound: 65,536 empty rows passed a
+                // 1 KB cap as zero bytes (found in co-review of #123)
+                long size = 64;
                 for (var binding : row) {
-                    size += estimate(binding.getValue());
+                    size += 32 + estimate(binding.getValue());
                 }
                 if (bytes + size > options.maxBufferedBytes()) {
                     truncated = true;
@@ -557,7 +572,8 @@ public final class SparqlProtocolServlet extends HttpServlet {
                     break;
                 }
                 Statement st = result.next();
-                long size = estimate(st.getSubject()) + estimate(st.getPredicate()) + estimate(st.getObject());
+                long size = 64 + estimate(st.getSubject()) + estimate(st.getPredicate()) + estimate(st.getObject())
+                        + estimate(st.getContext());
                 if (bytes + size > options.maxBufferedBytes()) {
                     truncated = true;
                     break;
@@ -727,12 +743,14 @@ public final class SparqlProtocolServlet extends HttpServlet {
         String source = load.getSource().getValue().stringValue();
         org.eclipse.rdf4j.model.Resource graph = load.getGraph() == null ? null
                 : (org.eclipse.rdf4j.model.Resource) load.getGraph().getValue();
+        // One deadline for everything the LOAD fetches: the source and any JSON-LD context.
+        long deadline = System.nanoTime() + options.maxExecutionSeconds() * 1_000_000_000L;
+        String timedOut = "LOAD <" + source + "> did not finish within " + options.maxExecutionSeconds() + " s";
         java.net.http.HttpResponse<byte[]> fetched;
         try {
-            fetched = fetch(source);
+            fetched = fetch(source, RDF_ACCEPT, deadline);
         } catch (java.util.concurrent.TimeoutException e) {
-            loadFailed(resp, load, HttpServletResponse.SC_GATEWAY_TIMEOUT, "LOAD <" + source + "> did not answer within "
-                    + options.maxExecutionSeconds() + " s");
+            loadFailed(resp, load, HttpServletResponse.SC_GATEWAY_TIMEOUT, timedOut);
             return;
         } catch (IOException | IllegalArgumentException e) {
             loadFailed(resp, load, HttpServletResponse.SC_BAD_GATEWAY, "LOAD <" + source + "> failed: " + e.getMessage());
@@ -755,6 +773,7 @@ public final class SparqlProtocolServlet extends HttpServlet {
                     + "Content-Type '" + type + "' or the file name");
             return;
         }
+        ContextLoader contexts = new ContextLoader(deadline);
         boolean committed;
         try {
             committed = commitUnlessReserved(resp, conn, () -> {
@@ -763,6 +782,7 @@ public final class SparqlProtocolServlet extends HttpServlet {
                     inserter.enforceContext(graph);
                 }
                 org.eclipse.rdf4j.rio.RDFParser parser = org.eclipse.rdf4j.rio.Rio.createParser(format.get());
+                restrict(parser.getParserConfig(), contexts);
                 parser.setRDFHandler(inserter);
                 try {
                     parser.parse(new java.io.ByteArrayInputStream(fetched.body()), fetched.uri().toString());
@@ -771,11 +791,70 @@ public final class SparqlProtocolServlet extends HttpServlet {
                 }
             });
         } catch (org.eclipse.rdf4j.rio.RDFParseException | org.eclipse.rdf4j.rio.RDFHandlerException e) {
-            loadFailed(resp, load, HttpServletResponse.SC_BAD_GATEWAY, "LOAD <" + source + ">: " + e.getMessage());
+            if (contexts.timedOut) {
+                loadFailed(resp, load, HttpServletResponse.SC_GATEWAY_TIMEOUT, timedOut);
+            } else {
+                loadFailed(resp, load, HttpServletResponse.SC_BAD_GATEWAY, "LOAD <" + source + ">: " + e.getMessage());
+            }
             return;
         }
         if (committed) {
             resp.setStatus(HttpServletResponse.SC_NO_CONTENT);
+        }
+    }
+
+    private static final String RDF_ACCEPT = String.join(", ", RDFFormat.getAcceptParams(
+            org.eclipse.rdf4j.rio.RDFParserRegistry.getInstance().getKeys(), false, null));
+
+    /**
+     * What a LOAD's parser may reach beyond the bytes it was given — nothing but what
+     * {@link #fetch} allows. Found in co-review of #123: a JSON-LD document's {@code @context}
+     * URL is fetched by jsonld-java's own loader, which read {@code file:///…} and waited past
+     * the deadline. RDF/XML and TriX get no doctype and no external entities, so an entity
+     * naming a local file cannot pull it in either.
+     */
+    private static void restrict(org.eclipse.rdf4j.rio.ParserConfig config, ContextLoader contexts) {
+        config.set(org.eclipse.rdf4j.rio.helpers.JSONLDSettings.DOCUMENT_LOADER, contexts);
+        config.set(org.eclipse.rdf4j.rio.helpers.XMLParserSettings.SECURE_PROCESSING, true);
+        config.set(org.eclipse.rdf4j.rio.helpers.XMLParserSettings.DISALLOW_DOCTYPE_DECL, true);
+        config.set(org.eclipse.rdf4j.rio.helpers.XMLParserSettings.LOAD_EXTERNAL_DTD, false);
+        config.set(org.eclipse.rdf4j.rio.helpers.XMLParserSettings.EXTERNAL_GENERAL_ENTITIES, false);
+        config.set(org.eclipse.rdf4j.rio.helpers.XMLParserSettings.EXTERNAL_PARAMETER_ENTITIES, false);
+    }
+
+    /** Remote JSON-LD contexts, fetched like the LOAD source: http(s) only, capped, within the same deadline. */
+    private final class ContextLoader extends com.github.jsonldjava.core.DocumentLoader {
+        private final long deadline;
+        volatile boolean timedOut;
+
+        ContextLoader(long deadline) {
+            this.deadline = deadline;
+        }
+
+        @Override
+        public com.github.jsonldjava.core.RemoteDocument loadDocument(String url)
+                throws com.github.jsonldjava.core.JsonLdError {
+            var refused = com.github.jsonldjava.core.JsonLdError.Error.LOADING_REMOTE_CONTEXT_FAILED;
+            String lower = url == null ? "" : url.toLowerCase(Locale.ROOT);
+            if (!lower.startsWith("http://") && !lower.startsWith("https://")) {
+                throw new com.github.jsonldjava.core.JsonLdError(refused, "only http and https contexts: " + url);
+            }
+            try {
+                var fetched = fetch(url, "application/ld+json, application/json;q=0.9", deadline);
+                if (fetched.statusCode() / 100 != 2) {
+                    throw new com.github.jsonldjava.core.JsonLdError(refused, url + " answered HTTP " + fetched.statusCode());
+                }
+                return new com.github.jsonldjava.core.RemoteDocument(url,
+                        com.github.jsonldjava.utils.JsonUtils.fromInputStream(new java.io.ByteArrayInputStream(fetched.body())));
+            } catch (java.util.concurrent.TimeoutException e) {
+                timedOut = true;
+                throw new com.github.jsonldjava.core.JsonLdError(refused, url + " did not answer in time");
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new com.github.jsonldjava.core.JsonLdError(refused, url + ": interrupted");
+            } catch (IOException | IllegalArgumentException e) {
+                throw new com.github.jsonldjava.core.JsonLdError(refused, url + ": " + e.getMessage());
+            }
         }
     }
 
@@ -787,8 +866,12 @@ public final class SparqlProtocolServlet extends HttpServlet {
         fail(resp, status, message);
     }
 
-    /** GETs {@code source} within the execution limit, holding at most {@code maxBufferedBytes} of body. */
-    private java.net.http.HttpResponse<byte[]> fetch(String source)
+    /**
+     * GETs {@code url} by {@code deadline} (a {@link System#nanoTime} instant, ignored when the
+     * execution limit is 0), following redirects only to http(s), holding at most
+     * {@code maxBufferedBytes} of body.
+     */
+    private java.net.http.HttpResponse<byte[]> fetch(String url, String accept, long deadline)
             throws IOException, InterruptedException, java.util.concurrent.TimeoutException {
         java.net.http.HttpClient client = loadClient;
         if (client == null) {
@@ -800,16 +883,17 @@ public final class SparqlProtocolServlet extends HttpServlet {
             client = b.build();
             loadClient = client;
         }
-        String accept = String.join(", ", RDFFormat.getAcceptParams(
-                org.eclipse.rdf4j.rio.RDFParserRegistry.getInstance().getKeys(), false, null));
-        java.net.http.HttpRequest request = java.net.http.HttpRequest.newBuilder(java.net.URI.create(source))
+        java.net.http.HttpRequest request = java.net.http.HttpRequest.newBuilder(java.net.URI.create(url))
                 .header("Accept", accept).GET().build();
         long cap = options.maxBufferedBytes();
+        boolean timed = options.maxExecutionSeconds() > 0;
+        long left = deadline - System.nanoTime();
+        if (timed && left <= 0) {
+            throw new java.util.concurrent.TimeoutException();
+        }
         var pending = client.sendAsync(request, info -> new CappedBody(cap));
         try {
-            return options.maxExecutionSeconds() > 0
-                    ? pending.get(options.maxExecutionSeconds(), java.util.concurrent.TimeUnit.SECONDS)
-                    : pending.get();
+            return timed ? pending.get(left, java.util.concurrent.TimeUnit.NANOSECONDS) : pending.get();
         } catch (java.util.concurrent.ExecutionException e) {
             Throwable cause = e.getCause();
             throw cause instanceof IOException io ? io : new IOException(String.valueOf(cause), cause);
@@ -1229,8 +1313,9 @@ public final class SparqlProtocolServlet extends HttpServlet {
         Thread reader = Thread.currentThread();
         Object lock = new Object();
         boolean[] state = {false, false};   // {reading done, deadline passed}
-        java.util.concurrent.ScheduledFuture<?> watch = options.maxUploadSeconds() == 0 ? null
-                : uploadWatch.schedule(() -> {
+        java.util.concurrent.ScheduledExecutorService watcher = uploadWatch;   // null only before init()
+        java.util.concurrent.ScheduledFuture<?> watch = options.maxUploadSeconds() == 0 || watcher == null ? null
+                : watcher.schedule(() -> {
                     synchronized (lock) {
                         if (!state[0]) {
                             state[1] = true;
