@@ -12,8 +12,6 @@ import org.apache.http.protocol.HttpContext;
 import java.io.IOException;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Proxy;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
@@ -38,12 +36,37 @@ import java.util.concurrent.TimeUnit;
  */
 final class TimedServiceClient extends CloseableHttpClient {
 
-    /** One daemon timer for every instance: it only calls {@code abort()}. */
-    private static final ScheduledExecutorService DEADLINES = Executors.newSingleThreadScheduledExecutor(r -> {
-        Thread t = new Thread(r, "sparql-service-deadline");
-        t.setDaemon(true);
-        return t;
-    });
+    /**
+     * One daemon timer for every instance: it only calls {@code abort()}. A cancelled deadline is
+     * removed at once: by default a cancelled task stays queued until its delay runs out, and with
+     * it the request it would abort — 20 finished SERVICE calls held about 10 MB of request
+     * bodies for the whole deadline (found in co-review of #123).
+     */
+    private static final java.util.concurrent.ScheduledThreadPoolExecutor DEADLINES;
+
+    static {
+        DEADLINES = new java.util.concurrent.ScheduledThreadPoolExecutor(1, r -> {
+            Thread t = new Thread(r, "sparql-service-deadline");
+            t.setDaemon(true);
+            return t;
+        });
+        DEADLINES.setRemoveOnCancelPolicy(true);
+    }
+
+    /** Deadlines armed and not yet fired or cancelled; for tests. */
+    static int armedDeadlines() {
+        return DEADLINES.getQueue().size();
+    }
+
+    /**
+     * What a SERVICE endpoint is asked for. Not XML: RDF4J parses SPARQL XML results with its
+     * default XML settings, under which an external entity in the response read a local file
+     * into the results (found in co-review of #123), and its session offers no way to change
+     * them. A response that is XML all the same is refused.
+     */
+    static final String ACCEPT = "application/sparql-results+json, application/json;q=0.9, "
+            + "application/x-binary-rdf-results-table;q=0.8, text/tab-separated-values;q=0.7, text/csv;q=0.6, "
+            + "text/boolean;q=0.5";
 
     private final int timeoutMillis;
     private CloseableHttpClient pool;   // guarded by this
@@ -94,6 +117,7 @@ final class TimedServiceClient extends CloseableHttpClient {
             fired.set(true);
             abortable.abort();
         }, timeoutMillis, TimeUnit.MILLISECONDS);
+        request.setHeader("Accept", ACCEPT);
         CloseableHttpResponse response;
         try {
             response = pool().execute(target, request, context);
@@ -103,6 +127,13 @@ final class TimedServiceClient extends CloseableHttpClient {
         } catch (RuntimeException e) {
             deadline.cancel(false);
             throw e;
+        }
+        org.apache.http.Header type = response.getFirstHeader("Content-Type");
+        if (type != null && type.getValue().toLowerCase(java.util.Locale.ROOT).contains("xml")) {
+            deadline.cancel(false);
+            response.close();
+            throw new IOException("the SERVICE endpoint answered " + type.getValue() + "; this endpoint accepts "
+                    + "SPARQL JSON, binary, TSV or CSV results from SERVICE, not XML");
         }
         // The body is read after execute returns, so the deadline stays armed until the
         // response is closed, and a read it cuts short reports a timeout too: an abort
@@ -122,11 +153,17 @@ final class TimedServiceClient extends CloseableHttpClient {
                         return new org.apache.http.entity.HttpEntityWrapper(entity) {
                             @Override
                             public java.io.InputStream getContent() throws IOException {
+                                // the deadline is also disarmed once the body is read to its
+                                // end or closed: RDF4J does not always close the response
                                 return new java.io.FilterInputStream(super.getContent()) {
                                     @Override
                                     public int read() throws IOException {
                                         try {
-                                            return super.read();
+                                            int c = super.read();
+                                            if (c < 0) {
+                                                deadline.cancel(false);
+                                            }
+                                            return c;
                                         } catch (IOException e) {
                                             throw fired.get() ? timedOut(e) : e;
                                         }
@@ -135,10 +172,20 @@ final class TimedServiceClient extends CloseableHttpClient {
                                     @Override
                                     public int read(byte[] b, int off, int len) throws IOException {
                                         try {
-                                            return super.read(b, off, len);
+                                            int n = super.read(b, off, len);
+                                            if (n < 0) {
+                                                deadline.cancel(false);
+                                            }
+                                            return n;
                                         } catch (IOException e) {
                                             throw fired.get() ? timedOut(e) : e;
                                         }
+                                    }
+
+                                    @Override
+                                    public void close() throws IOException {
+                                        deadline.cancel(false);
+                                        super.close();
                                     }
                                 };
                             }
