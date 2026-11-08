@@ -38,16 +38,16 @@ Everything below was measured against s2dm commit
 [`examples/src/main/resources/s2dm/trailer/`](examples/src/main/resources/s2dm/trailer/). The
 two files there are committed exactly as s2dm wrote them.
 
-s2dm runs in Docker ([`scripts/s2dm/Dockerfile`](scripts/s2dm/Dockerfile)). Building the image
-is the only step with network access. The export runs with no network, a read-only root
-filesystem, a throwaway container, the caller's uid, and only the input schema (read-only) and the
-output folder mounted.
+s2dm runs in Docker ([`scripts/s2dm/Dockerfile`](scripts/s2dm/Dockerfile)). Fetching the pinned
+s2dm commit and building the image need network access. The export itself runs in a throwaway
+container with no network, a read-only root filesystem, the caller's uid, and only the input
+schema (read-only) and the output folder mounted.
 
 What it took to get there, so the next person does not repeat it:
 
 1. **Dependencies must come from s2dm's lockfile.** `pip install` of s2dm 0.33.0 resolves
-   graphql-core 3.3.2, and s2dm then crashes with `'NoneType' object is not iterable` whenever it
-   merges schema files or exports VSPEC. The lockfile pins graphql-core 3.2.6, and with it the
+   graphql-core 3.3.2, and s2dm then crashes with `'NoneType' object is not iterable` when it
+   merges schema files or exports VSPEC (the two cases tried). The lockfile pins graphql-core 3.2.6, and with it the
    crash is gone. The Dockerfile installs with `uv sync --frozen`. The RDF export itself gave
    triple-for-triple identical output under both installs.
 2. **Only the trailer's pre-merged schema exports.** At this commit:
@@ -56,16 +56,21 @@ What it took to get there, so the next person does not repeat it:
    - the seat example's merged schema in the documentation site has a GraphQL syntax error;
    - the small `graphql-to-skos` and `schema-rdf` samples fail with `Unknown type 'VelocityUnit'`
      and `Unknown directive '@instanceTag'`.
-3. **VSPEC export rejects the trailer schema.** s2dm's current `@instanceTag` check reports three
-   errors on it (`VehicleTrailer.trailer must reference an object or enum type with
-   @instanceTag`, and the same for the axle and wheel tags), so units, ranges and instances, which
-   only the VSPEC and JSON Schema exporters write, are not available from s2dm's own example.
+3. **The exporters that carry units and ranges reject the trailer schema.** Reading the s2dm
+   source: the VSPEC exporter writes units (through its own symbol table), `@range` min/max and
+   instances; the LinkML exporter writes units and `@range` min/max; the JSON Schema exporter
+   writes `@range` as `minimum`/`maximum` but no units. All three were run on the trailer schema,
+   and all three stop at s2dm's current `@instanceTag` check with the same three errors
+   (`VehicleTrailer.trailer must reference an object or enum type with @instanceTag`, and the same
+   for the axle and wheel tags). Fixing the tags would not be enough for VSPEC's units either: its
+   symbol table has `KILOPA`, not the trailer schema's `KILOPASCAL`.
 
 None of these has been reported to COVESA/s2dm.
 
 ## 3. What the RDF export contains
 
-`s2dm export rdf --namespace <ns>` writes two files.
+`s2dm export rdf --namespace <ns>` writes two graphs, each in every format asked for (by
+default N-Triples and Turtle, so four files; the script asks for Turtle only).
 
 **`skos.ttl`: concepts and labels.**
 
@@ -76,16 +81,18 @@ None of these has been reported to COVESA/s2dm.
 | enum | `skos:Collection` whose members are its values |
 | enum value | `skos:Concept` named `Enum.VALUE`, member of its enum's collection and of `FieldConcepts` |
 
-Every concept has a language-tagged `skos:prefLabel`. A **type** or **enum** with a description
-in the schema also gets a `skos:definition` and a `skos:note` saying where the definition came
-from. A **field** never gets a `skos:definition`, even when the schema describes it: the exporter
+Every concept has a language-tagged `skos:prefLabel`. A **type** with a description in the schema
+also gets a `skos:definition` and a `skos:note` saying where the definition came from; a described
+**enum** gets the `skos:definition` without the note. A **field** never gets a `skos:definition`, even when the schema describes it: the exporter
 passes an empty description for every field (`rdf_materializer.py`, `_skos_field_container`).
 
-**`data_graph.ttl`: the schema's structure.**
+**`data_graph.ttl`: the schema's structure.** The `s2dm:` types live here only; `skos.ttl` has
+no `s2dm:ObjectType` or `s2dm:Field` assertions.
 
 | GraphQL | RDF |
 |---|---|
-| type | `s2dm:ObjectType` (or `InterfaceType`, `InputObjectType`, `UnionType`), with `s2dm:hasField` to each field |
+| object, interface or input type | `s2dm:ObjectType` (or `InterfaceType`, `InputObjectType`), with `s2dm:hasField` to each field |
+| union | `s2dm:UnionType`, with `s2dm:hasUnionMember` to each member type |
 | field | `s2dm:Field`, `s2dm:hasOutputType` (a type, an enum, `s2dm:Boolean`/`Int`/`Float`/`String`/`ID`, or a custom scalar such as `ns:UInt16`), and `s2dm:usesTypeWrapperPattern` (`bare`, `nonNull`, `list`, …) |
 | enum | `s2dm:EnumType`, `s2dm:hasEnumValue` to each value |
 | enum value | `s2dm:EnumValue` |
@@ -100,8 +107,9 @@ The `s2dm:` terms live at `https://covesa.global/models/s2dm#`. The concepts liv
 
 [`TrailerHealthMonitor`](examples/src/main/java/org/cqels/examples/s2dm/TrailerHealthMonitor.java)
 loads both files as background data and streams wheel readings from a truck with trailers. Each
-reading is one atomic element: the s2dm field it reports, the vehicle, the value, and the three
-instance tags the schema declares (trailer, axle, side), using the export's own enum-value IRIs.
+reading is one atomic element: the s2dm field it reports, the vehicle, the value, and the four
+instance tags the schema declares for a wheel (trailer; and axle, side and position from the
+outside in, which tells twin tires apart), using the export's own enum-value IRIs.
 That encoding is the demo's own: s2dm defines the model, not an RDF form for instance data.
 
 | Query | What it reads from the model | Measured result |
@@ -126,7 +134,12 @@ what rejects it, not the filter on the value.
   type's definition, as `PlacedReading` does.
   [`S2dmConceptCatalog`](examples/src/main/java/org/cqels/examples/cdsp/S2dmConceptCatalog.java)
   joins on field definitions, which s2dm's older SKOS exporter (`s2dm generate skos-skeleton`)
-  wrote and the current one does not, so its first query would return no rows over a real export.
+  wrote and the current one does not, so over a real export its first query returns no rows for a
+  field observation. (An observation tagged with a described type still matches; the query does
+  not restrict its concept to fields.)
+- **`s2dm:` typing in `skos.ttl`.** The older exporter typed each concept `s2dm:ObjectType` or
+  `s2dm:Field` in the SKOS file; the current one puts that typing only in `data_graph.ttl`.
+  `S2dmConceptCatalog`'s second query guards on `s2dm:Field`, so it needs both files loaded.
 - **`skos:broader`.** Not written anywhere. The hierarchy that
   [`SkosConceptRollup`](examples/src/main/java/org/cqels/examples/cdsp/SkosConceptRollup.java)
   rolls up is asserted by that demo; the structure s2dm does export is `s2dm:hasField` and
@@ -134,6 +147,9 @@ what rejects it, not the filter on the value.
 
 The `org.cqels.examples.cdsp.S2dm*` demos predate this mapping. Their concept graph is hand-built
 in the shape of the older SKOS exporter, over a vocabulary partly taken from s2dm's examples.
+
+Units, `@range` and instances are written by other s2dm exporters (§2, item 3), but none of
+those accepts the trailer schema at this commit.
 
 ## 6. CQELS limits this runs into
 

@@ -46,10 +46,12 @@ import org.eclipse.rdf4j.rio.RDFFormat;
  * <p><strong>The stream encoding is this demo's, not s2dm's.</strong> s2dm defines the model but
  * no RDF form for instance data, so each reading here is one atomic element: the s2dm field it
  * reports ({@code ex:field trailer:TrailerWheelTire.pressure}), the vehicle, the value, and the
- * three instance tags the schema declares with {@code @instanceTag} — which trailer
- * ({@code ThreeTrailers}), which axle ({@code AxlePositionEnum}) and which side
- * ({@code TwoSides}). The tags are the exporter's own enum-value IRIs, so the query can check
- * them against the model.
+ * instance tags the schema declares with {@code @instanceTag} for a wheel: which trailer
+ * ({@code TrailerTag.instance}, a {@code ThreeTrailers} value), and which wheel on it
+ * ({@code TrailerWheelTag}: the axle, an {@code AxlePositionEnum} value; the side, a
+ * {@code TwoSides} value; and the position counted from the outside in, an
+ * {@code EightOutsideInNumber} value, which tells twin tires apart). The tags are the exporter's
+ * own enum-value IRIs.
  *
  * <p>Three queries:
  * <ol>
@@ -81,9 +83,9 @@ import org.eclipse.rdf4j.rio.RDFFormat;
  * <p><strong>What the export does not carry</strong>, so this demo cannot use it: units (the
  * schema says pressure is in kPa, via {@code pressure(unit: Pressure_Unit_Enum = KILOPASCAL)}, but
  * the RDF export drops field arguments), {@code @range} limits, which fields are instance tags,
- * and descriptions on fields (only types get a {@code skos:definition}). s2dm's VSPEC exporter
- * carries units, ranges and instances, but at the pinned commit it rejects this same trailer
- * schema. See {@code S2DM_MAPPING.md}.
+ * and descriptions on fields (only types get a {@code skos:definition}). s2dm's VSPEC, LinkML and
+ * JSON Schema exporters carry some of these, but at the pinned commit all three reject this same
+ * trailer schema. See {@code S2DM_MAPPING.md}.
  *
  * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.examples.s2dm.TrailerHealthMonitor}
  */
@@ -107,6 +109,7 @@ public class TrailerHealthMonitor {
     static final String TRAILER = Fleet.EX + "trailer";
     static final String AXLE = Fleet.EX + "axle";
     static final String SIDE = Fleet.EX + "side";
+    static final String NTH = Fleet.EX + "outsideIn";
 
     static final String PREFIXES = Fleet.PREFIXES + """
             PREFIX skos:    <http://www.w3.org/2004/02/skos/core#>
@@ -129,12 +132,12 @@ public class TrailerHealthMonitor {
             // 1 — place each reading in the model: field -> owning type -> slot -> owner.
             String placed = PREFIXES + """
                     REGISTER QUERY PlacedReading AS
-                    SELECT ?trailer ?axle ?side ?field ?value ?owner ?slot ?component ?about
+                    SELECT ?trailer ?axle ?side ?nth ?field ?value ?owner ?slot ?component ?about
                     FROM STREAM Wheels [TRIPLES 1]
                     WHERE {
                       STREAM Wheels {
                         ?r ex:field ?field ; ex:trailer ?trailer ; ex:axle ?axle ;
-                           ex:side ?side ; sosa:hasSimpleResult ?value .
+                           ex:side ?side ; ex:outsideIn ?nth ; sosa:hasSimpleResult ?value .
                       }
                       ?component s2dm:hasField ?field .
                       ?slot s2dm:hasOutputType ?component .
@@ -147,12 +150,13 @@ public class TrailerHealthMonitor {
             // 2 — every boolean alarm: the field's output type is read from the model.
             String alarms = PREFIXES + """
                     REGISTER QUERY BooleanAlarm AS
-                    SELECT ?vehicle ?trailer ?axle ?side ?field
+                    SELECT ?vehicle ?trailer ?axle ?side ?nth ?field
                     FROM STREAM Wheels [TRIPLES 1]
                     WHERE {
                       STREAM Wheels {
                         ?r ex:field ?field ; ex:vehicle ?vehicle ; ex:trailer ?trailer ;
-                           ex:axle ?axle ; ex:side ?side ; sosa:hasSimpleResult ?v .
+                           ex:axle ?axle ; ex:side ?side ; ex:outsideIn ?nth ;
+                           sosa:hasSimpleResult ?v .
                       }
                       ?field s2dm:hasOutputType s2dm:Boolean .
                       FILTER(?v = true)
@@ -179,28 +183,28 @@ public class TrailerHealthMonitor {
 
             String truck = Fleet.EX + "vehicle/TRUCK-41";
             System.out.println("\npush: trailer 1, axle 2, left — tire pressure 612 kPa");
-            push(wheels, truck, TIRE_PRESSURE, "TRAILER_1", "POSITION_2", "LEFT", VF.createLiteral(612));
+            push(wheels, truck, TIRE_PRESSURE, "TRAILER_1", "POSITION_2", "LEFT", "_1ST", VF.createLiteral(612));
             Thread.sleep(700);
 
-            System.out.println("\npush: trailer 1, axle 2, right — tire pressure 455 kPa");
-            push(wheels, truck, TIRE_PRESSURE, "TRAILER_1", "POSITION_2", "RIGHT", VF.createLiteral(455));
+            System.out.println("\npush: trailer 1, axle 2, right, inner twin — tire pressure 455 kPa");
+            push(wheels, truck, TIRE_PRESSURE, "TRAILER_1", "POSITION_2", "RIGHT", "_2ND", VF.createLiteral(455));
             Thread.sleep(700);
 
-            System.out.println("\npush: trailer 1, axle 2, right — isPressureLow = true");
-            push(wheels, truck, TIRE_PRESSURE_LOW, "TRAILER_1", "POSITION_2", "RIGHT", VF.createLiteral(true));
+            System.out.println("\npush: trailer 1, axle 2, right, inner twin — isPressureLow = true");
+            push(wheels, truck, TIRE_PRESSURE_LOW, "TRAILER_1", "POSITION_2", "RIGHT", "_2ND", VF.createLiteral(true));
             Thread.sleep(700);
 
             System.out.println("\npush: trailer 2, axle 1, left — brake pad wear 35 %");
-            push(wheels, truck, BRAKE_PAD_WEAR, "TRAILER_2", "POSITION_1", "LEFT", VF.createLiteral(35));
+            push(wheels, truck, BRAKE_PAD_WEAR, "TRAILER_2", "POSITION_1", "LEFT", "_1ST", VF.createLiteral(35));
             Thread.sleep(700);
 
             System.out.println("\npush: trailer 2, axle 1, left — isBrakesWorn = false   (a boolean"
                     + " field, but false: no alarm)");
-            push(wheels, truck, BRAKES_WORN, "TRAILER_2", "POSITION_1", "LEFT", VF.createLiteral(false));
+            push(wheels, truck, BRAKES_WORN, "TRAILER_2", "POSITION_1", "LEFT", "_1ST", VF.createLiteral(false));
             Thread.sleep(700);
 
             System.out.println("\npush: trailer 2, axle 3, right — isBrakesWorn = true");
-            push(wheels, truck, BRAKES_WORN, "TRAILER_2", "POSITION_3", "RIGHT", VF.createLiteral(true));
+            push(wheels, truck, BRAKES_WORN, "TRAILER_2", "POSITION_3", "RIGHT", "_1ST", VF.createLiteral(true));
             Thread.sleep(700);
 
             // Not a field of the model (a typo for "isPressureLow"), carrying the value true. The
@@ -209,11 +213,11 @@ public class TrailerHealthMonitor {
             System.out.println("\npush: trailer 1, axle 4, left — TrailerWheelTire.isPresureLow = true"
                     + "   (no such field in the model: no [placed], no [ALARM])");
             push(wheels, truck, T + "TrailerWheelTire.isPresureLow", "TRAILER_1", "POSITION_4", "LEFT",
-                    VF.createLiteral(true));
+                    "_1ST", VF.createLiteral(true));
             Thread.sleep(700);
 
             System.out.println("\npush: trailer 2, axle 1, left — tire pressure 598 kPa");
-            push(wheels, truck, TIRE_PRESSURE, "TRAILER_2", "POSITION_1", "LEFT", VF.createLiteral(598));
+            push(wheels, truck, TIRE_PRESSURE, "TRAILER_2", "POSITION_1", "LEFT", "_1ST", VF.createLiteral(598));
             Thread.sleep(900);
         }
         System.out.println("\nDone.");
@@ -241,11 +245,11 @@ public class TrailerHealthMonitor {
     }
 
     /**
-     * Push one wheel reading as a single atomic element: the s2dm field, the vehicle, the three
+     * Push one wheel reading as a single atomic element: the s2dm field, the vehicle, the four
      * instance tags (as the exporter's enum-value IRIs) and the value.
      */
     static void push(DataStream stream, String vehicle, String field,
-                     String trailer, String axle, String side, Literal value) {
+                     String trailer, String axle, String side, String outsideIn, Literal value) {
         IRI r = VF.createIRI(Fleet.EX + "wheel-reading/" + SEQ.incrementAndGet());
         stream.push(List.of(
                 VF.createStatement(r, VF.createIRI(FIELD), VF.createIRI(field)),
@@ -253,6 +257,7 @@ public class TrailerHealthMonitor {
                 VF.createStatement(r, VF.createIRI(TRAILER), VF.createIRI(T + "ThreeTrailers." + trailer)),
                 VF.createStatement(r, VF.createIRI(AXLE), VF.createIRI(T + "AxlePositionEnum." + axle)),
                 VF.createStatement(r, VF.createIRI(SIDE), VF.createIRI(T + "TwoSides." + side)),
+                VF.createStatement(r, VF.createIRI(NTH), VF.createIRI(T + "EightOutsideInNumber." + outsideIn)),
                 VF.createStatement(r, VF.createIRI(Fleet.HAS_SIMPLE_RESULT), value)));
     }
 }

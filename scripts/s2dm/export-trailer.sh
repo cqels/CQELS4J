@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Regenerate examples/src/main/resources/s2dm/trailer/{skos,data_graph}.ttl with COVESA s2dm.
 #
-# s2dm runs in Docker. The image build is the only step with network access (it fetches s2dm's
-# locked dependencies). The export itself runs with no network, a read-only root filesystem, a
-# throwaway container, your uid, and only two host folders mounted: the input schema (read-only)
-# and the output folder.
+# Fetching the pinned s2dm commit from GitHub and building the Docker image (s2dm's locked
+# dependencies) need network access. The export itself runs in a throwaway container with no
+# network, a read-only root filesystem, your uid, and only two host folders mounted: the input
+# schema (read-only) and the output folder.
 #
 # Input: s2dm's own trailer example, examples/trailer/full_schema.graphl, at the pinned commit.
 # Usage: scripts/s2dm/export-trailer.sh        (needs git and docker)

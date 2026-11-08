@@ -30,11 +30,13 @@ import java.util.concurrent.atomic.AtomicLong;
  *
  * <p>The shape was read off s2dm's SKOS exporter, {@code skos.py} ({@code generate_skos_skeleton},
  * which earlier s2dm releases ran as {@code s2dm generate skos-skeleton}). The current command is
- * {@code s2dm export rdf}. Its SKOS output has the same typing, labelling and collections, with
- * one difference that matters here: it gives a {@code skos:definition} to types and enums only,
- * never to fields (measured on s2dm commit {@code d97b449}; see {@code S2DM_MAPPING.md}). The field
- * definitions seeded below follow the older exporter, not the current one. {@code export rdf}
- * also writes {@code data_graph.ttl}, the schema's structure, which these demos do not model;
+ * {@code s2dm export rdf}, which splits the output in two (measured on s2dm commit {@code d97b449};
+ * see {@code S2DM_MAPPING.md}). Its {@code skos.ttl} keeps the concepts, language-tagged labels and
+ * collections, but differs from what is seeded below in two ways: the second {@code rdf:type}
+ * ({@code s2dm:ObjectType}, {@code s2dm:Field}) is no longer there, because it moved to the
+ * separate {@code data_graph.ttl} with the rest of the schema's structure; and only types and
+ * enums get a {@code skos:definition}, never fields. So the seeded graph corresponds to the
+ * older exporter, or to both current files loaded together minus the field definitions.
  * {@code org.cqels.examples.s2dm.TrailerHealthMonitor} loads both files from a real export.
  * The concepts seeded in {@link #seedConceptGraph} follow the <em>shape</em> the exporter emits —
  * the typing, labelling and collection structure read off its {@code skos.py} — so the demos
