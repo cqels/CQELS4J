@@ -1376,7 +1376,10 @@ class SparqlProtocolServletTest {
                     respond(200, "application/sparql-results+json",
                             "{\"head\":{\"vars\":[\"o\"]},\"results\":{\"bindings\":[]}}", 0).handle(ex);
                 },
-                "/xml", respond(200, "application/sparql-results+xml", xml, 0)));
+                "/xml", respond(200, "application/sparql-results+xml", xml, 0),
+                // RDF4J's binary format: magic, version, then a column count its parser allocates for
+                "/binary", bytes(new byte[] {'B', 'R', 'T', 'R', 0, 0, 0, 4, 0x7f, (byte) 0xff, (byte) 0xff, (byte) 0xff},
+                        "Content-Type", "application/x-binary-rdf-results-table")));
         try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true), 0)) {
             for (int i = 0; i < 20; i++) {
                 assertEquals(200, get(fed.url(), "SELECT * WHERE { SERVICE <" + base(remote) + "/json> { ?s ?p ?o } }", null).statusCode());
@@ -1390,7 +1393,9 @@ class SparqlProtocolServletTest {
                     .getServletHandler().getServlets()[0].getServlet();
             assertEquals(0, servlet.armedUploadDeadlines(), "finished uploads left deadlines armed");
             assertFalse(accepts.isEmpty());
-            accepts.forEach(a -> assertFalse(a.contains("xml"), "SERVICE asked for XML: " + a));
+            accepts.forEach(a -> assertFalse(a.contains("xml") || a.contains("binary"), "SERVICE asked for XML or binary: " + a));
+            var binary = get(fed.url(), "SELECT ?o WHERE { SERVICE <" + base(remote) + "/binary> { ?s ?p ?o } }", "text/csv");
+            assertTrue(binary.statusCode() >= 500, "a binary answer read as an empty result: " + binary.statusCode() + " " + binary.body());
 
             var leak = get(fed.url(), "SELECT ?o WHERE { SERVICE <" + base(remote) + "/xml> { ?s ?p ?o } }", "text/csv");
             assertTrue(leak.statusCode() >= 500, leak.statusCode() + " " + leak.body());

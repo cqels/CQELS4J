@@ -59,14 +59,22 @@ final class TimedServiceClient extends CloseableHttpClient {
     }
 
     /**
-     * What a SERVICE endpoint is asked for. Not XML: RDF4J parses SPARQL XML results with its
-     * default XML settings, under which an external entity in the response read a local file
-     * into the results (found in co-review of #123), and its session offers no way to change
-     * them. A response that is XML all the same is refused.
+     * What a SERVICE endpoint is asked for, and all it may answer in. Not XML: RDF4J parses SPARQL
+     * XML results with its default XML settings, under which an external entity in the response
+     * read a local file into the results, and its session offers no way to change them. Not
+     * RDF4J's binary format: its parser sizes arrays from counts in the stream, so a 12-byte
+     * answer made it run out of heap — in a background thread whose failure the query then read as
+     * an empty result, answered 200 (both found in co-review of #123). A response in either is
+     * refused.
      */
     static final String ACCEPT = "application/sparql-results+json, application/json;q=0.9, "
-            + "application/x-binary-rdf-results-table;q=0.8, text/tab-separated-values;q=0.7, text/csv;q=0.6, "
-            + "text/boolean;q=0.5";
+            + "text/tab-separated-values;q=0.7, text/csv;q=0.6, text/boolean;q=0.5";
+
+    /** Whether a SERVICE answer of this {@code Content-Type} is refused unread; see {@link #ACCEPT}. */
+    static boolean refused(String contentType) {
+        String t = contentType.toLowerCase(java.util.Locale.ROOT);
+        return t.contains("xml") || t.contains("x-binary-rdf-results-table");
+    }
 
     private final int timeoutMillis;
 
@@ -169,11 +177,11 @@ final class TimedServiceClient extends CloseableHttpClient {
             throw e;
         }
         org.apache.http.Header type = response.getFirstHeader("Content-Type");
-        if (type != null && type.getValue().toLowerCase(java.util.Locale.ROOT).contains("xml")) {
+        if (type != null && refused(type.getValue())) {
             deadline.cancel(false);
             response.close();
             throw new IOException("the SERVICE endpoint answered " + type.getValue() + "; this endpoint accepts "
-                    + "SPARQL JSON, binary, TSV or CSV results from SERVICE, not XML");
+                    + "SPARQL JSON, TSV or CSV results from SERVICE, not XML or binary");
         }
         // The body is read after execute returns, so the deadline stays armed until the
         // response is closed, and a read it cuts short reports a timeout too: an abort

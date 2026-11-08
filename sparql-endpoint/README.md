@@ -315,9 +315,11 @@ requested upstream as cqels/claude#1387; the Jetty version here is pinned to the
   cannot hold the slot. The client stays installed for the repository's lifetime, so the
   engine's own `SERVICE` calls get the deadline too (with `MAX_EXECUTION_SECONDS=0` it is
   installed with no deadline, for the format rule below); its connections are released when Jetty
-  stops and reopen if it is used again. A `SERVICE` endpoint must answer SPARQL JSON, binary,
-  TSV or CSV: SPARQL XML is refused, because RDF4J parses it with settings under which an XML
-  entity read a local file into the results. Nothing is set JVM-wide.
+  stops and reopen if it is used again. A `SERVICE` endpoint must answer SPARQL JSON, TSV or
+  CSV: SPARQL XML is refused, because RDF4J parses it with settings under which an XML entity
+  read a local file into the results, and so is RDF4J's binary format, whose parser sizes arrays
+  from counts in the stream (a 12-byte answer ran it out of heap, and the query then reported an
+  empty result). Nothing is set JVM-wide.
 - **Browser requests from other origins are refused (`403`).** Loopback is not a boundary
   against a browser: any page the user visits can submit a cross-origin form POST — a CORS
   "simple" request, sent without a preflight — to `127.0.0.1:8089`. Withholding CORS headers
