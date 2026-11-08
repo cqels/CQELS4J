@@ -31,7 +31,7 @@ S2X = "https://example.org/s2dm/supplement#"
 
 
 def literal(text):
-    escaped = text.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "")
+    escaped = text.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "\\r")
     return f'"{escaped}"@en'
 
 
