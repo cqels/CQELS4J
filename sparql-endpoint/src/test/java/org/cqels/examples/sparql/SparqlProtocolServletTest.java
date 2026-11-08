@@ -1180,10 +1180,18 @@ class SparqlProtocolServletTest {
             zip.putNextEntry(new java.util.zip.ZipEntry("data.ttl.gz"));
             zip.write(gzip("<urn:ex:nested> <urn:ex:p> \"inner\" .\n"));
         }
+        var unnamed = new java.io.ByteArrayOutputStream();
+        try (var zip = new java.util.zip.ZipOutputStream(unnamed)) {
+            zip.putNextEntry(new java.util.zip.ZipEntry("part"));
+            zip.write("<urn:ex:unnamed> <urn:ex:p> 1 .\n".getBytes(StandardCharsets.UTF_8));
+        }
         var remote = serve(java.util.Map.of(
                 "/encoded.ttl.gz", bytes(gzip("<urn:ex:encoded> <urn:ex:p> \"once\" .\n"),
                         "Content-Type", "text/turtle", "Content-Encoding", "gzip"),
-                "/archive.ttl.zip", bytes(zipped.toByteArray(), "Content-Type", "application/zip")));
+                "/archive.ttl.zip", bytes(zipped.toByteArray(), "Content-Type", "application/zip"),
+                // the format comes from the source when the unpacked part cannot name it
+                "/blob", bytes(gzip("<urn:ex:blob> <urn:ex:p> 1 .\n"), "Content-Type", "text/turtle"),
+                "/second.ttl.zip", bytes(unnamed.toByteArray(), "Content-Type", "application/zip")));
         try (Endpoint ep = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true).withUpdateEnabled(true), 0)) {
             var once = post(ep.url(), "application/sparql-update", "LOAD <" + base(remote) + "/encoded.ttl.gz>", null);
             assertEquals(204, once.statusCode(), once.body());
@@ -1191,6 +1199,11 @@ class SparqlProtocolServletTest {
             var nested = post(ep.url(), "application/sparql-update", "LOAD <" + base(remote) + "/archive.ttl.zip>", null);
             assertEquals(204, nested.statusCode(), nested.body());
             assertTrue(ask(ep.url(), "ASK { <urn:ex:nested> ?p \"inner\" }"));
+            for (String path : List.of("/blob", "/second.ttl.zip")) {
+                var r = post(ep.url(), "application/sparql-update", "LOAD <" + base(remote) + path + ">", null);
+                assertEquals(204, r.statusCode(), path + ": " + r.body());
+            }
+            assertTrue(ask(ep.url(), "ASK { <urn:ex:blob> ?p ?o . <urn:ex:unnamed> ?q ?r }"));
         } finally {
             remote.stop(0);
         }
@@ -1359,6 +1372,13 @@ class SparqlProtocolServletTest {
                 assertEquals(200, get(fed.url(), "SELECT * WHERE { SERVICE <" + base(remote) + "/json> { ?s ?p ?o } }", null).statusCode());
             }
             assertEquals(0, TimedServiceClient.armedDeadlines(), "finished SERVICE calls left deadlines armed");
+            // and finished uploads leave no upload deadline armed (every POST arms one)
+            for (int i = 0; i < 20; i++) {
+                assertEquals(200, post(fed.url(), "application/sparql-query", "ASK {}", null).statusCode());
+            }
+            var servlet = (SparqlProtocolServlet) ((org.eclipse.jetty.ee10.servlet.ServletContextHandler) fed.server().getHandler())
+                    .getServletHandler().getServlets()[0].getServlet();
+            assertEquals(0, servlet.armedUploadDeadlines(), "finished uploads left deadlines armed");
             assertFalse(accepts.isEmpty());
             accepts.forEach(a -> assertFalse(a.contains("xml"), "SERVICE asked for XML: " + a));
 
