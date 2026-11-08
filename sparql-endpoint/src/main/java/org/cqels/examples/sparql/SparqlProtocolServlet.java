@@ -107,11 +107,18 @@ import java.util.function.Supplier;
  *   using-graph-uri / using-named-graph-uri               update dataset
  * </pre>
  * The base IRI for relative IRIs (§2.3) is the request URL. Status codes: 400 malformed query,
- * bad graph IRI, or update dataset parameters together with USING / WITH (§2.2.3); 403 update
- * while disabled, or SERVICE / LOAD while federation is disabled ({@link #reachesOut}); 405 update via GET; 406 no acceptable result format; 413 body over the limit;
- * 415 unknown POST content type or charset; 500 evaluation failure; 503 execution time exceeded
- * or every query slot busy (then with {@code Retry-After}). A failure after the response is
- * committed — the execution limit tripping mid-stream — aborts the response instead.
+ * bad graph IRI, update dataset parameters together with USING / WITH (§2.2.3), or a request
+ * nested too deeply to parse; 403 update while disabled, SERVICE / LOAD while federation is
+ * disabled ({@link #reachesOut}), or naming a non-HTTP IRI while it is enabled
+ * ({@link #nonHttpTarget}); 405 update via GET; 406 no acceptable result format; 408 body not
+ * received within {@code maxUploadSeconds}; 413 body over the limit; 415 unknown POST content
+ * type or charset; 500 evaluation failure or the heap exhausted; 503 execution time exceeded or
+ * every query slot busy (then with {@code Retry-After}); 504 a SERVICE or LOAD target did not
+ * answer in time. A failure after the response is committed — the execution limit tripping
+ * mid-stream — aborts the response instead.
+ *
+ * <p>A request takes its query slot before its body is read, so a slow upload is bounded by
+ * the slots like a slow query, not by the container's request threads.
  * Origins and tokens are the filters' business ({@link AccessFilters}), not this class's.
  *
  * <p><strong>The metadata graph.</strong> {@link #METADATA_GRAPH} is reserved. A query whose
@@ -187,7 +194,7 @@ public final class SparqlProtocolServlet extends HttpServlet {
             fail(resp, HttpServletResponse.SC_BAD_REQUEST, "missing 'query' parameter");
             return;
         }
-        handleQuery(req, resp, params, query);
+        inSlot(resp, () -> evaluateQuery(req, resp, params, query));
     }
 
     @Override
@@ -206,6 +213,15 @@ public final class SparqlProtocolServlet extends HttpServlet {
                             + "application/sparql-query or application/sparql-update");
             return;
         }
+        // The slot is taken BEFORE the body is read. Reading first let a client that trickles
+        // its body hold a request thread the slots never counted: with every thread so held,
+        // neither the immediate 503 nor /health answered (found in the audit after #121). Now
+        // such a client holds a slot, the rest are turned away at once, and maxUploadSeconds
+        // hands the slot back.
+        inSlot(resp, () -> dispatchPost(req, resp, type));
+    }
+
+    private void dispatchPost(HttpServletRequest req, HttpServletResponse resp, String type) throws IOException {
         // The body is read here, bounded, for every content type — forms included. Leaving a
         // form to the container's getParameter() would apply the container's own form limit
         // instead of maxRequestBytes (and a chunked form has no Content-Length for the check
@@ -228,7 +244,7 @@ public final class SparqlProtocolServlet extends HttpServlet {
             return;
         }
         switch (type) {
-            case "application/sparql-query" -> handleQuery(req, resp, params, body);
+            case "application/sparql-query" -> evaluateQuery(req, resp, params, body);
             case "application/sparql-update" -> handleUpdate(req, resp, params, body);
             default -> {
                 String update = params.first("update");
@@ -238,7 +254,7 @@ public final class SparqlProtocolServlet extends HttpServlet {
                 } else if (update != null) {
                     handleUpdate(req, resp, params, update);
                 } else if (query != null) {
-                    handleQuery(req, resp, params, query);
+                    evaluateQuery(req, resp, params, query);
                 } else {
                     fail(resp, HttpServletResponse.SC_BAD_REQUEST, "missing 'query' or 'update' parameter");
                 }
@@ -246,20 +262,48 @@ public final class SparqlProtocolServlet extends HttpServlet {
         }
     }
 
-    // ---- query -------------------------------------------------------------------------
+    /** What runs inside a slot; it answers on {@code resp} itself. */
+    private interface SlotWork {
+        void run() throws IOException;
+    }
 
-    private void handleQuery(HttpServletRequest req, HttpServletResponse resp, Params params, String queryString)
-            throws IOException {
+    /**
+     * Runs {@code work} holding a query slot, or answers 503 at once when none is free.
+     *
+     * <p>Two JVM errors are answered here rather than left to the container, whose HTML error
+     * page names the server's version and whose log gets a stack trace per request (both found
+     * in the audit after #121):
+     * <ul>
+     *   <li>{@code StackOverflowError}: a 4 KB query of 2,000 nested parentheses overflows
+     *       RDF4J's recursive-descent parser, far inside the request-size limit. That is the
+     *       request's shape, so a 400. The stack unwinds fully before it is caught; nothing
+     *       shared is left half-done, and an update's transaction rolls back in its own
+     *       {@code finally}.</li>
+     *   <li>{@code OutOfMemoryError}: RDF4J builds {@code GROUP BY} groups, sorts and computed
+     *       strings in the heap, and nothing a servlet can do bounds that — the endpoint shares
+     *       the engine's JVM (see the README's <em>Memory</em>). Answering keeps the client from
+     *       retrying blind, and the log line says what happened. The request's own allocations
+     *       are unreachable by then, which is what makes answering possible at all.</li>
+     * </ul>
+     */
+    private void inSlot(HttpServletResponse resp, SlotWork work) throws IOException {
         if (!slots.tryAcquire()) {
             busy(resp);
             return;
         }
         try {
-            evaluateQuery(req, resp, params, queryString);
+            work.run();
+        } catch (StackOverflowError e) {
+            fail(resp, HttpServletResponse.SC_BAD_REQUEST, "the request nests too deeply to be parsed or evaluated");
+        } catch (OutOfMemoryError e) {
+            log.error("a request ran out of heap; the engine shares this JVM: {}", e.toString());
+            fail(resp, HttpServletResponse.SC_INTERNAL_SERVER_ERROR, "the request ran out of server memory");
         } finally {
             slots.release();
         }
     }
+
+    // ---- query -------------------------------------------------------------------------
 
     private void evaluateQuery(HttpServletRequest req, HttpServletResponse resp, Params params, String queryString)
             throws IOException {
@@ -279,8 +323,7 @@ public final class SparqlProtocolServlet extends HttpServlet {
                 fail(resp, HttpServletResponse.SC_BAD_REQUEST, "malformed query: " + e.getMessage());
                 return;
             }
-            if (!options.federationEnabled() && reachesOut(parsed.getTupleExpr())) {
-                federationDisabled(resp);
+            if (refusedOutbound(resp, List.of(parsed.getTupleExpr()))) {
                 return;
             }
             Dataset dataset = dataset(params, "default-graph-uri", "named-graph-uri");
@@ -376,9 +419,7 @@ public final class SparqlProtocolServlet extends HttpServlet {
                     notAcceptable(resp, accept);
                     return;
                 }
-                RDFWriter writer = RDFWriterRegistry.getInstance().get(fmt.get().format()).orElseThrow()
-                        .getWriter(begin(resp, fmt.get()));
-                gq.evaluate(writer);
+                writeStatements(resp, gq, fmt.get());
             } else if (query instanceof BooleanQuery bq) {
                 Optional<Negotiated<QueryResultFormat>> fmt = negotiate(accept,
                         BooleanQueryResultWriterRegistry.getInstance(), (QueryResultFormat) BooleanQueryResultFormat.JSON);
@@ -404,11 +445,19 @@ public final class SparqlProtocolServlet extends HttpServlet {
                         "query exceeded the execution limit of " + options.maxExecutionSeconds() + " s");
                 return;
             }
+            if (outboundTimedOut(e)) {
+                fail(resp, HttpServletResponse.SC_GATEWAY_TIMEOUT, "a SERVICE endpoint did not answer in time");
+                return;
+            }
             log.warn("query evaluation failed: {}", e.getMessage());
             fail(resp, HttpServletResponse.SC_INTERNAL_SERVER_ERROR, "query evaluation failed: " + e.getMessage());
         } catch (RuntimeException e) {
             // Rio and the result writers also wrap a client that went away in a handler
             // exception; fail() turns any of these into an aborted response once committed.
+            if (outboundTimedOut(e)) {
+                fail(resp, HttpServletResponse.SC_GATEWAY_TIMEOUT, "a SERVICE endpoint did not answer in time");
+                return;
+            }
             if (!resp.isCommitted()) {
                 log.warn("unexpected failure answering a query", e);
             }
@@ -426,19 +475,30 @@ public final class SparqlProtocolServlet extends HttpServlet {
             tq.evaluate(writer);
             return;
         }
-        // Bounded buffer: the truncation header must be decided before the body starts, and
-        // maxRows is exactly the bound on what is held. Evaluation stops at maxRows + 1.
+        // Bounded buffer: the truncation header must be decided before the body starts, so the
+        // result is held — up to maxRows rows and maxBufferedBytes of them, whichever comes first.
         List<String> names;
         List<BindingSet> rows = new ArrayList<>();
         boolean truncated = false;
         try (TupleQueryResult result = tq.evaluate()) {
             names = result.getBindingNames();
+            long bytes = 0;
             while (result.hasNext()) {
                 if (rows.size() >= options.maxRows()) {
                     truncated = true;
                     break;
                 }
-                rows.add(result.next());
+                BindingSet row = result.next();
+                long size = 0;
+                for (var binding : row) {
+                    size += estimate(binding.getValue());
+                }
+                if (bytes + size > options.maxBufferedBytes()) {
+                    truncated = true;
+                    break;
+                }
+                bytes += size;
+                rows.add(row);
             }
         }
         if (truncated) {
@@ -452,6 +512,68 @@ public final class SparqlProtocolServlet extends HttpServlet {
         writer.endQueryResult();
     }
 
+    /**
+     * CONSTRUCT and DESCRIBE under the same caps as SELECT: streamed when {@code maxRows} is
+     * {@code 0}, otherwise held up to {@code maxRows} statements and {@code maxBufferedBytes}
+     * and truncated the same way. Before the audit after #121 a graph result streamed whatever
+     * the row cap said, so the cap bounded SELECT only.
+     */
+    private void writeStatements(HttpServletResponse resp, org.eclipse.rdf4j.query.GraphQuery gq,
+                                 Negotiated<RDFFormat> fmt) throws IOException {
+        var factory = RDFWriterRegistry.getInstance().get(fmt.format()).orElseThrow();
+        if (options.maxRows() == 0) {
+            gq.evaluate(factory.getWriter(begin(resp, fmt)));
+            return;
+        }
+        List<Statement> statements = new ArrayList<>();
+        Map<String, String> namespaces;
+        boolean truncated = false;
+        try (org.eclipse.rdf4j.query.GraphQueryResult result = gq.evaluate()) {
+            long bytes = 0;
+            while (result.hasNext()) {
+                if (statements.size() >= options.maxRows()) {
+                    truncated = true;
+                    break;
+                }
+                Statement st = result.next();
+                long size = estimate(st.getSubject()) + estimate(st.getPredicate()) + estimate(st.getObject());
+                if (bytes + size > options.maxBufferedBytes()) {
+                    truncated = true;
+                    break;
+                }
+                bytes += size;
+                statements.add(st);
+            }
+            namespaces = result.getNamespaces();
+        }
+        if (truncated) {
+            resp.setHeader(TRUNCATED_HEADER, "true");
+        }
+        RDFWriter writer = factory.getWriter(begin(resp, fmt));
+        writer.startRDF();
+        namespaces.forEach(writer::handleNamespace);
+        for (Statement st : statements) {
+            writer.handleStatement(st);
+        }
+        writer.endRDF();
+    }
+
+    /**
+     * Roughly what holding {@code v} costs: its characters (two bytes each) plus a fixed
+     * overhead for the object and, for a literal, its datatype and language. An estimate, not an
+     * account — it only has to keep a buffer within the same order as {@code maxBufferedBytes}.
+     */
+    static long estimate(org.eclipse.rdf4j.model.Value v) {
+        if (v == null) {
+            return 0;
+        }
+        long size = 48 + 2L * v.stringValue().length();
+        if (v instanceof org.eclipse.rdf4j.model.Literal l) {
+            size += 2L * l.getLanguage().map(String::length).orElse(0) + 16;
+        }
+        return size;
+    }
+
     // ---- update ------------------------------------------------------------------------
 
     private void handleUpdate(HttpServletRequest req, HttpServletResponse resp, Params params, String updateString)
@@ -461,15 +583,7 @@ public final class SparqlProtocolServlet extends HttpServlet {
                     "SPARQL Update is disabled on this endpoint (CQELS_SPARQL_UPDATE_ENABLED=true enables it)");
             return;
         }
-        if (!slots.tryAcquire()) {
-            busy(resp);
-            return;
-        }
-        try {
-            executeUpdate(req, resp, params, updateString);
-        } finally {
-            slots.release();
-        }
+        executeUpdate(req, resp, params, updateString);
     }
 
     private void executeUpdate(HttpServletRequest req, HttpServletResponse resp, Params params, String updateString)
@@ -480,8 +594,7 @@ public final class SparqlProtocolServlet extends HttpServlet {
             Update update;
             try {
                 ParsedUpdate parsed = QueryParserUtil.parseUpdate(QueryLanguage.SPARQL, updateString, base);
-                if (!options.federationEnabled() && parsed.getUpdateExprs().stream().anyMatch(SparqlProtocolServlet::reachesOut)) {
-                    federationDisabled(resp);
+                if (refusedOutbound(resp, parsed.getUpdateExprs())) {
                     return;
                 }
                 if (dataset != null && namesItsOwnDataset(parsed)) {
@@ -542,6 +655,10 @@ public final class SparqlProtocolServlet extends HttpServlet {
                         "update exceeded the execution limit of " + options.maxExecutionSeconds() + " s");
                 return;
             }
+            if (outboundTimedOut(e)) {
+                fail(resp, HttpServletResponse.SC_GATEWAY_TIMEOUT, "a SERVICE or LOAD target did not answer in time");
+                return;
+            }
             log.warn("update failed: {}", e.toString());
             fail(resp, HttpServletResponse.SC_INTERNAL_SERVER_ERROR, "update failed: " + e.getMessage());
         }
@@ -596,6 +713,81 @@ public final class SparqlProtocolServlet extends HttpServlet {
             }
         });
         return found[0];
+    }
+
+    /**
+     * The first {@code LOAD} source or constant {@code SERVICE} IRI in {@code node} whose scheme
+     * is not {@code http} or {@code https}, or {@code null}.
+     *
+     * <p>Why, with federation on: RDF4J's {@code LOAD} opens any URL Java can, so
+     * {@code LOAD <file:///…/x.ttl>} read an RDF file off the server's disk into the store, where
+     * the next query returned it (found in the audit after #121). Federation is "this server
+     * talks to other servers", not "this server's files". A {@code SERVICE ?var} resolved at run
+     * time is not checked here; RDF4J's {@code SERVICE} client speaks HTTP only, so it cannot
+     * open a file. {@code LOAD} redirects are the launcher's business
+     * ({@link SparqlEndpointLauncher#limitOutboundRequests}), since RDF4J follows them itself.
+     */
+    static String nonHttpTarget(QueryModelNode node) {
+        String[] found = {null};
+        node.visit(new AbstractQueryModelVisitor<RuntimeException>() {
+            @Override
+            public void meet(Service service) {
+                if (found[0] == null && service.getServiceRef().hasValue()) {
+                    check(service.getServiceRef().getValue().stringValue());
+                }
+                super.meet(service);
+            }
+
+            @Override
+            public void meet(Load load) {
+                if (found[0] == null) {
+                    check(load.getSource().getValue().stringValue());
+                }
+            }
+
+            private void check(String iri) {
+                String lower = iri.toLowerCase(Locale.ROOT);
+                if (!lower.startsWith("http://") && !lower.startsWith("https://")) {
+                    found[0] = iri;
+                }
+            }
+        });
+        return found[0];
+    }
+
+    /** Answers 403 and returns true when federation is off and {@code nodes} reach out, or reach a non-HTTP IRI. */
+    private boolean refusedOutbound(HttpServletResponse resp, List<? extends QueryModelNode> nodes) throws IOException {
+        for (QueryModelNode node : nodes) {
+            if (!options.federationEnabled() && reachesOut(node)) {
+                federationDisabled(resp);
+                return true;
+            }
+            String bad = options.federationEnabled() ? nonHttpTarget(node) : null;
+            if (bad != null) {
+                fail(resp, HttpServletResponse.SC_FORBIDDEN, "SERVICE and LOAD may name only http and https IRIs, "
+                        + "not <" + bad + ">");
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Whether {@code e} or anything it wraps is a socket read or connect timing out: a
+     * {@code SERVICE} or {@code LOAD} target that did not answer within the deadline
+     * {@link SparqlEndpointLauncher#limitOutboundRequests} gives it.
+     */
+    private static boolean outboundTimedOut(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            if (t instanceof java.net.SocketTimeoutException
+                    || t instanceof org.apache.http.conn.ConnectTimeoutException) {
+                return true;
+            }
+            if (t.getCause() == t) {
+                break;
+            }
+        }
+        return false;
     }
 
     /** Whether {@code d} names {@code g} as a default or a named graph. */
@@ -814,20 +1006,30 @@ public final class SparqlProtocolServlet extends HttpServlet {
     }
 
     /**
-     * Reads a POST body within the size limit. Answers 413 beyond it, or 415 for a charset this
-     * runtime does not know, and returns {@code null} in both cases.
+     * Reads a POST body within the size and time limits. Answers 413 beyond the size, 408 past
+     * {@code maxUploadSeconds}, or 415 for a charset this runtime does not know, and returns
+     * {@code null} in each case.
      */
     private String readBody(HttpServletRequest req, HttpServletResponse resp) throws IOException {
         long max = options.maxRequestBytes();
-        byte[] buf = new byte[(int) Math.min(max + 1, 64 * 1024)];
+        // Never 0: Math.min(max + 1, …) overflowed for max = Long.MAX_VALUE into an empty buffer,
+        // which read every body as empty (found in the audit after #121).
+        byte[] buf = new byte[(int) Math.min(max, 64 * 1024) + 1];
+        boolean timed = options.maxUploadSeconds() > 0;
+        long deadline = System.nanoTime() + options.maxUploadSeconds() * 1_000_000_000L;
         java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
         try (InputStream in = req.getInputStream()) {
             int n;
-            while ((n = in.read(buf)) > 0) {
+            while ((n = in.read(buf)) >= 0) {
                 out.write(buf, 0, n);
                 if (out.size() > max) {
                     fail(resp, HttpServletResponse.SC_REQUEST_ENTITY_TOO_LARGE,
                             "request body exceeds " + max + " bytes");
+                    return null;
+                }
+                if (timed && System.nanoTime() - deadline > 0) {
+                    fail(resp, HttpServletResponse.SC_REQUEST_TIMEOUT,
+                            "request body took longer than " + options.maxUploadSeconds() + " s to arrive");
                     return null;
                 }
             }
