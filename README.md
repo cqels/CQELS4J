@@ -167,6 +167,11 @@ electric-vehicle fleet / vehicle-to-grid (V2G) scenario.)
 | [`FleetRiskLeaderboard`](examples/src/main/java/org/cqels/examples/cdsp/FleetRiskLeaderboard.java) | Windowed `GROUP BY` + `COUNT(*)`/`AVG` over a multi-pattern join + `HAVING` floor | Rolling per-vehicle risk score: speeding / violent-steering violations per 10 s window. |
 | [`LiveEfficiencyTicker`](examples/src/main/java/org/cqels/examples/cdsp/LiveEfficiencyTicker.java) | `[SLIDE 3s STEP 1s]` sliding window + `GROUP BY` over two co-bound metrics | Live per-vehicle efficiency ticker: trailing average battery power vs speed. |
 
+**S2DM model from a real export** (`org.cqels.examples.s2dm`)
+| Demo | Feature | Scenario |
+|------|---------|----------|
+| [`TrailerHealthMonitor`](examples/src/main/java/org/cqels/examples/s2dm/TrailerHealthMonitor.java) | Stream–static joins over the RDF that COVESA s2dm's own exporter wrote (`data_graph.ttl` + `skos.ttl`) and a supplement of units and field descriptions read from the same schema, plus a windowed `GROUP BY` over instance tags | Trailer wheel telemetry: each reading is placed in the model (wheel → tire or brake, with its description), every boolean alarm is caught without the query naming one (all three boolean fields in this schema are fault flags), a reading sent in a unit other than the schema's (PSI for a kPa field) is flagged, and the lowest tire pressure is tracked per trailer and axle in the schema's unit only. A misspelled field matches nothing, because the model does not contain it. |
+
 **Query dialects**
 | Demo | Feature |
 |------|---------|
@@ -261,6 +266,17 @@ knowledge layer onto CQELS rule by rule — what its RDFox Datalog rules and SPA
 become as continuous queries, which CQELS features the port needs, and which are not ready yet.
 The worked example is runnable:
 [`CdspDrivingStyle`](examples/src/main/java/org/cqels/examples/cdsp/CdspDrivingStyle.java).
+
+## Interoperability with COVESA S2DM
+
+[S2DM_MAPPING.md](S2DM_MAPPING.md) records what [COVESA S2DM](https://github.com/COVESA/s2dm)'s
+RDF export contains, what a continuous query can do with it, and what it leaves out (units,
+`@range`, instance-tag markings, field descriptions). The export is real s2dm output, regenerated
+offline in Docker by [`scripts/s2dm/export-trailer.sh`](scripts/s2dm/export-trailer.sh), which
+also writes a clearly separate supplement with the parts the export drops, read from the same
+schema. The
+worked example is
+[`TrailerHealthMonitor`](examples/src/main/java/org/cqels/examples/s2dm/TrailerHealthMonitor.java).
 
 ## Query language and standards
 
