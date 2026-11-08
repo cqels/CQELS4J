@@ -95,7 +95,9 @@ import java.util.function.Supplier;
  * <p><strong>Blocking on the request thread is deliberate.</strong> RDF4J evaluation is
  * blocking end to end (iterator results, {@code OutputStream} writers); a reactive front end
  * would only move the same blocking work to another pool. Results stream to the response —
- * nothing is buffered unless {@link EndpointOptions#maxRows()} asks for a bounded buffer.
+ * nothing is buffered unless {@link EndpointOptions#maxRows()} asks for a bounded buffer, with
+ * one exception: JSON-LD and NDJSON-LD, whose RDF4J writers hold statements before writing, are
+ * always buffered within {@link EndpointOptions#maxBufferedBytes()} and refused (503) beyond it.
  *
  * <p>Protocol mapping (SPARQL 1.1 Protocol §2):
  * <pre>
