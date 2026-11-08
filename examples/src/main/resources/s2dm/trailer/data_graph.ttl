@@ -1,0 +1,719 @@
+@prefix s2dm: <https://covesa.global/models/s2dm#> .
+@prefix trailer: <https://example.org/s2dm/trailer#> .
+
+trailer:Acceleration_Unit_Enum a s2dm:EnumType ;
+    s2dm:hasEnumValue trailer:Acceleration_Unit_Enum.CENTIMETERS_PER_SECOND_SQUARED,
+        trailer:Acceleration_Unit_Enum.METERS_PER_SECOND_SQUARED .
+
+trailer:Angle_Unit_Enum a s2dm:EnumType ;
+    s2dm:hasEnumValue trailer:Angle_Unit_Enum.DEGREE .
+
+trailer:Angularspeed_Unit_Enum a s2dm:EnumType ;
+    s2dm:hasEnumValue trailer:Angularspeed_Unit_Enum.DEGREE_PER_SECOND,
+        trailer:Angularspeed_Unit_Enum.RADIANS_PER_SECOND .
+
+trailer:Datetime_Unit_Enum a s2dm:EnumType ;
+    s2dm:hasEnumValue trailer:Datetime_Unit_Enum.ISO_8601,
+        trailer:Datetime_Unit_Enum.UNIX_TIMESTAMP .
+
+trailer:Distancepervolume_Unit_Enum a s2dm:EnumType ;
+    s2dm:hasEnumValue trailer:Distancepervolume_Unit_Enum.KILOMETERS_PER_LITER,
+        trailer:Distancepervolume_Unit_Enum.MILES_PER_GALLON .
+
+trailer:Duration_Unit_Enum a s2dm:EnumType ;
+    s2dm:hasEnumValue trailer:Duration_Unit_Enum.DAYS,
+        trailer:Duration_Unit_Enum.HOUR,
+        trailer:Duration_Unit_Enum.MILLISECOND,
+        trailer:Duration_Unit_Enum.MINUTE,
+        trailer:Duration_Unit_Enum.MONTHS,
+        trailer:Duration_Unit_Enum.SECOND,
+        trailer:Duration_Unit_Enum.WEEKS,
+        trailer:Duration_Unit_Enum.YEARS .
+
+trailer:Electriccharge_Unit_Enum a s2dm:EnumType ;
+    s2dm:hasEnumValue trailer:Electriccharge_Unit_Enum.AMPERE_HOURS .
+
+trailer:Electriccurrent_Unit_Enum a s2dm:EnumType ;
+    s2dm:hasEnumValue trailer:Electriccurrent_Unit_Enum.AMPERE .
+
+trailer:Energyconsumptionperdistance_Unit_Enum a s2dm:EnumType ;
+    s2dm:hasEnumValue trailer:Energyconsumptionperdistance_Unit_Enum.KILOWATT_HOURS_PER_100_KILOMETERS,
+        trailer:Energyconsumptionperdistance_Unit_Enum.WATT_HOUR_PER_KM .
+
+trailer:Force_Unit_Enum a s2dm:EnumType ;
+    s2dm:hasEnumValue trailer:Force_Unit_Enum.KILO_NEWTON,
+        trailer:Force_Unit_Enum.NEWTON .
+
+trailer:Frequency_Unit_Enum a s2dm:EnumType ;
+    s2dm:hasEnumValue trailer:Frequency_Unit_Enum.BEATS_PER_MINUTE,
+        trailer:Frequency_Unit_Enum.CYCLES_PER_MINUTE,
+        trailer:Frequency_Unit_Enum.HERTZ .
+
+trailer:Illuminance_Unit_Enum a s2dm:EnumType ;
+    s2dm:hasEnumValue trailer:Illuminance_Unit_Enum.LUX .
+
+trailer:InCabinArea2x2 a s2dm:ObjectType ;
+    s2dm:hasField trailer:InCabinArea2x2.column,
+        trailer:InCabinArea2x2.row .
+
+trailer:InCabinArea2x2Input a s2dm:InputObjectType ;
+    s2dm:hasField trailer:InCabinArea2x2Input.column,
+        trailer:InCabinArea2x2Input.row .
+
+trailer:InCabinArea2x3 a s2dm:ObjectType ;
+    s2dm:hasField trailer:InCabinArea2x3.column,
+        trailer:InCabinArea2x3.row .
+
+trailer:InCabinArea2x3Input a s2dm:InputObjectType ;
+    s2dm:hasField trailer:InCabinArea2x3Input.column,
+        trailer:InCabinArea2x3Input.row .
+
+trailer:InCabinArea3x3 a s2dm:ObjectType ;
+    s2dm:hasField trailer:InCabinArea3x3.column,
+        trailer:InCabinArea3x3.row .
+
+trailer:InCabinArea3x3Input a s2dm:InputObjectType ;
+    s2dm:hasField trailer:InCabinArea3x3Input.column,
+        trailer:InCabinArea3x3Input.row .
+
+trailer:Length_Unit_Enum a s2dm:EnumType ;
+    s2dm:hasEnumValue trailer:Length_Unit_Enum.CENTIMETER,
+        trailer:Length_Unit_Enum.INCH,
+        trailer:Length_Unit_Enum.KILOMETER,
+        trailer:Length_Unit_Enum.METER,
+        trailer:Length_Unit_Enum.MILLIMETER .
+
+trailer:Mass_Unit_Enum a s2dm:EnumType ;
+    s2dm:hasEnumValue trailer:Mass_Unit_Enum.GRAM,
+        trailer:Mass_Unit_Enum.KILOGRAM,
+        trailer:Mass_Unit_Enum.POUND .
+
+trailer:Massperdistance_Unit_Enum a s2dm:EnumType ;
+    s2dm:hasEnumValue trailer:Massperdistance_Unit_Enum.GRAMS_PER_KILOMETER .
+
+trailer:Masspertime_Unit_Enum a s2dm:EnumType ;
+    s2dm:hasEnumValue trailer:Masspertime_Unit_Enum.GRAMS_PER_SECOND .
+
+trailer:Power_Unit_Enum a s2dm:EnumType ;
+    s2dm:hasEnumValue trailer:Power_Unit_Enum.HORSEPOWER,
+        trailer:Power_Unit_Enum.KILOWATT,
+        trailer:Power_Unit_Enum.WATT .
+
+trailer:Pressure_Unit_Enum a s2dm:EnumType ;
+    s2dm:hasEnumValue trailer:Pressure_Unit_Enum.KILOPASCAL,
+        trailer:Pressure_Unit_Enum.MILLIBAR,
+        trailer:Pressure_Unit_Enum.PASCAL,
+        trailer:Pressure_Unit_Enum.POUNDS_PER_SQUARE_INCH .
+
+trailer:Rating_Unit_Enum a s2dm:EnumType ;
+    s2dm:hasEnumValue trailer:Rating_Unit_Enum.STARS .
+
+trailer:Relation_Unit_Enum a s2dm:EnumType ;
+    s2dm:hasEnumValue trailer:Relation_Unit_Enum.DECIBEL,
+        trailer:Relation_Unit_Enum.DECIBEL_MILLIWATT,
+        trailer:Relation_Unit_Enum.NANO_METER_PER_KILOMETER,
+        trailer:Relation_Unit_Enum.PERCENT,
+        trailer:Relation_Unit_Enum.RATIO .
+
+trailer:Resistance_Unit_Enum a s2dm:EnumType ;
+    s2dm:hasEnumValue trailer:Resistance_Unit_Enum.OHM .
+
+trailer:Rotationalspeed_Unit_Enum a s2dm:EnumType ;
+    s2dm:hasEnumValue trailer:Rotationalspeed_Unit_Enum.REVOLUTIONS_PER_MINUTE .
+
+trailer:Temperature_Unit_Enum a s2dm:EnumType ;
+    s2dm:hasEnumValue trailer:Temperature_Unit_Enum.DEGREE_CELSIUS .
+
+trailer:Torque_Unit_Enum a s2dm:EnumType ;
+    s2dm:hasEnumValue trailer:Torque_Unit_Enum.NEWTON_METER .
+
+trailer:Vehicle a s2dm:ObjectType ;
+    s2dm:hasField trailer:Vehicle.maxTowBallWeight,
+        trailer:Vehicle.maxTowWeight,
+        trailer:Vehicle.trailerCount,
+        trailer:Vehicle.trailers,
+        trailer:Vehicle.vin .
+
+trailer:Velocity_Unit_Enum a s2dm:EnumType ;
+    s2dm:hasEnumValue trailer:Velocity_Unit_Enum.KILOMETER_PER_HOUR,
+        trailer:Velocity_Unit_Enum.METERS_PER_SECOND .
+
+trailer:Voltage_Unit_Enum a s2dm:EnumType ;
+    s2dm:hasEnumValue trailer:Voltage_Unit_Enum.VOLT .
+
+trailer:Volume_Unit_Enum a s2dm:EnumType ;
+    s2dm:hasEnumValue trailer:Volume_Unit_Enum.CUBIC_CENTIMETERS,
+        trailer:Volume_Unit_Enum.LITER,
+        trailer:Volume_Unit_Enum.MILLILITER .
+
+trailer:Volumeflowrate_Unit_Enum a s2dm:EnumType ;
+    s2dm:hasEnumValue trailer:Volumeflowrate_Unit_Enum.LITER_PER_HOUR .
+
+trailer:Volumeperdistance_Unit_Enum a s2dm:EnumType ;
+    s2dm:hasEnumValue trailer:Volumeperdistance_Unit_Enum.LITER_PER_100_KILOMETERS,
+        trailer:Volumeperdistance_Unit_Enum.MILLILITER_PER_100_KILOMETERS .
+
+trailer:Work_Unit_Enum a s2dm:EnumType ;
+    s2dm:hasEnumValue trailer:Work_Unit_Enum.KILOWATT_HOURS .
+
+trailer:Acceleration_Unit_Enum.CENTIMETERS_PER_SECOND_SQUARED a s2dm:EnumValue .
+
+trailer:Acceleration_Unit_Enum.METERS_PER_SECOND_SQUARED a s2dm:EnumValue .
+
+trailer:Angle_Unit_Enum.DEGREE a s2dm:EnumValue .
+
+trailer:Angularspeed_Unit_Enum.DEGREE_PER_SECOND a s2dm:EnumValue .
+
+trailer:Angularspeed_Unit_Enum.RADIANS_PER_SECOND a s2dm:EnumValue .
+
+trailer:AxlePositionEnum.POSITION_1 a s2dm:EnumValue .
+
+trailer:AxlePositionEnum.POSITION_10 a s2dm:EnumValue .
+
+trailer:AxlePositionEnum.POSITION_11 a s2dm:EnumValue .
+
+trailer:AxlePositionEnum.POSITION_12 a s2dm:EnumValue .
+
+trailer:AxlePositionEnum.POSITION_13 a s2dm:EnumValue .
+
+trailer:AxlePositionEnum.POSITION_14 a s2dm:EnumValue .
+
+trailer:AxlePositionEnum.POSITION_15 a s2dm:EnumValue .
+
+trailer:AxlePositionEnum.POSITION_2 a s2dm:EnumValue .
+
+trailer:AxlePositionEnum.POSITION_3 a s2dm:EnumValue .
+
+trailer:AxlePositionEnum.POSITION_4 a s2dm:EnumValue .
+
+trailer:AxlePositionEnum.POSITION_5 a s2dm:EnumValue .
+
+trailer:AxlePositionEnum.POSITION_6 a s2dm:EnumValue .
+
+trailer:AxlePositionEnum.POSITION_7 a s2dm:EnumValue .
+
+trailer:AxlePositionEnum.POSITION_8 a s2dm:EnumValue .
+
+trailer:AxlePositionEnum.POSITION_9 a s2dm:EnumValue .
+
+trailer:Datetime_Unit_Enum.ISO_8601 a s2dm:EnumValue .
+
+trailer:Datetime_Unit_Enum.UNIX_TIMESTAMP a s2dm:EnumValue .
+
+trailer:Distancepervolume_Unit_Enum.KILOMETERS_PER_LITER a s2dm:EnumValue .
+
+trailer:Distancepervolume_Unit_Enum.MILES_PER_GALLON a s2dm:EnumValue .
+
+trailer:Duration_Unit_Enum.DAYS a s2dm:EnumValue .
+
+trailer:Duration_Unit_Enum.HOUR a s2dm:EnumValue .
+
+trailer:Duration_Unit_Enum.MILLISECOND a s2dm:EnumValue .
+
+trailer:Duration_Unit_Enum.MINUTE a s2dm:EnumValue .
+
+trailer:Duration_Unit_Enum.MONTHS a s2dm:EnumValue .
+
+trailer:Duration_Unit_Enum.SECOND a s2dm:EnumValue .
+
+trailer:Duration_Unit_Enum.WEEKS a s2dm:EnumValue .
+
+trailer:Duration_Unit_Enum.YEARS a s2dm:EnumValue .
+
+trailer:EightOutsideInNumber a s2dm:EnumType ;
+    s2dm:hasEnumValue trailer:EightOutsideInNumber._1ST,
+        trailer:EightOutsideInNumber._2ND,
+        trailer:EightOutsideInNumber._3RD,
+        trailer:EightOutsideInNumber._4TH,
+        trailer:EightOutsideInNumber._5TH,
+        trailer:EightOutsideInNumber._6TH,
+        trailer:EightOutsideInNumber._7TH,
+        trailer:EightOutsideInNumber._8TH .
+
+trailer:EightOutsideInNumber._1ST a s2dm:EnumValue .
+
+trailer:EightOutsideInNumber._2ND a s2dm:EnumValue .
+
+trailer:EightOutsideInNumber._3RD a s2dm:EnumValue .
+
+trailer:EightOutsideInNumber._4TH a s2dm:EnumValue .
+
+trailer:EightOutsideInNumber._5TH a s2dm:EnumValue .
+
+trailer:EightOutsideInNumber._6TH a s2dm:EnumValue .
+
+trailer:EightOutsideInNumber._7TH a s2dm:EnumValue .
+
+trailer:EightOutsideInNumber._8TH a s2dm:EnumValue .
+
+trailer:Electriccharge_Unit_Enum.AMPERE_HOURS a s2dm:EnumValue .
+
+trailer:Electriccurrent_Unit_Enum.AMPERE a s2dm:EnumValue .
+
+trailer:Energyconsumptionperdistance_Unit_Enum.KILOWATT_HOURS_PER_100_KILOMETERS a s2dm:EnumValue .
+
+trailer:Energyconsumptionperdistance_Unit_Enum.WATT_HOUR_PER_KM a s2dm:EnumValue .
+
+trailer:Force_Unit_Enum.KILO_NEWTON a s2dm:EnumValue .
+
+trailer:Force_Unit_Enum.NEWTON a s2dm:EnumValue .
+
+trailer:Frequency_Unit_Enum.BEATS_PER_MINUTE a s2dm:EnumValue .
+
+trailer:Frequency_Unit_Enum.CYCLES_PER_MINUTE a s2dm:EnumValue .
+
+trailer:Frequency_Unit_Enum.HERTZ a s2dm:EnumValue .
+
+trailer:Illuminance_Unit_Enum.LUX a s2dm:EnumValue .
+
+trailer:InCabinArea2x2.column a s2dm:Field ;
+    s2dm:hasOutputType trailer:TwoColumnsInCabinEnum ;
+    s2dm:usesTypeWrapperPattern s2dm:bare .
+
+trailer:InCabinArea2x2.row a s2dm:Field ;
+    s2dm:hasOutputType trailer:TwoRowsInCabinEnum ;
+    s2dm:usesTypeWrapperPattern s2dm:bare .
+
+trailer:InCabinArea2x2Input.column a s2dm:Field ;
+    s2dm:hasOutputType trailer:TwoColumnsInCabinEnum ;
+    s2dm:usesTypeWrapperPattern s2dm:bare .
+
+trailer:InCabinArea2x2Input.row a s2dm:Field ;
+    s2dm:hasOutputType trailer:TwoRowsInCabinEnum ;
+    s2dm:usesTypeWrapperPattern s2dm:bare .
+
+trailer:InCabinArea2x3.column a s2dm:Field ;
+    s2dm:hasOutputType trailer:ThreeColumnsInCabinEnum ;
+    s2dm:usesTypeWrapperPattern s2dm:bare .
+
+trailer:InCabinArea2x3.row a s2dm:Field ;
+    s2dm:hasOutputType trailer:TwoRowsInCabinEnum ;
+    s2dm:usesTypeWrapperPattern s2dm:bare .
+
+trailer:InCabinArea2x3Input.column a s2dm:Field ;
+    s2dm:hasOutputType trailer:ThreeColumnsInCabinEnum ;
+    s2dm:usesTypeWrapperPattern s2dm:bare .
+
+trailer:InCabinArea2x3Input.row a s2dm:Field ;
+    s2dm:hasOutputType trailer:TwoRowsInCabinEnum ;
+    s2dm:usesTypeWrapperPattern s2dm:bare .
+
+trailer:InCabinArea3x3.column a s2dm:Field ;
+    s2dm:hasOutputType trailer:ThreeColumnsInCabinEnum ;
+    s2dm:usesTypeWrapperPattern s2dm:bare .
+
+trailer:InCabinArea3x3.row a s2dm:Field ;
+    s2dm:hasOutputType trailer:ThreeRowsInCabinEnum ;
+    s2dm:usesTypeWrapperPattern s2dm:bare .
+
+trailer:InCabinArea3x3Input.column a s2dm:Field ;
+    s2dm:hasOutputType trailer:ThreeColumnsInCabinEnum ;
+    s2dm:usesTypeWrapperPattern s2dm:bare .
+
+trailer:InCabinArea3x3Input.row a s2dm:Field ;
+    s2dm:hasOutputType trailer:ThreeRowsInCabinEnum ;
+    s2dm:usesTypeWrapperPattern s2dm:bare .
+
+trailer:Length_Unit_Enum.CENTIMETER a s2dm:EnumValue .
+
+trailer:Length_Unit_Enum.INCH a s2dm:EnumValue .
+
+trailer:Length_Unit_Enum.KILOMETER a s2dm:EnumValue .
+
+trailer:Length_Unit_Enum.METER a s2dm:EnumValue .
+
+trailer:Length_Unit_Enum.MILLIMETER a s2dm:EnumValue .
+
+trailer:Mass_Unit_Enum.GRAM a s2dm:EnumValue .
+
+trailer:Mass_Unit_Enum.KILOGRAM a s2dm:EnumValue .
+
+trailer:Mass_Unit_Enum.POUND a s2dm:EnumValue .
+
+trailer:Massperdistance_Unit_Enum.GRAMS_PER_KILOMETER a s2dm:EnumValue .
+
+trailer:Masspertime_Unit_Enum.GRAMS_PER_SECOND a s2dm:EnumValue .
+
+trailer:Power_Unit_Enum.HORSEPOWER a s2dm:EnumValue .
+
+trailer:Power_Unit_Enum.KILOWATT a s2dm:EnumValue .
+
+trailer:Power_Unit_Enum.WATT a s2dm:EnumValue .
+
+trailer:Pressure_Unit_Enum.KILOPASCAL a s2dm:EnumValue .
+
+trailer:Pressure_Unit_Enum.MILLIBAR a s2dm:EnumValue .
+
+trailer:Pressure_Unit_Enum.PASCAL a s2dm:EnumValue .
+
+trailer:Pressure_Unit_Enum.POUNDS_PER_SQUARE_INCH a s2dm:EnumValue .
+
+trailer:Rating_Unit_Enum.STARS a s2dm:EnumValue .
+
+trailer:Relation_Unit_Enum.DECIBEL a s2dm:EnumValue .
+
+trailer:Relation_Unit_Enum.DECIBEL_MILLIWATT a s2dm:EnumValue .
+
+trailer:Relation_Unit_Enum.NANO_METER_PER_KILOMETER a s2dm:EnumValue .
+
+trailer:Relation_Unit_Enum.PERCENT a s2dm:EnumValue .
+
+trailer:Relation_Unit_Enum.RATIO a s2dm:EnumValue .
+
+trailer:Resistance_Unit_Enum.OHM a s2dm:EnumValue .
+
+trailer:Rotationalspeed_Unit_Enum.REVOLUTIONS_PER_MINUTE a s2dm:EnumValue .
+
+trailer:Temperature_Unit_Enum.DEGREE_CELSIUS a s2dm:EnumValue .
+
+trailer:ThreeColumnsInCabinEnum.DRIVERSIDE a s2dm:EnumValue .
+
+trailer:ThreeColumnsInCabinEnum.MIDDLE a s2dm:EnumValue .
+
+trailer:ThreeColumnsInCabinEnum.PASSENGERSIDE a s2dm:EnumValue .
+
+trailer:ThreeRowsInCabinEnum.ROW1 a s2dm:EnumValue .
+
+trailer:ThreeRowsInCabinEnum.ROW2 a s2dm:EnumValue .
+
+trailer:ThreeRowsInCabinEnum.ROW3 a s2dm:EnumValue .
+
+trailer:ThreeTrailers a s2dm:EnumType ;
+    s2dm:hasEnumValue trailer:ThreeTrailers.TRAILER_1,
+        trailer:ThreeTrailers.TRAILER_2,
+        trailer:ThreeTrailers.TRAILER_3 .
+
+trailer:ThreeTrailers.TRAILER_1 a s2dm:EnumValue .
+
+trailer:ThreeTrailers.TRAILER_2 a s2dm:EnumValue .
+
+trailer:ThreeTrailers.TRAILER_3 a s2dm:EnumValue .
+
+trailer:Torque_Unit_Enum.NEWTON_METER a s2dm:EnumValue .
+
+trailer:TrailerAxleTag a s2dm:ObjectType ;
+    s2dm:hasField trailer:TrailerAxleTag.position .
+
+trailer:TrailerAxleTag.position a s2dm:Field ;
+    s2dm:hasOutputType trailer:AxlePositionEnum ;
+    s2dm:usesTypeWrapperPattern s2dm:bare .
+
+trailer:TrailerTag a s2dm:ObjectType ;
+    s2dm:hasField trailer:TrailerTag.instance .
+
+trailer:TrailerTag.instance a s2dm:Field ;
+    s2dm:hasOutputType trailer:ThreeTrailers ;
+    s2dm:usesTypeWrapperPattern s2dm:bare .
+
+trailer:TrailerWheelBrake a s2dm:ObjectType ;
+    s2dm:hasField trailer:TrailerWheelBrake.fluidLevel,
+        trailer:TrailerWheelBrake.isBrakesWorn,
+        trailer:TrailerWheelBrake.isFluidLevelLow,
+        trailer:TrailerWheelBrake.padWear .
+
+trailer:TrailerWheelBrake.fluidLevel a s2dm:Field ;
+    s2dm:hasOutputType trailer:UInt8 ;
+    s2dm:usesTypeWrapperPattern s2dm:bare .
+
+trailer:TrailerWheelBrake.isBrakesWorn a s2dm:Field ;
+    s2dm:hasOutputType s2dm:Boolean ;
+    s2dm:usesTypeWrapperPattern s2dm:bare .
+
+trailer:TrailerWheelBrake.isFluidLevelLow a s2dm:Field ;
+    s2dm:hasOutputType s2dm:Boolean ;
+    s2dm:usesTypeWrapperPattern s2dm:bare .
+
+trailer:TrailerWheelBrake.padWear a s2dm:Field ;
+    s2dm:hasOutputType trailer:UInt8 ;
+    s2dm:usesTypeWrapperPattern s2dm:bare .
+
+trailer:TrailerWheelTag a s2dm:ObjectType ;
+    s2dm:hasField trailer:TrailerWheelTag.axle,
+        trailer:TrailerWheelTag.outsideInNumber,
+        trailer:TrailerWheelTag.side .
+
+trailer:TrailerWheelTag.axle a s2dm:Field ;
+    s2dm:hasOutputType trailer:AxlePositionEnum ;
+    s2dm:usesTypeWrapperPattern s2dm:bare .
+
+trailer:TrailerWheelTag.outsideInNumber a s2dm:Field ;
+    s2dm:hasOutputType trailer:EightOutsideInNumber ;
+    s2dm:usesTypeWrapperPattern s2dm:bare .
+
+trailer:TrailerWheelTag.side a s2dm:Field ;
+    s2dm:hasOutputType trailer:TwoSides ;
+    s2dm:usesTypeWrapperPattern s2dm:bare .
+
+trailer:TrailerWheelTire a s2dm:ObjectType ;
+    s2dm:hasField trailer:TrailerWheelTire.isPressureLow,
+        trailer:TrailerWheelTire.pressure,
+        trailer:TrailerWheelTire.temperature .
+
+trailer:TrailerWheelTire.isPressureLow a s2dm:Field ;
+    s2dm:hasOutputType s2dm:Boolean ;
+    s2dm:usesTypeWrapperPattern s2dm:bare .
+
+trailer:TrailerWheelTire.pressure a s2dm:Field ;
+    s2dm:hasOutputType trailer:UInt16 ;
+    s2dm:usesTypeWrapperPattern s2dm:bare .
+
+trailer:TrailerWheelTire.temperature a s2dm:Field ;
+    s2dm:hasOutputType s2dm:Float ;
+    s2dm:usesTypeWrapperPattern s2dm:bare .
+
+trailer:TwoColumnsInCabinEnum.DRIVERSIDE a s2dm:EnumValue .
+
+trailer:TwoColumnsInCabinEnum.PASSENGERSIDE a s2dm:EnumValue .
+
+trailer:TwoRowsInCabinEnum.ROW1 a s2dm:EnumValue .
+
+trailer:TwoRowsInCabinEnum.ROW2 a s2dm:EnumValue .
+
+trailer:TwoSides a s2dm:EnumType ;
+    s2dm:hasEnumValue trailer:TwoSides.LEFT,
+        trailer:TwoSides.RIGHT .
+
+trailer:TwoSides.LEFT a s2dm:EnumValue .
+
+trailer:TwoSides.RIGHT a s2dm:EnumValue .
+
+trailer:Vehicle.maxTowBallWeight a s2dm:Field ;
+    s2dm:hasOutputType trailer:UInt16 ;
+    s2dm:usesTypeWrapperPattern s2dm:bare .
+
+trailer:Vehicle.maxTowWeight a s2dm:Field ;
+    s2dm:hasOutputType trailer:UInt16 ;
+    s2dm:usesTypeWrapperPattern s2dm:bare .
+
+trailer:Vehicle.trailerCount a s2dm:Field ;
+    s2dm:hasOutputType trailer:UInt8 ;
+    s2dm:usesTypeWrapperPattern s2dm:bare .
+
+trailer:Vehicle.trailers a s2dm:Field ;
+    s2dm:hasOutputType trailer:VehicleTrailer ;
+    s2dm:usesTypeWrapperPattern s2dm:list .
+
+trailer:Vehicle.vin a s2dm:Field ;
+    s2dm:hasOutputType s2dm:ID ;
+    s2dm:usesTypeWrapperPattern s2dm:nonNull .
+
+trailer:VehicleTrailer a s2dm:ObjectType ;
+    s2dm:hasField trailer:VehicleTrailer.axleCount,
+        trailer:VehicleTrailer.axleLoadSum,
+        trailer:VehicleTrailer.axles,
+        trailer:VehicleTrailer.customerTrailerName,
+        trailer:VehicleTrailer.trailer,
+        trailer:VehicleTrailer.trailerKind,
+        trailer:VehicleTrailer.vin .
+
+trailer:VehicleTrailer.axleCount a s2dm:Field ;
+    s2dm:hasOutputType trailer:UInt8 ;
+    s2dm:usesTypeWrapperPattern s2dm:bare .
+
+trailer:VehicleTrailer.axleLoadSum a s2dm:Field ;
+    s2dm:hasOutputType trailer:UInt32 ;
+    s2dm:usesTypeWrapperPattern s2dm:bare .
+
+trailer:VehicleTrailer.axles a s2dm:Field ;
+    s2dm:hasOutputType trailer:VehicleTrailerAxle ;
+    s2dm:usesTypeWrapperPattern s2dm:list .
+
+trailer:VehicleTrailer.customerTrailerName a s2dm:Field ;
+    s2dm:hasOutputType s2dm:String ;
+    s2dm:usesTypeWrapperPattern s2dm:bare .
+
+trailer:VehicleTrailer.trailer a s2dm:Field ;
+    s2dm:hasOutputType trailer:TrailerTag ;
+    s2dm:usesTypeWrapperPattern s2dm:bare .
+
+trailer:VehicleTrailer.trailerKind a s2dm:Field ;
+    s2dm:hasOutputType trailer:VehicleTrailerKindEnum ;
+    s2dm:usesTypeWrapperPattern s2dm:bare .
+
+trailer:VehicleTrailer.vin a s2dm:Field ;
+    s2dm:hasOutputType s2dm:ID ;
+    s2dm:usesTypeWrapperPattern s2dm:nonNull .
+
+trailer:VehicleTrailerAxle a s2dm:ObjectType ;
+    s2dm:hasField trailer:VehicleTrailerAxle.axleLoad,
+        trailer:VehicleTrailerAxle.axleWidth,
+        trailer:VehicleTrailerAxle.position,
+        trailer:VehicleTrailerAxle.steeringAngle,
+        trailer:VehicleTrailerAxle.tireAspectRatio,
+        trailer:VehicleTrailerAxle.tireDiameter,
+        trailer:VehicleTrailerAxle.tireWidth,
+        trailer:VehicleTrailerAxle.trackWidth,
+        trailer:VehicleTrailerAxle.trailerAxle,
+        trailer:VehicleTrailerAxle.treadWidth,
+        trailer:VehicleTrailerAxle.wheelCount,
+        trailer:VehicleTrailerAxle.wheelDiameter,
+        trailer:VehicleTrailerAxle.wheelWidth,
+        trailer:VehicleTrailerAxle.wheels .
+
+trailer:VehicleTrailerAxle.axleLoad a s2dm:Field ;
+    s2dm:hasOutputType trailer:UInt16 ;
+    s2dm:usesTypeWrapperPattern s2dm:bare .
+
+trailer:VehicleTrailerAxle.axleWidth a s2dm:Field ;
+    s2dm:hasOutputType trailer:UInt16 ;
+    s2dm:usesTypeWrapperPattern s2dm:bare .
+
+trailer:VehicleTrailerAxle.position a s2dm:Field ;
+    s2dm:hasOutputType trailer:AxlePositionEnum ;
+    s2dm:usesTypeWrapperPattern s2dm:bare .
+
+trailer:VehicleTrailerAxle.steeringAngle a s2dm:Field ;
+    s2dm:hasOutputType s2dm:Float ;
+    s2dm:usesTypeWrapperPattern s2dm:bare .
+
+trailer:VehicleTrailerAxle.tireAspectRatio a s2dm:Field ;
+    s2dm:hasOutputType trailer:UInt8 ;
+    s2dm:usesTypeWrapperPattern s2dm:bare .
+
+trailer:VehicleTrailerAxle.tireDiameter a s2dm:Field ;
+    s2dm:hasOutputType s2dm:Float ;
+    s2dm:usesTypeWrapperPattern s2dm:bare .
+
+trailer:VehicleTrailerAxle.tireWidth a s2dm:Field ;
+    s2dm:hasOutputType trailer:UInt16 ;
+    s2dm:usesTypeWrapperPattern s2dm:bare .
+
+trailer:VehicleTrailerAxle.trackWidth a s2dm:Field ;
+    s2dm:hasOutputType trailer:UInt16 ;
+    s2dm:usesTypeWrapperPattern s2dm:bare .
+
+trailer:VehicleTrailerAxle.trailerAxle a s2dm:Field ;
+    s2dm:hasOutputType trailer:TrailerAxleTag ;
+    s2dm:usesTypeWrapperPattern s2dm:bare .
+
+trailer:VehicleTrailerAxle.treadWidth a s2dm:Field ;
+    s2dm:hasOutputType trailer:UInt16 ;
+    s2dm:usesTypeWrapperPattern s2dm:bare .
+
+trailer:VehicleTrailerAxle.wheelCount a s2dm:Field ;
+    s2dm:hasOutputType trailer:UInt8 ;
+    s2dm:usesTypeWrapperPattern s2dm:bare .
+
+trailer:VehicleTrailerAxle.wheelDiameter a s2dm:Field ;
+    s2dm:hasOutputType s2dm:Float ;
+    s2dm:usesTypeWrapperPattern s2dm:bare .
+
+trailer:VehicleTrailerAxle.wheelWidth a s2dm:Field ;
+    s2dm:hasOutputType s2dm:Float ;
+    s2dm:usesTypeWrapperPattern s2dm:bare .
+
+trailer:VehicleTrailerAxle.wheels a s2dm:Field ;
+    s2dm:hasOutputType trailer:VehicleTrailerWheel ;
+    s2dm:usesTypeWrapperPattern s2dm:list .
+
+trailer:VehicleTrailerKindEnum a s2dm:EnumType ;
+    s2dm:hasEnumValue trailer:VehicleTrailerKindEnum.CENTER_AXLE_TRAILER,
+        trailer:VehicleTrailerKindEnum.CONVERTER_DOLLY,
+        trailer:VehicleTrailerKindEnum.FULL_TRAILER,
+        trailer:VehicleTrailerKindEnum.LINK_TRAILER,
+        trailer:VehicleTrailerKindEnum.SEMI_TRAILER,
+        trailer:VehicleTrailerKindEnum.TOWING_CENTRE_AXLE_TRAILER,
+        trailer:VehicleTrailerKindEnum.TOWING_FULL_TRAILER,
+        trailer:VehicleTrailerKindEnum.TOWING_SEMI_TRAILER,
+        trailer:VehicleTrailerKindEnum.UNDEFINED .
+
+trailer:VehicleTrailerKindEnum.CENTER_AXLE_TRAILER a s2dm:EnumValue .
+
+trailer:VehicleTrailerKindEnum.CONVERTER_DOLLY a s2dm:EnumValue .
+
+trailer:VehicleTrailerKindEnum.FULL_TRAILER a s2dm:EnumValue .
+
+trailer:VehicleTrailerKindEnum.LINK_TRAILER a s2dm:EnumValue .
+
+trailer:VehicleTrailerKindEnum.SEMI_TRAILER a s2dm:EnumValue .
+
+trailer:VehicleTrailerKindEnum.TOWING_CENTRE_AXLE_TRAILER a s2dm:EnumValue .
+
+trailer:VehicleTrailerKindEnum.TOWING_FULL_TRAILER a s2dm:EnumValue .
+
+trailer:VehicleTrailerKindEnum.TOWING_SEMI_TRAILER a s2dm:EnumValue .
+
+trailer:VehicleTrailerKindEnum.UNDEFINED a s2dm:EnumValue .
+
+trailer:VehicleTrailerWheel a s2dm:ObjectType ;
+    s2dm:hasField trailer:VehicleTrailerWheel.angularSpeed,
+        trailer:VehicleTrailerWheel.brake,
+        trailer:VehicleTrailerWheel.speed,
+        trailer:VehicleTrailerWheel.tire,
+        trailer:VehicleTrailerWheel.trailerWheel .
+
+trailer:VehicleTrailerWheel.angularSpeed a s2dm:Field ;
+    s2dm:hasOutputType s2dm:Float ;
+    s2dm:usesTypeWrapperPattern s2dm:bare .
+
+trailer:VehicleTrailerWheel.brake a s2dm:Field ;
+    s2dm:hasOutputType trailer:TrailerWheelBrake ;
+    s2dm:usesTypeWrapperPattern s2dm:bare .
+
+trailer:VehicleTrailerWheel.speed a s2dm:Field ;
+    s2dm:hasOutputType s2dm:Float ;
+    s2dm:usesTypeWrapperPattern s2dm:bare .
+
+trailer:VehicleTrailerWheel.tire a s2dm:Field ;
+    s2dm:hasOutputType trailer:TrailerWheelTire ;
+    s2dm:usesTypeWrapperPattern s2dm:bare .
+
+trailer:VehicleTrailerWheel.trailerWheel a s2dm:Field ;
+    s2dm:hasOutputType trailer:TrailerWheelTag ;
+    s2dm:usesTypeWrapperPattern s2dm:bare .
+
+trailer:Velocity_Unit_Enum.KILOMETER_PER_HOUR a s2dm:EnumValue .
+
+trailer:Velocity_Unit_Enum.METERS_PER_SECOND a s2dm:EnumValue .
+
+trailer:Voltage_Unit_Enum.VOLT a s2dm:EnumValue .
+
+trailer:Volume_Unit_Enum.CUBIC_CENTIMETERS a s2dm:EnumValue .
+
+trailer:Volume_Unit_Enum.LITER a s2dm:EnumValue .
+
+trailer:Volume_Unit_Enum.MILLILITER a s2dm:EnumValue .
+
+trailer:Volumeflowrate_Unit_Enum.LITER_PER_HOUR a s2dm:EnumValue .
+
+trailer:Volumeperdistance_Unit_Enum.LITER_PER_100_KILOMETERS a s2dm:EnumValue .
+
+trailer:Volumeperdistance_Unit_Enum.MILLILITER_PER_100_KILOMETERS a s2dm:EnumValue .
+
+trailer:Work_Unit_Enum.KILOWATT_HOURS a s2dm:EnumValue .
+
+trailer:ThreeRowsInCabinEnum a s2dm:EnumType ;
+    s2dm:hasEnumValue trailer:ThreeRowsInCabinEnum.ROW1,
+        trailer:ThreeRowsInCabinEnum.ROW2,
+        trailer:ThreeRowsInCabinEnum.ROW3 .
+
+trailer:TwoColumnsInCabinEnum a s2dm:EnumType ;
+    s2dm:hasEnumValue trailer:TwoColumnsInCabinEnum.DRIVERSIDE,
+        trailer:TwoColumnsInCabinEnum.PASSENGERSIDE .
+
+trailer:AxlePositionEnum a s2dm:EnumType ;
+    s2dm:hasEnumValue trailer:AxlePositionEnum.POSITION_1,
+        trailer:AxlePositionEnum.POSITION_10,
+        trailer:AxlePositionEnum.POSITION_11,
+        trailer:AxlePositionEnum.POSITION_12,
+        trailer:AxlePositionEnum.POSITION_13,
+        trailer:AxlePositionEnum.POSITION_14,
+        trailer:AxlePositionEnum.POSITION_15,
+        trailer:AxlePositionEnum.POSITION_2,
+        trailer:AxlePositionEnum.POSITION_3,
+        trailer:AxlePositionEnum.POSITION_4,
+        trailer:AxlePositionEnum.POSITION_5,
+        trailer:AxlePositionEnum.POSITION_6,
+        trailer:AxlePositionEnum.POSITION_7,
+        trailer:AxlePositionEnum.POSITION_8,
+        trailer:AxlePositionEnum.POSITION_9 .
+
+trailer:ThreeColumnsInCabinEnum a s2dm:EnumType ;
+    s2dm:hasEnumValue trailer:ThreeColumnsInCabinEnum.DRIVERSIDE,
+        trailer:ThreeColumnsInCabinEnum.MIDDLE,
+        trailer:ThreeColumnsInCabinEnum.PASSENGERSIDE .
+
+trailer:TwoRowsInCabinEnum a s2dm:EnumType ;
+    s2dm:hasEnumValue trailer:TwoRowsInCabinEnum.ROW1,
+        trailer:TwoRowsInCabinEnum.ROW2 .
+

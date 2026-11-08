@@ -28,10 +28,17 @@ import java.util.concurrent.atomic.AtomicLong;
  *   GraphQL enum value    -> skos:Concept, member of that enum's collection AND of FieldConcepts
  * </pre>
  *
- * <p>Produced by {@code s2dm generate skos-skeleton --schema Vehicle.graphql --output vss.ttl}.
+ * <p>The shape was read off s2dm's SKOS exporter, {@code skos.py} ({@code generate_skos_skeleton},
+ * which earlier s2dm releases ran as {@code s2dm generate skos-skeleton}). The current command is
+ * {@code s2dm export rdf}. Its SKOS output has the same typing, labelling and collections, with
+ * one difference that matters here: it gives a {@code skos:definition} to types and enums only,
+ * never to fields (measured on s2dm commit {@code d97b449}; see {@code S2DM_MAPPING.md}). The field
+ * definitions seeded below follow the older exporter, not the current one. {@code export rdf}
+ * also writes {@code data_graph.ttl}, the schema's structure, which these demos do not model;
+ * {@code org.cqels.examples.s2dm.TrailerHealthMonitor} loads both files from a real export.
  * The concepts seeded in {@link #seedConceptGraph} follow the <em>shape</em> the exporter emits —
  * the typing, labelling and collection structure read off its {@code skos.py} — so the demos
- * exercise real s2dm output rather than an invented encoding. The concepts themselves are only
+ * exercise the exporter's encoding rather than an invented one. The concepts themselves are only
  * partly drawn from the repository's schemas ({@code examples/graphql-to-skos/sample.graphql}
  * contributes {@code Vehicle.averageSpeed}; {@code examples/seat-to-vspec} contributes
  * {@code Cabin} and {@code Seat}); {@code Door} and {@code Powertrain} are added here so the
@@ -71,7 +78,7 @@ public final class S2dm {
     public static final String SKOS = "http://www.w3.org/2004/02/skos/core#";
     /** The official COVESA s2dm ontology namespace (see s2dm's skos-mapping-diagram.md). */
     public static final String S2DM = "https://covesa.global/models/s2dm#";
-    /** Concept namespace — the {@code --namespace} argument of {@code s2dm generate skos-skeleton}. */
+    /** Concept namespace — the {@code --namespace} argument of {@code s2dm export rdf}. */
     public static final String CONCEPT = "https://example.org/vss#";
 
     // ---- SKOS terms -----------------------------------------------------------------------
@@ -128,8 +135,8 @@ public final class S2dm {
     private S2dm() { }
 
     /**
-     * Seed the s2dm SKOS concept graph — RDF in the shape a {@code s2dm generate skos-skeleton}
-     * run emits, over a small hand-built vehicle vocabulary rather than the output of an actual
+     * Seed the s2dm SKOS concept graph — RDF in the shape s2dm's SKOS exporter ({@code skos.py})
+     * emits, over a small hand-built vehicle vocabulary rather than the output of an actual
      * schema run (see the class Javadoc for exactly which concepts come from where).
      *
      * <p>Every object type and field becomes a {@code skos:Concept} with a {@code skos:prefLabel}
@@ -193,7 +200,7 @@ public final class S2dm {
     }
 
     /**
-     * One concept in the shape {@code s2dm generate skos-skeleton} actually emits — read off the
+     * One concept in the shape s2dm's SKOS exporter emits — read off the
      * exporter's {@code skos.py} rather than assumed:
      * <ul>
      *   <li>{@code rdf:type skos:Concept} <em>and</em> a second type from the s2dm ontology

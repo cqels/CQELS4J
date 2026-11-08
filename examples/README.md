@@ -84,6 +84,9 @@ mvn -q exec:java -Dexec.mainClass=org.cqels.examples.cdsp.S2dmConceptCatalog
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.cdsp.S2dmInstanceZones
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.cdsp.SkosConceptRollup
 
+# S2DM model from a real export (org.cqels.examples.s2dm):
+mvn -q exec:java -Dexec.mainClass=org.cqels.examples.s2dm.TrailerHealthMonitor
+
 # Reasoning showcase (org.cqels.examples.reasoning):
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.reasoning.TaxonomyEntailment
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.reasoning.BoundedTransitiveClosure
@@ -151,7 +154,7 @@ visible; the ticker instead demonstrates window eviction (the run outlasts the w
 
 The COVESA [S2DM](https://github.com/COVESA/s2dm) (Simplified Semantic Data Modeling) approach
 lets subject-matter experts model in **GraphQL SDL**; its tooling projects that schema into
-**SKOS** RDF (`s2dm generate skos-skeleton`), where each GraphQL type and field becomes a
+**SKOS** RDF (`s2dm export rdf`, which earlier releases called `s2dm generate skos-skeleton`), where each GraphQL type and field becomes a
 `skos:Concept` with a `skos:prefLabel`, a `skos:definition` and collection membership. Because
 that projection is ordinary RDF, it drops straight into CQELS as static context — so a
 continuous query can be written against *modelled concepts* instead of hard-coded VSS signal
@@ -178,6 +181,24 @@ s2dm repository's own schemas, with a couple added to give the rollup a hierarch
 > over the static concept graph is still refused. Only `#58` is still open as a limitation. Each
 > demo's Javadoc names what it still works around rather than hiding it — `SkosConceptRollup`
 > names two: `#58`, and paths over the static graph.
+>
+> The concept graph these three demos use is hand-built in the shape of s2dm's **older** SKOS
+> exporter. The current `s2dm export rdf` differs in one way that matters here: it never gives a
+> field a `skos:definition`, so `S2dmConceptCatalog`'s definition join would return no rows over a
+> real export. See [S2DM_MAPPING.md §5](../S2DM_MAPPING.md#5-what-the-export-does-not-carry).
+
+### S2DM model from a real export (`org.cqels.examples.s2dm`)
+
+Unlike the section above, this demo loads RDF that s2dm itself wrote:
+[`src/main/resources/s2dm/trailer/`](src/main/resources/s2dm/trailer/) holds `skos.ttl` and
+`data_graph.ttl` from `s2dm export rdf` on s2dm's own trailer example, committed as the tool wrote
+them and regenerated offline in Docker by
+[`scripts/s2dm/export-trailer.sh`](../scripts/s2dm/export-trailer.sh).
+[S2DM_MAPPING.md](../S2DM_MAPPING.md) explains what the export contains and what it leaves out.
+
+| Class | CQELS feature | Scenario |
+|-------|---------------|----------|
+| [`TrailerHealthMonitor`](src/main/java/org/cqels/examples/s2dm/TrailerHealthMonitor.java) | Stream–static joins over the s2dm data graph (`s2dm:hasField`, `s2dm:hasOutputType`); `[TRIPLES 1]` over atomic multi-statement elements; windowed `GROUP BY` over instance tags | Trailer wheel telemetry. Each reading is placed in the model: a tire pressure reading comes back as `VehicleTrailerWheel.tire` → `TrailerWheelTire`, "Tire signals for wheel." Every boolean alarm (`isPressureLow`, `isBrakesWorn`, `isFluidLevelLow`) is caught by asking which fields return `s2dm:Boolean`, so the query names none of them. The lowest tire pressure is tracked per trailer and axle. A misspelled field carrying `true` raises no alarm, because the model does not contain it; without the `s2dm:Boolean` guard it would. |
 
 ### Query dialects
 | Class | CQELS feature | Scenario |

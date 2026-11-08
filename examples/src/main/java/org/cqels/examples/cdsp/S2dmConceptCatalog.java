@@ -14,10 +14,10 @@ import org.cqels.examples.Fleet;
  * hard-coding either.
  *
  * <p>S2DM is where those labels come from. Subject-matter experts author the model in GraphQL SDL;
- * {@code s2dm generate skos-skeleton} projects it into SKOS RDF, in which every GraphQL field
- * becomes a {@code skos:Concept} carrying a {@code skos:prefLabel} and a {@code skos:definition}
- * (see {@link S2dm}). That RDF is ordinary static context for CQELS, so the enrichment is a join
- * rather than a lookup table in Java:
+ * s2dm's SKOS exporter projects it into SKOS RDF, in which every GraphQL field becomes a
+ * {@code skos:Concept} carrying a {@code skos:prefLabel} and, from the field's description, a
+ * {@code skos:definition} (see {@link S2dm}). That RDF is ordinary static context for CQELS, so
+ * the enrichment is a join rather than a lookup table in Java:
  *
  * <pre>
  *   STREAM { ?obs c:ofConcept ?field ; sosa:hasSimpleResult ?value }   -- live
@@ -25,8 +25,17 @@ import org.cqels.examples.Fleet;
  * </pre>
  *
  * <p>The payoff is that the query is written against <em>concepts</em>, not signal paths. When the
- * modeller renames a label or refines a definition, the next {@code skos-skeleton} run changes the
- * static graph and every consumer follows — no query is edited.
+ * modeller renames a label or refines a definition, the next export changes the static graph and
+ * every consumer follows — no query is edited.
+ *
+ * <p><strong>Against current s2dm output the definition half finds nothing.</strong> The field
+ * definitions here follow s2dm's older SKOS exporter (once run as
+ * {@code s2dm generate skos-skeleton}). The current command, {@code s2dm export rdf}, gives
+ * {@code skos:definition} to types and enums only, never to fields (measured on s2dm commit
+ * {@code d97b449}), so the first query, which requires {@code ?field skos:definition}, would
+ * return no rows over a real export. The label join and the second query are unaffected.
+ * {@code S2DM_MAPPING.md} §5 has the details; {@code org.cqels.examples.s2dm.TrailerHealthMonitor}
+ * reads the definition from the field's owning type instead.
  *
  * <p>The demo also shows the reverse direction: the last query filters on the field concept's own
  * {@code s2dm:Field} type, which is how you ask "show me everything the model classifies as a
