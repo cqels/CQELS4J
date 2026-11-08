@@ -202,6 +202,13 @@ final class TimedServiceClient extends CloseableHttpClient {
                     .map(h -> "'" + h.getValue() + "'").collect(java.util.stream.Collectors.joining(", "))
                     + "; this endpoint accepts one of " + ALLOWED + " from SERVICE");
         }
+        if (response.getEntity() == null) {
+            // Nothing left to read, and RDF4J does not close such a response (a 204, say), so
+            // neither disarming path below would run: the timer kept the request for the whole
+            // deadline (found in co-review of #123).
+            deadline.cancel(false);
+            return response;
+        }
         // The body is read after execute returns, so the deadline stays armed until the
         // response is closed, and a read it cuts short reports a timeout too: an abort
         // otherwise surfaces as a bare "Socket closed", indistinguishable from any failure.
