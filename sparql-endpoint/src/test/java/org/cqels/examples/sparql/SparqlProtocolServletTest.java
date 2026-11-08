@@ -717,6 +717,14 @@ class SparqlProtocolServletTest {
             assertEquals("name,unit\r\nTelemetry,speed\r\ncqels://streams/Telemetry,temperature\r\n", rows);
             assertTrue(ask(e.url(), CQE + "ASK FROM <" + META + "> { <cqels://streams/Telemetry> cqe:name \"cqels://streams/Telemetry\" }"));
         }
+        // round 2: a stream named like the engine's node must not merge with the engine
+        try (Endpoint e = withMetadata()) {
+            e.engine().createStream("cqels://endpoint/engine", java.util.Map.of("unit", "speed"));
+            assertFalse(ask(e.url(), CQE + "ASK FROM <" + META + "> { ?s a cqe:Stream ; cqe:running ?r }"));
+            assertFalse(ask(e.url(), CQE + "ASK FROM <" + META + "> { <cqels://endpoint/engine> cqe:attribute ?a }"));
+            assertTrue(ask(e.url(), CQE + "ASK FROM <" + META + "> { <cqels://endpoint/engine> cqe:stream ?s . "
+                    + "?s cqe:name \"cqels://endpoint/engine\" ; cqe:attribute [ cqe:value \"speed\" ] }"));
+        }
     }
 
     @Test
