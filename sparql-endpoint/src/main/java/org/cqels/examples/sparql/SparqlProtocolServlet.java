@@ -872,7 +872,10 @@ public final class SparqlProtocolServlet extends HttpServlet {
                     }
                 }
             });
-        } catch (org.eclipse.rdf4j.rio.RDFParseException | org.eclipse.rdf4j.rio.RDFHandlerException e) {
+        } catch (org.eclipse.rdf4j.rio.RDFParseException | org.eclipse.rdf4j.rio.RDFHandlerException
+                 | java.io.UncheckedIOException e) {
+            // UncheckedIOException: the parser's own I/O failures, such as an XML encoding the
+            // runtime does not know, which escaped LOAD SILENT as a 500 (found in co-review of #123)
             if (contexts.timedOut) {
                 loadFailed(resp, load, HttpServletResponse.SC_GATEWAY_TIMEOUT, timedOut);
             } else {
@@ -1026,8 +1029,12 @@ public final class SparqlProtocolServlet extends HttpServlet {
         }
         try (var in = new java.util.zip.ZipInputStream(new java.io.ByteArrayInputStream(bytes))) {
             for (var entry = in.getNextEntry(); entry != null; entry = in.getNextEntry()) {
+                // A directory entry is read too, against the same budget: skipped, the zip reader
+                // still inflated whatever it held, outside any count — 2 MiB under a 4 KiB budget
+                // (found in co-review of #123).
+                byte[] entryBytes = readCapped(in, budget);
                 if (!entry.isDirectory()) {
-                    unpack(entry.getName(), "", here, readCapped(in, budget), budget, depth + 1, into);
+                    unpack(entry.getName(), "", here, entryBytes, budget, depth + 1, into);
                 }
             }
         }
