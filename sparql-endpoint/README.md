@@ -144,7 +144,7 @@ All settings are environment variables, named like the MCP server's `CQELS_MCP_H
 | `413` | body over `CQELS_SPARQL_MAX_REQUEST_BYTES` |
 | `415` | unknown POST `Content-Type` or charset |
 | `500` | evaluation failed, or the request ran out of heap (see *Memory*) |
-| `503` | execution limit exceeded by a query or an update (as Fuseki answers), every query slot busy (then with `Retry-After: 1`), or a JSON-LD / NDJSON-LD result larger than `CQELS_SPARQL_MAX_BUFFERED_BYTES` |
+| `503` | execution limit exceeded by a query or an update (as Fuseki answers), every query slot busy (then with `Retry-After: 1`), a JSON-LD / NDJSON-LD result larger than `CQELS_SPARQL_MAX_BUFFERED_BYTES`, or `SERVICE` while the repository's `SERVICE` client lacks the endpoint's limits (an embedding that skipped `limitOutboundRequests`) |
 | `502` | a `LOAD` source failed: an HTTP error, a redirect to anything but `http`/`https`, a body over `CQELS_SPARQL_MAX_BUFFERED_BYTES`, or no parseable RDF (`LOAD SILENT`: `204`, nothing changed) |
 | `504` | a `SERVICE` or `LOAD` target did not answer within `CQELS_SPARQL_MAX_EXECUTION_SECONDS` |
 
@@ -375,8 +375,11 @@ context.addServlet(new ServletHolder(new SparqlProtocolServlet(engine::getReposi
 ```
 
 With federation enabled, also call `SparqlEndpointLauncher.limitOutboundRequests(engine.getRepository(),
-seconds)` once, before the first request: it gives `SERVICE` its deadline (see *Security*);
-`startServer` does this for you. `LOAD` needs nothing: the servlet performs it itself.
+seconds)` once, before the first request: it gives `SERVICE` its deadline and its refusal of
+XML answers (see *Security*); `startServer` does this for you, and refuses to start when the
+repository's `SERVICE` client cannot be replaced. Until it has run, the servlet answers any
+`SERVICE` with `503`, rather than run it without those limits. `LOAD` needs nothing: the
+servlet performs it itself.
 
 To serve [the metadata graph](#the-metadata-graph), pass a third argument,
 `EngineMetadata.of(engine)`: `new SparqlProtocolServlet(engine::getRepository, options,

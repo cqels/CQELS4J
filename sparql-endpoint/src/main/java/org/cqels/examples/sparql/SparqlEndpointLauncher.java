@@ -225,21 +225,44 @@ public final class SparqlEndpointLauncher {
      * @param timeoutSeconds the deadline; {@code 0} sets none — the client is installed all the
      *                       same, since its refusal of XML answers does not depend on it
      * @return releases the client's connections (the client stays installed)
+     * @throws IllegalStateException when the client cannot be installed — the repository is not a
+     *         {@code SailRepository}, or its resolver does not take the client — so that federation
+     *         is refused rather than run without its limits
      */
     public static AutoCloseable limitOutboundRequests(Repository repository, int timeoutSeconds) {
         if (!(repository instanceof SailRepository sail)
                 || !(sail.getFederatedServiceResolver() instanceof org.eclipse.rdf4j.http.client.HttpClientDependent dependent)) {
-            log.warn("SERVICE requests have no deadline: the repository ({}) exposes no federated-service HTTP client",
-                    repository == null ? "null" : repository.getClass().getName());
-            return () -> { };
+            throw new IllegalStateException("federation is enabled but the repository ("
+                    + (repository == null ? "null" : repository.getClass().getName()) + ") exposes no SERVICE HTTP client "
+                    + "to limit; disable CQELS_SPARQL_FEDERATION_ENABLED");
         }
         TimedServiceClient client = new TimedServiceClient((int) Math.min(Integer.MAX_VALUE, Math.max(0, timeoutSeconds) * 1000L));
         dependent.setHttpClient(client);
+        // A resolver given a session manager of its own ignores setHttpClient without a word:
+        // the protections were then silently absent, and an XML answer read a local file again
+        // (found in co-review of #123). Install through that manager, and check.
+        if (dependent.getHttpClient() != client
+                && dependent instanceof org.eclipse.rdf4j.http.client.SessionManagerDependent managed
+                && managed.getHttpClientSessionManager() instanceof org.eclipse.rdf4j.http.client.HttpClientDependent manager) {
+            manager.setHttpClient(client);
+        }
+        if (dependent.getHttpClient() != client) {
+            client.release();
+            throw new IllegalStateException("federation is enabled but the SERVICE client could not be replaced ("
+                    + dependent.getClass().getName() + "); disable CQELS_SPARQL_FEDERATION_ENABLED");
+        }
         TimedServiceClient earlier = INSTALLED.put(dependent, client);
-        if (earlier != null) {
+        if (earlier != null && earlier != client) {
             earlier.release();
         }
         return client::release;
+    }
+
+    /** Whether {@code repository}'s SERVICE requests go through a {@link TimedServiceClient}. */
+    static boolean outboundLimited(Repository repository) {
+        return repository instanceof SailRepository sail
+                && sail.getFederatedServiceResolver() instanceof org.eclipse.rdf4j.http.client.HttpClientDependent d
+                && d.getHttpClient() instanceof TimedServiceClient;
     }
 
     /** The client {@link #limitOutboundRequests} installed on each resolver, so a second call can close it. */
