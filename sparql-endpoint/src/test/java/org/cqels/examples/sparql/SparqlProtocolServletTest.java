@@ -1195,6 +1195,27 @@ class SparqlProtocolServletTest {
             zip.putNextEntry(new java.util.zip.ZipEntry("part"));
             zip.write("<urn:ex:unnamed> <urn:ex:p> 1 .\n".getBytes(StandardCharsets.UTF_8));
         }
+        var hidden = new java.io.ByteArrayOutputStream();
+        try (var zip = new java.util.zip.ZipOutputStream(hidden)) {
+            zip.putNextEntry(new java.util.zip.ZipEntry("ignored/"));
+            zip.write(new byte[2 << 20]);   // 2 MiB of zeros in a directory entry
+            zip.putNextEntry(new java.util.zip.ZipEntry("data.ttl"));
+            zip.write("<urn:ex:hidden> <urn:ex:p> 1 .\n".getBytes(StandardCharsets.UTF_8));
+        }
+        byte[] badEncoding = ("<?xml version=\"1.0\" encoding=\"X-BOGUS\"?><rdf:RDF "
+                + "xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"/>").getBytes(StandardCharsets.US_ASCII);
+        var budgeted = serve(java.util.Map.of(
+                "/hidden.zip", bytes(hidden.toByteArray(), "Content-Type", "application/zip"),
+                "/bogus.rdf", bytes(badEncoding, "Content-Type", "application/rdf+xml")));
+        try (Endpoint small = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true).withUpdateEnabled(true)
+                .withMaxBufferedBytes(4096), 0)) {
+            var r = post(small.url(), "application/sparql-update", "LOAD <" + base(budgeted) + "/hidden.zip>", null);
+            assertEquals(502, r.statusCode(), "a directory entry's data escaped the budget: " + r.body());
+            var silent = post(small.url(), "application/sparql-update", "LOAD SILENT <" + base(budgeted) + "/bogus.rdf>", null);
+            assertEquals(204, silent.statusCode(), "a parser I/O failure escaped LOAD SILENT: " + silent.body());
+        } finally {
+            budgeted.stop(0);
+        }
         var remote = serve(java.util.Map.of(
                 "/encoded.ttl.gz", bytes(gzip("<urn:ex:encoded> <urn:ex:p> \"once\" .\n"),
                         "Content-Type", "text/turtle", "Content-Encoding", "gzip"),
