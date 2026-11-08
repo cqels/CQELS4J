@@ -557,17 +557,25 @@ public final class SparqlProtocolServlet extends HttpServlet {
     private void writeStatements(HttpServletResponse resp, org.eclipse.rdf4j.query.GraphQuery gq,
                                  Negotiated<RDFFormat> fmt) throws IOException {
         var factory = RDFWriterRegistry.getInstance().get(fmt.format()).orElseThrow();
-        if (options.maxRows() == 0) {
+        // RDF4J's JSON-LD writer collects the whole graph in a model before it writes a byte, so
+        // "streamed" meant "held in full": 1,500 100 KB literals ran a 128 MB heap out of memory as
+        // JSON-LD and streamed fine as N-Triples (found in co-review of #123). Such a format is
+        // always buffered here, within maxBufferedBytes; with no row cap configured, a result
+        // beyond that is refused rather than silently cut short.
+        boolean writerHoldsAll = fmt.format().equals(RDFFormat.JSONLD);
+        if (options.maxRows() == 0 && !writerHoldsAll) {
             gq.evaluate(factory.getWriter(begin(resp, fmt)));
             return;
         }
+        long rowCap = options.maxRows() == 0 ? Long.MAX_VALUE : options.maxRows();
         List<Statement> statements = new ArrayList<>();
         Map<String, String> namespaces;
         boolean truncated = false;
+        boolean tooBig = false;
         try (org.eclipse.rdf4j.query.GraphQueryResult result = gq.evaluate()) {
             long bytes = 0;
             while (result.hasNext()) {
-                if (statements.size() >= options.maxRows()) {
+                if (statements.size() >= rowCap) {
                     truncated = true;
                     break;
                 }
@@ -576,12 +584,19 @@ public final class SparqlProtocolServlet extends HttpServlet {
                         + estimate(st.getContext());
                 if (bytes + size > options.maxBufferedBytes()) {
                     truncated = true;
+                    tooBig = options.maxRows() == 0;
                     break;
                 }
                 bytes += size;
                 statements.add(st);
             }
             namespaces = result.getNamespaces();
+        }
+        if (tooBig) {
+            fail(resp, HttpServletResponse.SC_SERVICE_UNAVAILABLE, "the result exceeds " + options.maxBufferedBytes()
+                    + " bytes, the most this endpoint holds to write " + fmt.mediaType()
+                    + "; ask for Turtle or N-Triples, which stream");
+            return;
         }
         if (truncated) {
             resp.setHeader(TRUNCATED_HEADER, "true");
@@ -1065,7 +1080,7 @@ public final class SparqlProtocolServlet extends HttpServlet {
      */
     private static boolean outboundTimedOut(Throwable e) {
         for (Throwable t = e; t != null; t = t.getCause()) {
-            if (t instanceof java.net.SocketTimeoutException
+            if (t instanceof java.net.SocketTimeoutException   // TimedServiceClient's deadline reports as one
                     || t instanceof org.apache.http.conn.ConnectTimeoutException) {
                 return true;
             }

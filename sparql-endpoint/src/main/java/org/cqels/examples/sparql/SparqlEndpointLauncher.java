@@ -179,11 +179,23 @@ public final class SparqlEndpointLauncher {
     public static Server startServer(CQELSEngine engine, String host, int port, EndpointOptions options,
                                      int maxThreads, boolean virtualThreads) throws Exception {
         requireTokenForRemoteBind(host, options.authToken(), options.allowUnauthenticatedRemote());
-        if (options.federationEnabled()) {
-            limitOutboundRequests(engine.getRepository(), options.maxExecutionSeconds());
-        }
-        return startServer(engine::getRepository, options.metadataEnabled() ? EngineMetadata.of(engine) : null,
+        AutoCloseable outbound = options.federationEnabled()
+                ? limitOutboundRequests(engine.getRepository(), options.maxExecutionSeconds()) : () -> { };
+        Server server = startServer(engine::getRepository, options.metadataEnabled() ? EngineMetadata.of(engine) : null,
                 host, port, options, maxThreads, virtualThreads);
+        // Let the SERVICE client's connections go when Jetty stops; it stays installed and
+        // reopens if used again (a restart, or the engine's own SERVICE).
+        server.addEventListener(new org.eclipse.jetty.util.component.LifeCycle.Listener() {
+            @Override
+            public void lifeCycleStopped(org.eclipse.jetty.util.component.LifeCycle event) {
+                try {
+                    outbound.close();
+                } catch (Exception e) {
+                    log.warn("could not release the SERVICE client's connections: {}", e.toString());
+                }
+            }
+        });
+        return server;
     }
 
     /**
@@ -196,43 +208,44 @@ public final class SparqlEndpointLauncher {
      * program mounting the servlet itself calls it once. ({@code LOAD} needs none of this: the
      * servlet performs it with its own bounded client.)
      *
+     * <p>The deadline is absolute — a request still running at it is aborted — not only a wait
+     * per byte, which a remote trickling its headers never trips; see {@link TimedServiceClient}.
+     *
      * <p><strong>The client stays installed</strong>, for as long as the repository lives, and the
      * engine's own {@code SERVICE} calls use it too. It cannot be handed back: RDF4J's
      * {@code setHttpClient} closes the client RDF4J made and accepts no {@code null}, so
      * "restoring" it on stop left the engine's resolver holding a closed client, and a first
      * attempt that closed this one on stop broke federation after a Jetty restart with
-     * "Connection pool shut down" (both found in co-review of #123). Calling this again for the
-     * same repository replaces the client and closes the one this method installed before.
-     * Nothing here is JVM-wide.
+     * "Connection pool shut down" (both found in co-review of #123). What the returned handle
+     * closes is the client's connection pool, which reopens if the client is used again; RDF4J
+     * itself never closes a client it was handed. Calling this again for the same repository
+     * replaces the client and closes the one this method installed before. Nothing here is
+     * JVM-wide.
      *
      * @param timeoutSeconds the deadline; {@code 0} installs nothing
+     * @return releases the client's connections (the client stays installed)
      */
-    public static void limitOutboundRequests(Repository repository, int timeoutSeconds) {
+    public static AutoCloseable limitOutboundRequests(Repository repository, int timeoutSeconds) {
         if (timeoutSeconds <= 0) {
-            return;
+            return () -> { };
         }
         if (!(repository instanceof SailRepository sail)
                 || !(sail.getFederatedServiceResolver() instanceof org.eclipse.rdf4j.http.client.HttpClientDependent dependent)) {
             log.warn("SERVICE requests have no deadline: the repository ({}) exposes no federated-service HTTP client",
                     repository == null ? "null" : repository.getClass().getName());
-            return;
+            return () -> { };
         }
-        int ms = (int) Math.min(Integer.MAX_VALUE, timeoutSeconds * 1000L);
-        org.apache.http.impl.client.CloseableHttpClient client = org.apache.http.impl.client.HttpClientBuilder.create()
-                .useSystemProperties()
-                .setDefaultRequestConfig(org.apache.http.client.config.RequestConfig.custom()
-                        .setCookieSpec("standard")   // what RDF4J's own client sets
-                        .setConnectTimeout(ms).setConnectionRequestTimeout(ms).setSocketTimeout(ms).build())
-                .build();
+        TimedServiceClient client = new TimedServiceClient((int) Math.min(Integer.MAX_VALUE, timeoutSeconds * 1000L));
         dependent.setHttpClient(client);
-        org.apache.http.impl.client.CloseableHttpClient earlier = INSTALLED.put(dependent, client);
+        TimedServiceClient earlier = INSTALLED.put(dependent, client);
         if (earlier != null) {
-            org.apache.http.client.utils.HttpClientUtils.closeQuietly(earlier);
+            earlier.release();
         }
+        return client::release;
     }
 
     /** The client {@link #limitOutboundRequests} installed on each resolver, so a second call can close it. */
-    private static final java.util.Map<Object, org.apache.http.impl.client.CloseableHttpClient> INSTALLED =
+    private static final java.util.Map<Object, TimedServiceClient> INSTALLED =
             java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
 
     /**
