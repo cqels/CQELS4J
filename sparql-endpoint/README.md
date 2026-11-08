@@ -130,7 +130,7 @@ All settings are environment variables, named like the MCP server's `CQELS_MCP_H
 | `default-graph-uri`, `named-graph-uri` | query dataset; overrides `FROM` / `FROM NAMED` in the query |
 | `using-graph-uri`, `using-named-graph-uri` | update dataset; together with `USING`, `USING NAMED` or `WITH` in the update → `400` (§2.2.3) |
 | relative IRIs | resolved against the request URL, the service-defined base of §2.3 |
-| `Accept` | negotiated through RDF4J's writer registries per RFC 9110: `q` values honoured, `q=0` excludes, the most specific range wins, repeated `Accept` fields form one list, parameters count (`text/csv;charset=UTF-8` is more specific than `text/csv`; `charset=ISO-8859-1` matches nothing, since the writers emit UTF-8), and the response is labelled with the media type that matched (`application/json` if that is what was asked for). Defaults: SPARQL JSON for SELECT/ASK, Turtle for CONSTRUCT/DESCRIBE. Also XML, CSV, TSV, binary for results; N-Triples, N-Quads, TriG, RDF/XML, JSON-LD for graphs. |
+| `Accept` | negotiated through RDF4J's writer registries per RFC 9110: `q` values honoured, `q=0` excludes, the most specific range wins, repeated `Accept` fields form one list, parameters count (`text/csv;charset=UTF-8` is more specific than `text/csv`; `charset=ISO-8859-1` matches nothing, since the writers emit UTF-8), and the response is labelled with the media type that matched (`application/json` if that is what was asked for). Defaults: SPARQL JSON for SELECT/ASK, Turtle for CONSTRUCT/DESCRIBE. Also XML, CSV, TSV, binary for results; N-Triples, N-Quads, TriG, RDF/XML, JSON-LD for graphs (JSON-LD is held in full before it is written, so it is bounded by `CQELS_SPARQL_MAX_BUFFERED_BYTES`; the others stream). |
 | `GET /health`, `GET /ready` | `200` once the engine has started and Jetty is bound (never behind the token). |
 
 | Status | When |
@@ -144,7 +144,7 @@ All settings are environment variables, named like the MCP server's `CQELS_MCP_H
 | `413` | body over `CQELS_SPARQL_MAX_REQUEST_BYTES` |
 | `415` | unknown POST `Content-Type` or charset |
 | `500` | evaluation failed, or the request ran out of heap (see *Memory*) |
-| `503` | execution limit exceeded by a query or an update (as Fuseki answers), or every query slot busy (then with `Retry-After: 1`) |
+| `503` | execution limit exceeded by a query or an update (as Fuseki answers), every query slot busy (then with `Retry-After: 1`), or a JSON-LD result larger than `CQELS_SPARQL_MAX_BUFFERED_BYTES` |
 | `502` | a `LOAD` source failed: an HTTP error, a redirect to anything but `http`/`https`, a body over `CQELS_SPARQL_MAX_BUFFERED_BYTES`, or no parseable RDF (`LOAD SILENT`: `204`, nothing changed) |
 | `504` | a `SERVICE` or `LOAD` target did not answer within `CQELS_SPARQL_MAX_EXECUTION_SECONDS` |
 
@@ -252,7 +252,9 @@ instead (after 40 s, under a 30 s limit). So:
 - **What the endpoint itself holds is bounded.** Results stream unless `MAX_ROWS` is set; then
   at most `MAX_ROWS` rows (or statements) and `MAX_BUFFERED_BYTES` of them are held per query,
   so `MAX_CONCURRENT_QUERIES × MAX_BUFFERED_BYTES` in all. A row cap alone did not bound bytes:
-  one computed literal made an 8 MB response under `MAX_ROWS=1`.
+  one computed literal made an 8 MB response under `MAX_ROWS=1`. JSON-LD is the exception to
+  streaming — RDF4J's writer holds the whole graph — so it is always held to
+  `MAX_BUFFERED_BYTES`, and refused (`503`) beyond it when no row cap is set.
 - Behind a token, only token holders can send such queries. Without one, anyone who can reach
   the port can.
 
@@ -298,9 +300,12 @@ requested upstream as cqels/claude#1387; the Jetty version here is pinned to the
   read `file:` contexts), and RDF/XML and TriX are parsed with no doctype and no external
   entities (RDF4J's defaults let an entity read a local file). The cost: `LOAD` must be
   the only operation in its request (`400` otherwise). `SERVICE` gets the same deadline
-  through a timed client installed on the engine repository's federated-service resolver
-  (`SparqlEndpointLauncher.limitOutboundRequests`); it stays installed for the repository's
-  lifetime, so the engine's own `SERVICE` calls get the deadline too. Nothing is set JVM-wide.
+  through a client installed on the engine repository's federated-service resolver
+  (`SparqlEndpointLauncher.limitOutboundRequests`). The deadline is absolute: a request still
+  running at it is aborted, so a remote that trickles its headers or body a byte at a time
+  cannot hold the slot. The client stays installed for the repository's lifetime, so the
+  engine's own `SERVICE` calls get the deadline too; its connections are released when Jetty
+  stops and reopen if it is used again. Nothing is set JVM-wide.
 - **Browser requests from other origins are refused (`403`).** Loopback is not a boundary
   against a browser: any page the user visits can submit a cross-origin form POST — a CORS
   "simple" request, sent without a preflight — to `127.0.0.1:8089`. Withholding CORS headers

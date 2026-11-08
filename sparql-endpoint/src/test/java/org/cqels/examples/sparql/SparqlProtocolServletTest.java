@@ -961,6 +961,24 @@ class SparqlProtocolServletTest {
         }
     }
 
+    /**
+     * RDF4J's JSON-LD writer holds the whole graph before writing, so with no row cap it is held
+     * to maxBufferedBytes and refused beyond it; a streaming format is not limited.
+     */
+    @Test
+    void jsonLdIsHeldToTheBufferBudget() throws Exception {
+        try (Endpoint small = Endpoint.start(EndpointOptions.defaults().withMaxBufferedBytes(2_000), 50)) {
+            String q = "CONSTRUCT { ?s <urn:ex:v> ?x } WHERE { ?s <urn:ex:v> ?x }";
+            var json = get(small.url(), q, "application/ld+json");
+            assertEquals(503, json.statusCode(), json.body());
+            assertTrue(json.body().contains("N-Triples"), json.body());
+            var nt = get(small.url(), q, "application/n-triples");
+            assertEquals(200, nt.statusCode());
+            assertEquals(50, nt.body().strip().split("\n").length);
+            assertTrue(nt.headers().firstValue(SparqlProtocolServlet.TRUNCATED_HEADER).isEmpty());
+        }
+    }
+
     @Test
     void constructIsAvailableAsRdfXmlAndJsonLd() throws Exception {
         String q = "CONSTRUCT { ?v <urn:ex:depot> ?d } WHERE { ?v <urn:ex:depot> ?d }";
@@ -1168,6 +1186,43 @@ class SparqlProtocolServletTest {
         }
     }
 
+    /**
+     * Socket timeouts bound the wait per byte: a remote trickling its response headers held the
+     * only slot for 6.4 s under a 1 s limit. The deadline is absolute now.
+     */
+    @Test
+    void aServiceTricklingItsHeadersIsCutOffAtTheDeadline() throws Exception {
+        // headers trickled, then (complete headers) a body trickled: both must end at the deadline
+        for (String prefix : List.of("HTTP/1.1 200 OK\r\nX-Slow: ",
+                "HTTP/1.1 200 OK\r\nContent-Type: application/sparql-results+json\r\nContent-Length: 5000\r\n\r\n{")) {
+            try (java.net.ServerSocket remote = new java.net.ServerSocket(0, 50, java.net.InetAddress.getLoopbackAddress());
+                 Endpoint ep = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true).withMaxExecutionSeconds(1)
+                         .withMaxConcurrentQueries(1), 0)) {
+                Thread trickler = new Thread(() -> {
+                    try (java.net.Socket s = remote.accept()) {
+                        var out = s.getOutputStream();
+                        out.write(prefix.getBytes(StandardCharsets.US_ASCII));
+                        for (int i = 0; i < 100; i++) {
+                            Thread.sleep(200);
+                            out.write(' ');
+                            out.flush();
+                        }
+                    } catch (Exception ignored) {
+                        // the endpoint gave up: done
+                    }
+                });
+                trickler.setDaemon(true);
+                trickler.start();
+                long t0 = System.nanoTime();
+                var r = get(ep.url(), "SELECT * WHERE { SERVICE <http://127.0.0.1:" + remote.getLocalPort() + "/sparql> { ?s ?p ?o } }", null);
+                double took = (System.nanoTime() - t0) / 1e9;
+                assertEquals(504, r.statusCode(), prefix + " -> " + r.body());
+                assertTrue(took < 4, "took " + took + " s");
+                assertEquals(200, get(ep.url(), "ASK {}", null).statusCode(), "the slot was not given back");
+            }
+        }
+    }
+
     /** A metadata query made its own SERVICE resolver, with RDF4J's untimed client. */
     @Test
     void serviceInAMetadataQueryHasTheDeadlineToo() throws Exception {
@@ -1207,8 +1262,14 @@ class SparqlProtocolServletTest {
             // the servlet instance is reused: a POST (which arms the upload watchdog) still works
             var posted = post(url, "application/sparql-query", "ASK {}", null);
             assertEquals(200, posted.statusCode(), posted.body());
-            // and once the endpoint stops, the engine's own resolver still works
+            // and once the endpoint stops, the client's connections are let go, the client stays
+            // installed, and the engine's own resolver still works (reopening them)
+            var resolver = (org.eclipse.rdf4j.http.client.HttpClientDependent)
+                    ((org.eclipse.rdf4j.repository.sail.SailRepository) ep.engine().getRepository()).getFederatedServiceResolver();
+            var client = (TimedServiceClient) resolver.getHttpClient();
+            assertTrue(client.poolOpen());
             ep.server().stop();
+            assertFalse(client.poolOpen(), "Jetty stopped and the SERVICE connections stayed open");
             try (RepositoryConnection c = ep.engine().getRepository().getConnection();
                  var rows = c.prepareTupleQuery(q).evaluate()) {
                 assertFalse(rows.hasNext());
