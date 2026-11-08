@@ -69,6 +69,44 @@ final class TimedServiceClient extends CloseableHttpClient {
             + "text/boolean;q=0.5";
 
     private final int timeoutMillis;
+
+    /** Stands in for a deadline when there is none: cancelling it does nothing. */
+    private static final ScheduledFuture<?> NO_DEADLINE = new ScheduledFuture<Object>() {
+        @Override
+        public long getDelay(TimeUnit unit) {
+            return Long.MAX_VALUE;
+        }
+
+        @Override
+        public int compareTo(java.util.concurrent.Delayed o) {
+            return 1;
+        }
+
+        @Override
+        public boolean cancel(boolean mayInterruptIfRunning) {
+            return false;
+        }
+
+        @Override
+        public boolean isCancelled() {
+            return false;
+        }
+
+        @Override
+        public boolean isDone() {
+            return false;
+        }
+
+        @Override
+        public Object get() {
+            return null;
+        }
+
+        @Override
+        public Object get(long timeout, TimeUnit unit) {
+            return null;
+        }
+    };
     private CloseableHttpClient pool;   // guarded by this
 
     TimedServiceClient(int timeoutMillis) {
@@ -109,14 +147,16 @@ final class TimedServiceClient extends CloseableHttpClient {
     @Override
     protected CloseableHttpResponse doExecute(HttpHost target, HttpRequest request, HttpContext context)
             throws IOException {
-        if (!(request instanceof AbstractExecutionAwareRequest abortable)) {
-            return pool().execute(target, request, context);
-        }
+        // With no execution limit (timeoutMillis 0) there is no deadline, but the format rules
+        // below still hold: skipping the whole client for a 0 limit let an XML answer through
+        // (found in co-review of #123).
         java.util.concurrent.atomic.AtomicBoolean fired = new java.util.concurrent.atomic.AtomicBoolean();
-        ScheduledFuture<?> deadline = DEADLINES.schedule(() -> {
-            fired.set(true);
-            abortable.abort();
-        }, timeoutMillis, TimeUnit.MILLISECONDS);
+        ScheduledFuture<?> deadline = timeoutMillis > 0 && request instanceof AbstractExecutionAwareRequest abortable
+                ? DEADLINES.schedule(() -> {
+                    fired.set(true);
+                    abortable.abort();
+                }, timeoutMillis, TimeUnit.MILLISECONDS)
+                : NO_DEADLINE;
         request.setHeader("Accept", ACCEPT);
         CloseableHttpResponse response;
         try {

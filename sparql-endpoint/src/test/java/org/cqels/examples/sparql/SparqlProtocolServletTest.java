@@ -969,9 +969,17 @@ class SparqlProtocolServletTest {
     void jsonLdIsHeldToTheBufferBudget() throws Exception {
         try (Endpoint small = Endpoint.start(EndpointOptions.defaults().withMaxBufferedBytes(2_000), 50)) {
             String q = "CONSTRUCT { ?s <urn:ex:v> ?x } WHERE { ?s <urn:ex:v> ?x }";
-            var json = get(small.url(), q, "application/ld+json");
-            assertEquals(503, json.statusCode(), json.body());
-            assertTrue(json.body().contains("N-Triples"), json.body());
+            for (String type : List.of("application/ld+json", "application/x-ld+ndjson")) {   // both writers hold statements
+                var json = get(small.url(), q, type);
+                assertEquals(503, json.statusCode(), type + ": " + json.body());
+                assertTrue(json.body().contains("N-Triples"), json.body());
+            }
+            // Turtle streams with pretty-printing off. A buffering writer regroups a subject
+            // that keeps coming back between others; a streaming one writes it each time.
+            var turtle = get(small.url(), "CONSTRUCT { ?s <urn:ex:v> ?x . <urn:ex:same> <urn:ex:saw> ?s } "
+                    + "WHERE { ?s <urn:ex:v> ?x }", "text/turtle");
+            assertEquals(200, turtle.statusCode(), turtle.body());
+            assertTrue(turtle.body().split("urn:ex:same", -1).length - 1 > 10, "Turtle was buffered and regrouped: " + turtle.body());
             var nt = get(small.url(), q, "application/n-triples");
             assertEquals(200, nt.statusCode());
             assertEquals(50, nt.body().strip().split("\n").length);
@@ -1070,7 +1078,18 @@ class SparqlProtocolServletTest {
                 "/moved", respond(302, "text/plain", "", 0, "Location", "/elsewhere"),
                 "/redirect.ttl", respond(302, "text/plain", "", 0, "Location", secret.toUri().toString()),
                 "/stalled.ttl", respond(200, "text/turtle", "<urn:ex:late> <urn:ex:p> 1 .\n", 6_000),
-                "/missing.ttl", respond(404, "text/plain", "no", 0)));
+                "/missing.ttl", respond(404, "text/plain", "no", 0),
+                "/zipped.ttl", ex -> {
+                    var bytes = new java.io.ByteArrayOutputStream();
+                    try (var gz = new java.util.zip.GZIPOutputStream(bytes)) {
+                        gz.write("<urn:ex:zipped> <urn:ex:p> \"decoded\" .\n".getBytes(StandardCharsets.UTF_8));
+                    }
+                    ex.getResponseHeaders().add("Content-Type", "text/turtle");
+                    ex.getResponseHeaders().add("Content-Encoding", "gzip");
+                    ex.sendResponseHeaders(200, bytes.size());
+                    ex.getResponseBody().write(bytes.toByteArray());
+                    ex.close();
+                }));
         try (Endpoint ep = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true).withUpdateEnabled(true)
                 .withMaxExecutionSeconds(2), 0)) {
             String r = base(remote);
@@ -1090,6 +1109,9 @@ class SparqlProtocolServletTest {
             assertTrue(took < 5, "took " + took + " s");
 
             assertEquals(502, post(ep.url(), "application/sparql-update", "LOAD <" + r + "/missing.ttl>", null).statusCode());
+            var zipped = post(ep.url(), "application/sparql-update", "LOAD <" + r + "/zipped.ttl>", null);
+            assertEquals(204, zipped.statusCode(), zipped.body());
+            assertTrue(ask(ep.url(), "ASK { <urn:ex:zipped> ?p \"decoded\" }"), "a gzip-encoded source was not decoded");
             assertEquals(204, post(ep.url(), "application/sparql-update", "LOAD SILENT <" + r + "/missing.ttl>", null).statusCode());
             var mixed = post(ep.url(), "application/sparql-update",
                     "LOAD <" + r + "/data.ttl> ; INSERT DATA { <urn:ex:a> <urn:ex:b> <urn:ex:c> }", null);
@@ -1264,6 +1286,12 @@ class SparqlProtocolServletTest {
             var leak = get(fed.url(), "SELECT ?o WHERE { SERVICE <" + base(remote) + "/xml> { ?s ?p ?o } }", "text/csv");
             assertTrue(leak.statusCode() >= 500, leak.statusCode() + " " + leak.body());
             assertFalse(leak.body().contains("server-side secret"), "an XML entity in a SERVICE answer read a local file");
+        }
+        // with no execution limit there is no deadline, but XML is refused all the same
+        try (Endpoint unlimited = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true).withMaxExecutionSeconds(0), 0)) {
+            var leak = get(unlimited.url(), "SELECT ?o WHERE { SERVICE <" + base(remote) + "/xml> { ?s ?p ?o } }", "text/csv");
+            assertTrue(leak.statusCode() >= 500, leak.statusCode() + " " + leak.body());
+            assertFalse(leak.body().contains("server-side secret"), "with no limit, an XML entity read a local file");
         } finally {
             remote.stop(0);
         }
