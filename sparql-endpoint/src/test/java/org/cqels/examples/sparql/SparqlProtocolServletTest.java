@@ -936,6 +936,11 @@ class SparqlProtocolServletTest {
             assertEquals(200, big.statusCode(), big.body());
             assertEquals("true", big.headers().firstValue(SparqlProtocolServlet.TRUNCATED_HEADER).orElse(""));
             assertEquals(3, big.body().strip().split("\n").length);   // header + 2 rows
+            // a long datatype IRI counts too: it passed as 66 bytes
+            var typed = post(capped.url(), "application/sparql-query", "SELECT (STRDT(\"x\", IRI(CONCAT(\"urn:\", STR(?x), \""
+                    + "d".repeat(10_000) + "\"))) AS ?t) WHERE { ?s <urn:ex:v> ?x }", "text/csv");
+            assertEquals(200, typed.statusCode(), typed.body());
+            assertEquals("true", typed.headers().firstValue(SparqlProtocolServlet.TRUNCATED_HEADER).orElse(""));
             var small = get(capped.url(), "SELECT ?s WHERE { ?s <urn:ex:v> ?x }", "text/csv");
             assertTrue(small.headers().firstValue(SparqlProtocolServlet.TRUNCATED_HEADER).isEmpty(), "10 small rows fit");
         }
@@ -1027,73 +1032,129 @@ class SparqlProtocolServletTest {
         }
     }
 
-    /** The launcher's main, in a JVM of its own: JVM-wide settings (LOAD's redirects and timeouts) need a fresh one. */
-    static final class Launched implements AutoCloseable {
-        final Process process;
-        final String url;
-
-        Launched(java.util.Map<String, String> env) throws Exception {
-            ProcessBuilder pb = new ProcessBuilder(
-                    java.nio.file.Path.of(System.getProperty("java.home"), "bin", "java").toString(),
-                    "-cp", System.getProperty("java.class.path"), SparqlEndpointLauncher.class.getName());
-            pb.environment().keySet().removeIf(k -> k.startsWith("CQELS_SPARQL_"));
-            pb.environment().put("CQELS_SPARQL_PORT", "0");
-            pb.environment().putAll(env);
-            pb.redirectError(ProcessBuilder.Redirect.DISCARD);
-            process = pb.start();
-            var lines = new java.io.BufferedReader(new java.io.InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8));
-            String line = java.util.concurrent.CompletableFuture.supplyAsync(() -> {
-                try {
-                    return lines.readLine();
-                } catch (IOException e) {
-                    return null;
-                }
-            }).get(60, java.util.concurrent.TimeUnit.SECONDS);
-            if (line == null || !line.startsWith("listening on ")) {
-                process.destroyForcibly();
-                throw new IllegalStateException("the launcher did not start: " + line);
-            }
-            url = line.substring("listening on ".length());
-        }
-
-        @Override
-        public void close() throws Exception {
-            process.destroy();
-            if (!process.waitFor(20, java.util.concurrent.TimeUnit.SECONDS)) {
-                process.destroyForcibly();
-            }
-        }
-    }
-
     /**
-     * RDF4J's LOAD follows redirects by hand, to any scheme: an http URL that redirects to
-     * {@code file:} read the file. The launcher turns redirect-following off and gives LOAD a
-     * deadline; a plain LOAD still works.
+     * LOAD is performed by the servlet: RDF4J's loader followed a redirect into a local file and
+     * waited without a deadline. Redirects to http(s) still work; anything else is refused.
      */
     @Test
-    void launchedLoadFollowsNoRedirectAndHasADeadline(@org.junit.jupiter.api.io.TempDir java.nio.file.Path dir) throws Exception {
+    void loadIsBoundedAndFollowsOnlyHttpRedirects(@org.junit.jupiter.api.io.TempDir java.nio.file.Path dir) throws Exception {
         java.nio.file.Path secret = dir.resolve("secret.ttl");
         java.nio.file.Files.writeString(secret, "<urn:ex:secret> <urn:ex:p> \"server-side file\" .\n");
         var remote = serve(java.util.Map.of(
                 "/data.ttl", respond(200, "text/turtle", "<urn:ex:loaded> <urn:ex:p> \"fetched\" .\n", 0),
+                "/elsewhere", respond(200, "application/n-triples", "<urn:ex:moved> <urn:ex:p> \"followed\" .\n", 0),
+                "/moved", respond(302, "text/plain", "", 0, "Location", "/elsewhere"),
                 "/redirect.ttl", respond(302, "text/plain", "", 0, "Location", secret.toUri().toString()),
-                "/stalled.ttl", respond(200, "text/turtle", "<urn:ex:late> <urn:ex:p> 1 .\n", 6_000)));
-        try (Launched ep = new Launched(java.util.Map.of("CQELS_SPARQL_FEDERATION_ENABLED", "true",
-                "CQELS_SPARQL_UPDATE_ENABLED", "true", "CQELS_SPARQL_MAX_EXECUTION_SECONDS", "2"))) {
-            var plain = post(ep.url, "application/sparql-update", "LOAD <" + base(remote) + "/data.ttl>", null);
-            assertEquals(204, plain.statusCode(), plain.body());
-            assertTrue(get(ep.url, "ASK { <urn:ex:loaded> ?p ?o }", null).body().replace(" ", "").contains("true"));
+                "/stalled.ttl", respond(200, "text/turtle", "<urn:ex:late> <urn:ex:p> 1 .\n", 6_000),
+                "/missing.ttl", respond(404, "text/plain", "no", 0)));
+        try (Endpoint ep = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true).withUpdateEnabled(true)
+                .withMaxExecutionSeconds(2), 0)) {
+            String r = base(remote);
+            assertEquals(204, post(ep.url(), "application/sparql-update", "LOAD <" + r + "/data.ttl>", null).statusCode());
+            assertTrue(ask(ep.url(), "ASK { <urn:ex:loaded> ?p ?o }"));
+            assertEquals(204, post(ep.url(), "application/sparql-update", "LOAD <" + r + "/moved> INTO GRAPH <urn:ex:g9>", null).statusCode());
+            assertTrue(ask(ep.url(), "ASK { GRAPH <urn:ex:g9> { <urn:ex:moved> ?p ?o } }"), "an http redirect is followed, into the named graph");
 
-            var redirected = post(ep.url, "application/sparql-update", "LOAD <" + base(remote) + "/redirect.ttl>", null);
-            assertTrue(redirected.statusCode() >= 400, redirected.statusCode() + " " + redirected.body());
-            assertFalse(get(ep.url, "ASK { <urn:ex:secret> ?p ?o }", null).body().replace(" ", "").contains("true"),
-                    "LOAD followed a redirect into a local file");
+            var toFile = post(ep.url(), "application/sparql-update", "LOAD <" + r + "/redirect.ttl>", null);
+            assertEquals(502, toFile.statusCode(), toFile.body());
+            assertFalse(ask(ep.url(), "ASK { <urn:ex:secret> ?p ?o }"), "LOAD followed a redirect into a local file");
 
             long t0 = System.nanoTime();
-            var stalled = post(ep.url, "application/sparql-update", "LOAD <" + base(remote) + "/stalled.ttl>", null);
+            var stalled = post(ep.url(), "application/sparql-update", "LOAD <" + r + "/stalled.ttl>", null);
             double took = (System.nanoTime() - t0) / 1e9;
             assertEquals(504, stalled.statusCode(), stalled.body());
             assertTrue(took < 5, "took " + took + " s");
+
+            assertEquals(502, post(ep.url(), "application/sparql-update", "LOAD <" + r + "/missing.ttl>", null).statusCode());
+            assertEquals(204, post(ep.url(), "application/sparql-update", "LOAD SILENT <" + r + "/missing.ttl>", null).statusCode());
+            var mixed = post(ep.url(), "application/sparql-update",
+                    "LOAD <" + r + "/data.ttl> ; INSERT DATA { <urn:ex:a> <urn:ex:b> <urn:ex:c> }", null);
+            assertEquals(400, mixed.statusCode(), mixed.body());
+            var reserved = post(ep.url(), "application/sparql-update", "LOAD <" + r + "/data.ttl> INTO GRAPH <" + META + ">", null);
+            assertEquals(403, reserved.statusCode(), reserved.body());
+        } finally {
+            remote.stop(0);
+        }
+    }
+
+    /**
+     * A chunked body whose framing never yields a byte — a chunk extension sent a character at a
+     * time — kept the slot past the deadline, the traffic keeping the idle timeout away.
+     */
+    @Test
+    void aBodyStuckInChunkFramingIsCutOffAtTheDeadline() throws Exception {
+        try (Endpoint ep = Endpoint.start(EndpointOptions.defaults().withMaxConcurrentQueries(1).withMaxUploadSeconds(2), 0);
+             java.net.Socket slow = new java.net.Socket("127.0.0.1", URI.create(ep.url()).getPort())) {
+            var out = slow.getOutputStream();
+            out.write(("POST /sparql HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/sparql-query\r\n"
+                    + "Transfer-Encoding: chunked\r\n\r\n3\r\nASK\r\n1;ext=").getBytes(StandardCharsets.US_ASCII));
+            out.flush();
+            slow.setSoTimeout(15_000);
+            var in = new java.io.BufferedReader(new java.io.InputStreamReader(slow.getInputStream(), StandardCharsets.US_ASCII));
+            Thread trickle = new Thread(() -> {
+                try {
+                    for (int i = 0; i < 40; i++) {
+                        Thread.sleep(300);
+                        out.write('a');
+                        out.flush();
+                    }
+                } catch (Exception ignored) {
+                    // the server closed the connection: done
+                }
+            });
+            trickle.setDaemon(true);
+            long t0 = System.nanoTime();
+            trickle.start();
+            String status = in.readLine();
+            assertTrue(status != null && status.contains(" 408 "), "status line: " + status);
+            assertTrue((System.nanoTime() - t0) / 1e9 < 8, "the deadline took too long");
+            assertEquals(200, getWithin(ep.url() + "?query=" + enc("ASK {}"), java.time.Duration.ofSeconds(5)).statusCode(),
+                    "the slot was not given back, or the interrupt leaked into the next request");
+        }
+    }
+
+    /** A metadata query made its own SERVICE resolver, with RDF4J's untimed client. */
+    @Test
+    void serviceInAMetadataQueryHasTheDeadlineToo() throws Exception {
+        var remote = serve(java.util.Map.of(
+                "/slow", respond(200, "application/sparql-results+json", "{\"head\":{\"vars\":[]},\"results\":{\"bindings\":[]}}", 5_000),
+                "/fast", respond(200, "application/sparql-results+json", "{\"head\":{\"vars\":[]},\"results\":{\"bindings\":[]}}", 0)));
+        try (Endpoint ep = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true).withMetadataEnabled(true)
+                .withMaxExecutionSeconds(1), 0)) {
+            long t0 = System.nanoTime();
+            var r = get(ep.url(), "SELECT * FROM <" + META + "> WHERE { SERVICE <" + base(remote) + "/slow> { ?s ?p ?o } }", null);
+            assertEquals(504, r.statusCode(), r.body());
+            assertTrue((System.nanoTime() - t0) / 1e9 < 4);
+            // the snapshot's shutdown left the shared resolver working
+            var after = get(ep.url(), "SELECT * WHERE { SERVICE <" + base(remote) + "/fast> { ?s ?p ?o } }", null);
+            assertEquals(200, after.statusCode(), after.body());
+        } finally {
+            remote.stop(0);
+        }
+    }
+
+    /**
+     * Stopping Jetty closed the SERVICE client but left it installed, so a restart broke
+     * federation; and handing RDF4J's client back on stop would have left the engine a closed one.
+     */
+    @Test
+    void federationSurvivesAJettyRestart() throws Exception {
+        var remote = serve(java.util.Map.of("/fast", respond(200, "application/sparql-results+json",
+                "{\"head\":{\"vars\":[]},\"results\":{\"bindings\":[]}}", 0)));
+        try (Endpoint ep = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true), 0)) {
+            String q = "SELECT * WHERE { SERVICE <" + base(remote) + "/fast> { ?s ?p ?o } }";
+            assertEquals(200, get(ep.url(), q, null).statusCode());
+            ep.server().stop();
+            ep.server().start();
+            String url = "http://127.0.0.1:" + ((ServerConnector) ep.server().getConnectors()[0]).getLocalPort() + "/sparql";
+            var again = get(url, q, null);
+            assertEquals(200, again.statusCode(), again.body());
+            // and once the endpoint stops, the engine's own resolver still works
+            ep.server().stop();
+            try (RepositoryConnection c = ep.engine().getRepository().getConnection();
+                 var rows = c.prepareTupleQuery(q).evaluate()) {
+                assertFalse(rows.hasNext());
+            }
         } finally {
             remote.stop(0);
         }
@@ -1121,6 +1182,9 @@ class SparqlProtocolServletTest {
             assertTrue(e.getMessage().contains("CQELS_SPARQL_AUTH_TOKEN"), e.getMessage());
             assertThrows(IllegalStateException.class, () -> SparqlEndpointLauncher.startServer(engine::getRepository,
                     null, "0.0.0.0", 0, EndpointOptions.defaults(), 64, false));
+            // no host is every interface to Jetty, so it is not loopback either
+            assertThrows(IllegalStateException.class, () -> SparqlEndpointLauncher.startServer(engine,
+                    null, 0, EndpointOptions.defaults(), 64, false));
         } finally {
             engine.close();
         }
