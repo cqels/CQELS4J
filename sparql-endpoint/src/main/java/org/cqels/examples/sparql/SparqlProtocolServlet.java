@@ -97,7 +97,9 @@ import java.util.function.Supplier;
  * would only move the same blocking work to another pool. Results stream to the response —
  * nothing is buffered unless {@link EndpointOptions#maxRows()} asks for a bounded buffer, with
  * one exception: JSON-LD and NDJSON-LD, whose RDF4J writers hold statements before writing, are
- * always buffered within {@link EndpointOptions#maxBufferedBytes()} and refused (503) beyond it.
+ * always buffered within {@link EndpointOptions#maxBufferedBytes()}: beyond it they are refused
+ * (503) when {@code maxRows} is {@code 0}, and truncated like any buffered result
+ * ({@code X-CQELS-Truncated}) when a row cap is set.
  *
  * <p>Protocol mapping (SPARQL 1.1 Protocol §2):
  * <pre>

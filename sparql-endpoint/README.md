@@ -144,7 +144,7 @@ All settings are environment variables, named like the MCP server's `CQELS_MCP_H
 | `413` | body over `CQELS_SPARQL_MAX_REQUEST_BYTES` |
 | `415` | unknown POST `Content-Type` or charset |
 | `500` | evaluation failed, or the request ran out of heap (see *Memory*) |
-| `503` | execution limit exceeded by a query or an update (as Fuseki answers), every query slot busy (then with `Retry-After: 1`), a JSON-LD / NDJSON-LD result larger than `CQELS_SPARQL_MAX_BUFFERED_BYTES`, or `SERVICE` while the repository's `SERVICE` client lacks the endpoint's limits (an embedding that skipped `limitOutboundRequests`) |
+| `503` | execution limit exceeded by a query or an update (as Fuseki answers), every query slot busy (then with `Retry-After: 1`), a JSON-LD / NDJSON-LD result larger than `CQELS_SPARQL_MAX_BUFFERED_BYTES` with no `MAX_ROWS` set (with one, it is truncated instead), or `SERVICE` while the repository's `SERVICE` client lacks the endpoint's limits (an embedding that skipped `limitOutboundRequests`) |
 | `502` | a `LOAD` source failed: an HTTP error, a redirect to anything but `http`/`https`, a body over `CQELS_SPARQL_MAX_BUFFERED_BYTES`, or no parseable RDF (`LOAD SILENT`: `204`, nothing changed) |
 | `504` | a `SERVICE` or `LOAD` target did not answer within `CQELS_SPARQL_MAX_EXECUTION_SECONDS` |
 
