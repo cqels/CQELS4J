@@ -1145,6 +1145,16 @@ class SparqlProtocolServletTest {
             assertEquals(400, mixed.statusCode(), mixed.body());
             var reserved = post(ep.url(), "application/sparql-update", "LOAD <" + r + "/data.ttl> INTO GRAPH <" + META + ">", null);
             assertEquals(403, reserved.statusCode(), reserved.body());
+
+            // the LOAD client goes with the servlet on stop and comes back after a restart
+            var servlet = (SparqlProtocolServlet) ((org.eclipse.jetty.ee10.servlet.ServletContextHandler) ep.server().getHandler())
+                    .getServletHandler().getServlets()[0].getServlet();
+            assertTrue(servlet.loadClientHeld());
+            ep.server().stop();
+            assertFalse(servlet.loadClientHeld(), "Jetty stopped and the LOAD client stayed");
+            ep.server().start();
+            String again = "http://127.0.0.1:" + ((ServerConnector) ep.server().getConnectors()[0]).getLocalPort() + "/sparql";
+            assertEquals(204, post(again, "application/sparql-update", "LOAD <" + r + "/data.ttl> INTO GRAPH <urn:ex:again>", null).statusCode());
         } finally {
             remote.stop(0);
         }
@@ -1392,6 +1402,54 @@ class SparqlProtocolServletTest {
             assertTrue(leak.statusCode() >= 500, leak.statusCode() + " " + leak.body());
             assertFalse(leak.body().contains("server-side secret"), "with no limit, an XML entity read a local file");
         } finally {
+            remote.stop(0);
+        }
+    }
+
+    /**
+     * A resolver with a session manager of its own ignored the client silently, and SERVICE ran
+     * without its limits. Installed through the manager now; and a servlet whose repository's
+     * client lacks them refuses SERVICE instead of running it.
+     */
+    @Test
+    void serviceRunsOnlyWithItsLimitsInstalled() throws Exception {
+        var remote = serve(java.util.Map.of("/fast", respond(200, "application/sparql-results+json",
+                "{\"head\":{\"vars\":[]},\"results\":{\"bindings\":[]}}", 0)));
+        var manager = new org.eclipse.rdf4j.http.client.SharedHttpClientSessionManager();
+        CQELSEngine engine = CQELSEngine.builder().id("t-" + System.nanoTime()).withMemoryStore().build();
+        engine.start();
+        String q = "SELECT * WHERE { SERVICE <" + base(remote) + "/fast> { ?s ?p ?o } }";
+        try {
+            // its own manager: the protected client must still be the one in use
+            ((org.eclipse.rdf4j.http.client.SessionManagerDependent)
+                    ((org.eclipse.rdf4j.repository.sail.SailRepository) engine.getRepository()).getFederatedServiceResolver())
+                    .setHttpClientSessionManager(manager);
+            Server server = SparqlEndpointLauncher.startServer(engine, "127.0.0.1", 0,
+                    EndpointOptions.defaults().withFederationEnabled(true), 64, false);
+            try {
+                assertTrue(SparqlEndpointLauncher.outboundLimited(engine.getRepository()));
+                String url = "http://127.0.0.1:" + ((ServerConnector) server.getConnectors()[0]).getLocalPort() + "/sparql";
+                assertEquals(200, get(url, q, null).statusCode());
+            } finally {
+                server.stop();
+            }
+        } finally {
+            engine.close();
+            manager.shutDown();
+        }
+        // the servlet mounted without limitOutboundRequests: SERVICE waits for it
+        CQELSEngine bare = CQELSEngine.builder().id("t-" + System.nanoTime()).withMemoryStore().build();
+        bare.start();
+        Server server = SparqlEndpointLauncher.startServer(bare::getRepository, null, "127.0.0.1", 0,
+                EndpointOptions.defaults().withFederationEnabled(true), 64, false);
+        try {
+            String url = "http://127.0.0.1:" + ((ServerConnector) server.getConnectors()[0]).getLocalPort() + "/sparql";
+            var refused = get(url, q, null);
+            assertEquals(503, refused.statusCode(), refused.body());
+            assertTrue(refused.body().contains("limitOutboundRequests"), refused.body());
+        } finally {
+            server.stop();
+            bare.close();
             remote.stop(0);
         }
     }

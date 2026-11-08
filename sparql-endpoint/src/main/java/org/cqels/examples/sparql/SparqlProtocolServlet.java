@@ -210,7 +210,25 @@ public final class SparqlProtocolServlet extends HttpServlet {
         if (watch != null) {
             watch.shutdownNow();
         }
+        // The LOAD client's selector thread and kept-alive connections outlived a Jetty stop
+        // (found in co-review of #123). Dropped here and remade on the next LOAD; closed outright
+        // where the runtime can (HttpClient is AutoCloseable from JDK 21), otherwise left to the
+        // collector, which ends its thread once nothing holds it.
+        java.net.http.HttpClient client = loadClient;
+        loadClient = null;
+        if (client instanceof AutoCloseable closeable) {
+            try {
+                closeable.close();
+            } catch (Exception e) {
+                log.debug("closing the LOAD client: {}", e.toString());
+            }
+        }
         super.destroy();
+    }
+
+    /** Whether a LOAD client is held; for tests. */
+    boolean loadClientHeld() {
+        return loadClient != null;
     }
 
     @Override
@@ -1277,8 +1295,29 @@ public final class SparqlProtocolServlet extends HttpServlet {
                         + "not <" + bad + ">");
                 return true;
             }
+            // SERVICE goes through the repository's own client, which only
+            // SparqlEndpointLauncher.limitOutboundRequests gives a deadline and the refusal of
+            // XML answers. A program mounting the servlet without it — or a resolver that
+            // ignored it — would run SERVICE without either, so SERVICE waits for it.
+            if (options.federationEnabled() && containsService(node)
+                    && !SparqlEndpointLauncher.outboundLimited(repository.get())) {
+                fail(resp, HttpServletResponse.SC_SERVICE_UNAVAILABLE, "SERVICE is unavailable: the repository's SERVICE "
+                        + "client has not been given this endpoint's limits (SparqlEndpointLauncher.limitOutboundRequests)");
+                return true;
+            }
         }
         return false;
+    }
+
+    private static boolean containsService(QueryModelNode node) {
+        boolean[] found = {false};
+        node.visit(new AbstractQueryModelVisitor<RuntimeException>() {
+            @Override
+            public void meet(Service service) {
+                found[0] = true;
+            }
+        });
+        return found[0];
     }
 
     /**
