@@ -107,7 +107,7 @@ All settings are environment variables, named like the MCP server's `CQELS_MCP_H
 | `CQELS_SPARQL_MAX_REQUEST_BYTES` | `1048576` | Larger bodies → `413`, form bodies and chunked bodies included. |
 | `CQELS_SPARQL_MAX_EXECUTION_SECONDS` | `30` | `Query.setMaxExecutionTime`; exceeding it → `503`, or an aborted response if rows were already sent. `0` = unlimited. **Best effort** — see *The execution limit*. |
 | `CQELS_SPARQL_MAX_CONCURRENT_QUERIES` | `16` | Queries and updates in progress at once, counted from the moment their body starts to arrive. Beyond it the request is answered `503` with `Retry-After: 1` immediately, not queued. |
-| `CQELS_SPARQL_MAX_UPLOAD_SECONDS` | `30` | A POST body must arrive within this, or `408`. `0` = no deadline. Checked as bytes arrive; a connection that stalls completely is ended by Jetty's 30 s idle timeout. |
+| `CQELS_SPARQL_MAX_UPLOAD_SECONDS` | `30` | A POST body must arrive within this, or `408`. `0` = no deadline. A watchdog enforces it while the read is blocked too, so an upload that stops sending, or keeps a chunked body's framing busy without delivering a byte, is ended at the deadline. |
 | `CQELS_SPARQL_MAX_ROWS` | `0` | SELECT rows, or CONSTRUCT / DESCRIBE statements, beyond this are dropped and `X-CQELS-Truncated: true` is set. `0` = unlimited, streamed. |
 | `CQELS_SPARQL_MAX_BUFFERED_BYTES` | `33554432` | With `MAX_ROWS` set the result is held before it is sent; this bounds what is held (estimated from the values' lengths), truncating the same way. See *Memory*. |
 | `CQELS_SPARQL_UPDATE_ENABLED` | `false` | Accept SPARQL Update. |
