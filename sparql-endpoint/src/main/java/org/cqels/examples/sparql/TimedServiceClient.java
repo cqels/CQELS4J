@@ -180,14 +180,16 @@ final class TimedServiceClient extends CloseableHttpClient {
         // otherwise surfaces as a bare "Socket closed", indistinguishable from any failure.
         return (CloseableHttpResponse) Proxy.newProxyInstance(CloseableHttpResponse.class.getClassLoader(),
                 new Class<?>[] {CloseableHttpResponse.class}, (proxy, method, args) -> {
-                    if (method.getName().equals("close") && method.getParameterCount() == 0) {
-                        deadline.cancel(false);
-                    }
                     Object result;
                     try {
                         result = method.invoke(response, args);
                     } catch (InvocationTargetException e) {
                         throw e.getCause() instanceof IOException io && fired.get() ? timedOut(io) : e.getCause();
+                    } finally {
+                        // disarmed only once closing has finished: closing may still read
+                        if (method.getName().equals("close") && method.getParameterCount() == 0) {
+                            deadline.cancel(false);
+                        }
                     }
                     if (method.getName().equals("getEntity") && result instanceof org.apache.http.HttpEntity entity) {
                         return new org.apache.http.entity.HttpEntityWrapper(entity) {
@@ -196,11 +198,14 @@ final class TimedServiceClient extends CloseableHttpClient {
                                 // the deadline is also disarmed once the body is read to its
                                 // end or closed: RDF4J does not always close the response
                                 return new java.io.FilterInputStream(super.getContent()) {
+                                    private boolean ended;
+
                                     @Override
                                     public int read() throws IOException {
                                         try {
                                             int c = super.read();
                                             if (c < 0) {
+                                                ended = true;
                                                 deadline.cancel(false);
                                             }
                                             return c;
@@ -214,6 +219,7 @@ final class TimedServiceClient extends CloseableHttpClient {
                                         try {
                                             int n = super.read(b, off, len);
                                             if (n < 0) {
+                                                ended = true;
                                                 deadline.cancel(false);
                                             }
                                             return n;
@@ -222,10 +228,29 @@ final class TimedServiceClient extends CloseableHttpClient {
                                         }
                                     }
 
+                                    /**
+                                     * Closing a body not read to its end makes Apache read the rest,
+                                     * to reuse the connection — and a remote trickling that rest held
+                                     * the slot through it, the deadline already disarmed (found in
+                                     * co-review of #123). So an unfinished body aborts the request,
+                                     * which drops the connection instead, and the deadline stays
+                                     * armed until closing is done.
+                                     */
                                     @Override
                                     public void close() throws IOException {
-                                        deadline.cancel(false);
-                                        super.close();
+                                        try {
+                                            if (!ended && request instanceof AbstractExecutionAwareRequest a) {
+                                                a.abort();
+                                            }
+                                            super.close();
+                                        } catch (IOException e) {
+                                            if (!ended) {
+                                                return;   // the abort we asked for: nothing more to close
+                                            }
+                                            throw e;
+                                        } finally {
+                                            deadline.cancel(false);
+                                        }
                                     }
                                 };
                             }

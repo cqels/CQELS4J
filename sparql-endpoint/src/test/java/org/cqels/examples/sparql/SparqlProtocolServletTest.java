@@ -1079,6 +1079,29 @@ class SparqlProtocolServletTest {
                 "/redirect.ttl", respond(302, "text/plain", "", 0, "Location", secret.toUri().toString()),
                 "/stalled.ttl", respond(200, "text/turtle", "<urn:ex:late> <urn:ex:p> 1 .\n", 6_000),
                 "/missing.ttl", respond(404, "text/plain", "no", 0),
+                "/data.ttl.gz", ex -> {
+                    var bytes = new java.io.ByteArrayOutputStream();
+                    try (var gz = new java.util.zip.GZIPOutputStream(bytes)) {
+                        gz.write("<urn:ex:gzfile> <urn:ex:p> \"unpacked\" .\n".getBytes(StandardCharsets.UTF_8));
+                    }
+                    ex.getResponseHeaders().add("Content-Type", "application/gzip");
+                    ex.sendResponseHeaders(200, bytes.size());
+                    ex.getResponseBody().write(bytes.toByteArray());
+                    ex.close();
+                },
+                "/archive.zip", ex -> {
+                    var bytes = new java.io.ByteArrayOutputStream();
+                    try (var zip = new java.util.zip.ZipOutputStream(bytes)) {
+                        zip.putNextEntry(new java.util.zip.ZipEntry("one.ttl"));
+                        zip.write("<urn:ex:zip1> <urn:ex:p> 1 .\n".getBytes(StandardCharsets.UTF_8));
+                        zip.putNextEntry(new java.util.zip.ZipEntry("dir/two.nt"));
+                        zip.write("<urn:ex:zip2> <urn:ex:p> \"2\" .\n".getBytes(StandardCharsets.UTF_8));
+                    }
+                    ex.getResponseHeaders().add("Content-Type", "application/zip");
+                    ex.sendResponseHeaders(200, bytes.size());
+                    ex.getResponseBody().write(bytes.toByteArray());
+                    ex.close();
+                },
                 "/zipped.ttl", ex -> {
                     var bytes = new java.io.ByteArrayOutputStream();
                     try (var gz = new java.util.zip.GZIPOutputStream(bytes)) {
@@ -1112,6 +1135,10 @@ class SparqlProtocolServletTest {
             var zipped = post(ep.url(), "application/sparql-update", "LOAD <" + r + "/zipped.ttl>", null);
             assertEquals(204, zipped.statusCode(), zipped.body());
             assertTrue(ask(ep.url(), "ASK { <urn:ex:zipped> ?p \"decoded\" }"), "a gzip-encoded source was not decoded");
+            assertEquals(204, post(ep.url(), "application/sparql-update", "LOAD <" + r + "/data.ttl.gz>", null).statusCode());
+            assertTrue(ask(ep.url(), "ASK { <urn:ex:gzfile> ?p \"unpacked\" }"), "a .ttl.gz file was not unpacked");
+            assertEquals(204, post(ep.url(), "application/sparql-update", "LOAD <" + r + "/archive.zip>", null).statusCode());
+            assertTrue(ask(ep.url(), "ASK { <urn:ex:zip1> ?p ?o . <urn:ex:zip2> ?q ?r }"), "a zip archive's files were not all loaded");
             assertEquals(204, post(ep.url(), "application/sparql-update", "LOAD SILENT <" + r + "/missing.ttl>", null).statusCode());
             var mixed = post(ep.url(), "application/sparql-update",
                     "LOAD <" + r + "/data.ttl> ; INSERT DATA { <urn:ex:a> <urn:ex:b> <urn:ex:c> }", null);
@@ -1222,8 +1249,10 @@ class SparqlProtocolServletTest {
     @Test
     void aServiceTricklingItsHeadersIsCutOffAtTheDeadline() throws Exception {
         // headers trickled, then (complete headers) a body trickled: both must end at the deadline
+        // and a body RDF4J rejects unread (text/plain): closing it must not wait for the rest
         for (String prefix : List.of("HTTP/1.1 200 OK\r\nX-Slow: ",
-                "HTTP/1.1 200 OK\r\nContent-Type: application/sparql-results+json\r\nContent-Length: 5000\r\n\r\n{")) {
+                "HTTP/1.1 200 OK\r\nContent-Type: application/sparql-results+json\r\nContent-Length: 5000\r\n\r\n{",
+                "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 5000\r\n\r\n")) {
             try (java.net.ServerSocket remote = new java.net.ServerSocket(0, 50, java.net.InetAddress.getLoopbackAddress());
                  Endpoint ep = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true).withMaxExecutionSeconds(1)
                          .withMaxConcurrentQueries(1), 0)) {
@@ -1248,7 +1277,11 @@ class SparqlProtocolServletTest {
                 // 504 when the SERVICE deadline ends the read, 503 when RDF4J's own execution
                 // limit (the same 1 s) gets there first: both say the limit was hit, and either
                 // way the slot is back at once
-                assertTrue(r.statusCode() == 504 || r.statusCode() == 503, prefix + " -> " + r.statusCode() + " " + r.body());
+                if (prefix.contains("text/plain")) {
+                    assertTrue(r.statusCode() >= 500, r.statusCode() + " " + r.body());   // rejected: any failure, but at once
+                } else {
+                    assertTrue(r.statusCode() == 504 || r.statusCode() == 503, prefix + " -> " + r.statusCode() + " " + r.body());
+                }
                 assertTrue(took < 4, "took " + took + " s");
                 assertEquals(200, get(ep.url(), "ASK {}", null).statusCode(), "the slot was not given back");
             }

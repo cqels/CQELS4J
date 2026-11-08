@@ -419,6 +419,7 @@ public final class SparqlProtocolServlet extends HttpServlet {
 
     private void evaluate(HttpServletRequest req, HttpServletResponse resp, Repository target, String queryString,
                           String base, Dataset dataset) throws IOException {
+        long started = System.nanoTime();
         try (RepositoryConnection conn = target.getConnection()) {
             Query query;
             try {
@@ -483,6 +484,11 @@ public final class SparqlProtocolServlet extends HttpServlet {
                 fail(resp, HttpServletResponse.SC_GATEWAY_TIMEOUT, "a SERVICE endpoint did not answer in time");
                 return;
             }
+            if (pastLimit(started)) {
+                fail(resp, HttpServletResponse.SC_SERVICE_UNAVAILABLE,
+                        "query exceeded the execution limit of " + options.maxExecutionSeconds() + " s");
+                return;
+            }
             log.warn("query evaluation failed: {}", e.getMessage());
             fail(resp, HttpServletResponse.SC_INTERNAL_SERVER_ERROR, "query evaluation failed: " + e.getMessage());
         } catch (RuntimeException e) {
@@ -490,6 +496,11 @@ public final class SparqlProtocolServlet extends HttpServlet {
             // exception; fail() turns any of these into an aborted response once committed.
             if (outboundTimedOut(e)) {
                 fail(resp, HttpServletResponse.SC_GATEWAY_TIMEOUT, "a SERVICE endpoint did not answer in time");
+                return;
+            }
+            if (pastLimit(started)) {
+                fail(resp, HttpServletResponse.SC_SERVICE_UNAVAILABLE,
+                        "query exceeded the execution limit of " + options.maxExecutionSeconds() + " s");
                 return;
             }
             if (!resp.isCommitted()) {
@@ -797,12 +808,23 @@ public final class SparqlProtocolServlet extends HttpServlet {
             return;
         }
         String type = fetched.headers().firstValue("Content-Type").map(SparqlProtocolServlet::mediaType).orElse("");
-        Optional<RDFFormat> format = org.eclipse.rdf4j.rio.Rio.getParserFormatForMIMEType(type)
-                .or(() -> org.eclipse.rdf4j.rio.Rio.getParserFormatForFileName(fetched.uri().getPath()));
-        if (format.isEmpty()) {
-            loadFailed(resp, load, HttpServletResponse.SC_BAD_GATEWAY, "LOAD <" + source + ">: no RDF format for "
-                    + "Content-Type '" + type + "' or the file name");
+        List<Part> parts;
+        try {
+            parts = unpack(fetched.uri().getPath(), type, body);
+        } catch (IOException e) {
+            loadFailed(resp, load, HttpServletResponse.SC_BAD_GATEWAY, "LOAD <" + source + ">: " + e.getMessage());
             return;
+        }
+        List<RDFFormat> formats = new ArrayList<>();
+        for (Part part : parts) {
+            Optional<RDFFormat> format = org.eclipse.rdf4j.rio.Rio.getParserFormatForMIMEType(part.type())
+                    .or(() -> org.eclipse.rdf4j.rio.Rio.getParserFormatForFileName(part.name()));
+            if (format.isEmpty()) {
+                loadFailed(resp, load, HttpServletResponse.SC_BAD_GATEWAY, "LOAD <" + source + ">: no RDF format for "
+                        + (part.type().isEmpty() ? "" : "Content-Type '" + part.type() + "' or ") + "'" + part.name() + "'");
+                return;
+            }
+            formats.add(format.get());
         }
         ContextLoader contexts = new ContextLoader(deadline);
         boolean committed;
@@ -812,13 +834,15 @@ public final class SparqlProtocolServlet extends HttpServlet {
                 if (graph != null) {
                     inserter.enforceContext(graph);
                 }
-                org.eclipse.rdf4j.rio.RDFParser parser = org.eclipse.rdf4j.rio.Rio.createParser(format.get());
-                restrict(parser.getParserConfig(), contexts);
-                parser.setRDFHandler(inserter);
-                try {
-                    parser.parse(new java.io.ByteArrayInputStream(body), fetched.uri().toString());
-                } catch (IOException e) {
-                    throw new java.io.UncheckedIOException(e);
+                for (int i = 0; i < parts.size(); i++) {
+                    org.eclipse.rdf4j.rio.RDFParser parser = org.eclipse.rdf4j.rio.Rio.createParser(formats.get(i));
+                    restrict(parser.getParserConfig(), contexts);
+                    parser.setRDFHandler(inserter);
+                    try {
+                        parser.parse(new java.io.ByteArrayInputStream(parts.get(i).bytes()), fetched.uri().toString());
+                    } catch (IOException e) {
+                        throw new java.io.UncheckedIOException(e);
+                    }
                 }
             });
         } catch (org.eclipse.rdf4j.rio.RDFParseException | org.eclipse.rdf4j.rio.RDFHandlerException e) {
@@ -912,6 +936,57 @@ public final class SparqlProtocolServlet extends HttpServlet {
                 throw new com.github.jsonldjava.core.JsonLdError(refused, url + ": " + e.getMessage());
             }
         }
+    }
+
+    /** One RDF document of a LOAD source: its name (for the format), media type (may be empty), bytes. */
+    record Part(String name, String type, byte[] bytes) { }
+
+    /**
+     * A LOAD source as RDF4J's own loader read it: a gzip file ({@code application/gzip} or
+     * {@code .gz}) unpacked, its format taken from the name without {@code .gz}; a zip archive
+     * ({@code application/zip} or {@code .zip}) one part per file; anything else as it came.
+     * The servlet's first LOAD parsed a {@code .ttl.gz} file as Turtle and failed on the gzip
+     * magic byte (found in co-review of #123). Unpacked bytes count against
+     * {@code maxBufferedBytes}, all parts together.
+     */
+    private List<Part> unpack(String path, String type, byte[] body) throws IOException {
+        String lower = path == null ? "" : path.toLowerCase(Locale.ROOT);
+        long[] budget = {options.maxBufferedBytes()};
+        if (type.equals("application/gzip") || type.equals("application/x-gzip") || lower.endsWith(".gz")) {
+            String name = lower.endsWith(".gz") ? path.substring(0, path.length() - 3) : path;
+            byte[] bytes = readCapped(new java.util.zip.GZIPInputStream(new java.io.ByteArrayInputStream(body)), budget);
+            return List.of(new Part(name, "", bytes));
+        }
+        if (type.equals("application/zip") || lower.endsWith(".zip")) {
+            List<Part> parts = new ArrayList<>();
+            try (var zip = new java.util.zip.ZipInputStream(new java.io.ByteArrayInputStream(body))) {
+                for (var entry = zip.getNextEntry(); entry != null; entry = zip.getNextEntry()) {
+                    if (!entry.isDirectory()) {
+                        parts.add(new Part(entry.getName(), "", readCapped(zip, budget)));
+                    }
+                }
+            }
+            if (parts.isEmpty()) {
+                throw new IOException("the zip archive holds no files");
+            }
+            return parts;
+        }
+        return List.of(new Part(path == null ? "" : path, type, body));
+    }
+
+    /** Reads {@code in} to its end, failing once more than {@code budget[0]} bytes have come, and debits them. */
+    private static byte[] readCapped(InputStream in, long[] budget) throws IOException {
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        byte[] buf = new byte[8192];
+        int n;
+        while ((n = in.read(buf)) >= 0) {
+            if (n > budget[0]) {
+                throw new IOException("the unpacked body exceeds the buffer budget");
+            }
+            budget[0] -= n;
+            out.write(buf, 0, n);
+        }
+        return out.toByteArray();
     }
 
     private static void loadFailed(HttpServletResponse resp, Load load, int status, String message) throws IOException {
@@ -1036,6 +1111,18 @@ public final class SparqlProtocolServlet extends HttpServlet {
         public void onComplete() {
             result.complete(out.toByteArray());
         }
+    }
+
+    /**
+     * Whether the execution limit has run out since {@code started}. A failure past it is
+     * answered as the limit, whatever RDF4J happened to throw: when its own timer and a
+     * SERVICE deadline fire together, the iteration they both close can surface as a bare
+     * {@code NoSuchElementException} (found in co-review of #123), which said "internal error"
+     * about a query that had simply run out of time.
+     */
+    private boolean pastLimit(long started) {
+        return options.maxExecutionSeconds() > 0
+                && System.nanoTime() - started >= options.maxExecutionSeconds() * 1_000_000_000L;
     }
 
     /** Whether {@code e} or anything it wraps is RDF4J's execution-limit interruption. */

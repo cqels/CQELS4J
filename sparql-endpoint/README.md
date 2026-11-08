@@ -256,7 +256,12 @@ instead (after 40 s, under a 30 s limit). So:
   exceptions to streaming — RDF4J's writers hold the graph, or 1,024 statements of any size —
   so they are always held to `MAX_BUFFERED_BYTES`, and refused (`503`) beyond it when no row
   cap is set. Turtle and TriG stream with pretty-printing off, because the pretty-printer
-  buffers too.
+  buffers too. One path stays unbounded: RDF4J's **binary** SELECT format
+  (`application/x-binary-rdf-results-table`) keeps a table of every distinct IRI namespace it
+  has written, so a result of many IRIs with long, distinct namespaces grows the heap in
+  proportion; a 128 MB heap ran out where SPARQL JSON did not. Capping it would cut legitimate
+  large binary results at `MAX_BUFFERED_BYTES`, so it is left as is: if untrusted callers can
+  query, expect them to choose it, and size the heap or set `MAX_ROWS`.
 - Behind a token, only token holders can send such queries. Without one, anyone who can reach
   the port can.
 
@@ -298,7 +303,8 @@ requested upstream as cqels/claude#1387; the Jetty version here is pinned to the
   client: redirects are followed only to `http`/`https` (never from `https` to `http`), the
   whole fetch must finish within `CQELS_SPARQL_MAX_EXECUTION_SECONDS` (`504`), and at most
   `CQELS_SPARQL_MAX_BUFFERED_BYTES` of body is held, after undoing a `gzip` or `deflate`
-  `Content-Encoding` (`502` beyond). A JSON-LD `@context` the
+  `Content-Encoding` and unpacking a `.gz` file or `.zip` archive as RDF4J's loader did
+  (`502` beyond). A JSON-LD `@context` the
   document names is fetched under the same rules and the same deadline (jsonld-java's own loader
   read `file:` contexts), and RDF/XML and TriX are parsed with no doctype and no external
   entities (RDF4J's defaults let an entity read a local file). The cost: `LOAD` must be
