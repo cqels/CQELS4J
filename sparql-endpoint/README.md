@@ -293,7 +293,10 @@ requested upstream as cqels/claude#1387; the Jetty version here is pinned to the
   waited without a deadline, so **the endpoint performs `LOAD` itself**, with Java's HTTP
   client: redirects are followed only to `http`/`https` (never from `https` to `http`), the
   whole fetch must finish within `CQELS_SPARQL_MAX_EXECUTION_SECONDS` (`504`), and at most
-  `CQELS_SPARQL_MAX_BUFFERED_BYTES` of body is held (`502` beyond). The cost: `LOAD` must be
+  `CQELS_SPARQL_MAX_BUFFERED_BYTES` of body is held (`502` beyond). A JSON-LD `@context` the
+  document names is fetched under the same rules and the same deadline (jsonld-java's own loader
+  read `file:` contexts), and RDF/XML and TriX are parsed with no doctype and no external
+  entities (RDF4J's defaults let an entity read a local file). The cost: `LOAD` must be
   the only operation in its request (`400` otherwise). `SERVICE` gets the same deadline
   through a timed client installed on the engine repository's federated-service resolver
   (`SparqlEndpointLauncher.limitOutboundRequests`); it stays installed for the repository's

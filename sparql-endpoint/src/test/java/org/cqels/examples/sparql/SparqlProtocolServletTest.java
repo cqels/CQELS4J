@@ -944,6 +944,12 @@ class SparqlProtocolServletTest {
             var small = get(capped.url(), "SELECT ?s WHERE { ?s <urn:ex:v> ?x }", "text/csv");
             assertTrue(small.headers().firstValue(SparqlProtocolServlet.TRUNCATED_HEADER).isEmpty(), "10 small rows fit");
         }
+        // rows with nothing bound are not free: 65,536 of them passed a 1 KB cap as zero bytes
+        try (Endpoint capped = Endpoint.start(EndpointOptions.defaults().withMaxRows(100_000).withMaxBufferedBytes(1024), 10)) {
+            var empty = get(capped.url(), "SELECT ?unbound WHERE { ?a ?b ?c . ?d ?e ?f }", "text/csv");
+            assertEquals(200, empty.statusCode(), empty.body());
+            assertEquals("true", empty.headers().firstValue(SparqlProtocolServlet.TRUNCATED_HEADER).orElse(""));
+        }
         try (Endpoint capped = Endpoint.start(EndpointOptions.defaults().withMaxRows(2), 10)) {
             var graph = get(capped.url(), "CONSTRUCT { ?s <urn:ex:v> ?x } WHERE { ?s <urn:ex:v> ?x }", "application/n-triples");
             assertEquals(200, graph.statusCode(), graph.body());
@@ -1078,6 +1084,55 @@ class SparqlProtocolServletTest {
     }
 
     /**
+     * What a LOAD's parser fetches on its own is held to the same rules: a JSON-LD
+     * {@code @context} read {@code file:///…} and waited past the deadline through jsonld-java's
+     * own loader. An http(s) context still works; an XML entity cannot name a local file.
+     */
+    @Test
+    void loadHoldsJsonLdContextsAndXmlEntitiesToTheSameRules(@org.junit.jupiter.api.io.TempDir java.nio.file.Path dir)
+            throws Exception {
+        java.nio.file.Path ctx = dir.resolve("context.json");
+        java.nio.file.Files.writeString(ctx, "{\"@context\":{\"p\":\"urn:ex:fromfile\"}}");
+        java.nio.file.Path secret = dir.resolve("secret.txt");
+        java.nio.file.Files.writeString(secret, "server-side secret");
+        String json = "application/ld+json";
+        var remote = serve(java.util.Map.of(
+                "/ctx.json", respond(200, json, "{\"@context\":{\"p\":\"urn:ex:p\"}}", 0),
+                "/slowctx.json", respond(200, json, "{\"@context\":{\"p\":\"urn:ex:p\"}}", 6_000),
+                "/xxe.rdf", respond(200, "application/rdf+xml", "<?xml version=\"1.0\"?><!DOCTYPE r [<!ENTITY s SYSTEM \""
+                        + secret.toUri() + "\">]><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\" "
+                        + "xmlns:e=\"urn:ex:\"><rdf:Description rdf:about=\"urn:ex:xxe\"><e:p>&s;</e:p></rdf:Description></rdf:RDF>", 0)));
+        var docs = serve(java.util.Map.of(
+                "/ok.jsonld", respond(200, json, "{\"@context\":\"" + base(remote) + "/ctx.json\",\"@id\":\"urn:ex:ok\",\"p\":\"yes\"}", 0),
+                "/file.jsonld", respond(200, json, "{\"@context\":\"" + ctx.toUri() + "\",\"@id\":\"urn:ex:file\",\"p\":\"read\"}", 0),
+                "/slow.jsonld", respond(200, json, "{\"@context\":\"" + base(remote) + "/slowctx.json\",\"@id\":\"urn:ex:slow\",\"p\":\"x\"}", 0)));
+        try (Endpoint ep = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true).withUpdateEnabled(true)
+                .withMaxExecutionSeconds(2), 0)) {
+            String d = base(docs);
+            var ok = post(ep.url(), "application/sparql-update", "LOAD <" + d + "/ok.jsonld>", null);
+            assertEquals(204, ok.statusCode(), ok.body());
+            assertTrue(ask(ep.url(), "ASK { <urn:ex:ok> <urn:ex:p> \"yes\" }"), "an http context is still fetched");
+
+            var file = post(ep.url(), "application/sparql-update", "LOAD <" + d + "/file.jsonld>", null);
+            assertEquals(502, file.statusCode(), file.body());
+            assertFalse(ask(ep.url(), "ASK { <urn:ex:file> ?p ?o }"), "a file: context was read");
+
+            long t0 = System.nanoTime();
+            var slow = post(ep.url(), "application/sparql-update", "LOAD <" + d + "/slow.jsonld>", null);
+            double took = (System.nanoTime() - t0) / 1e9;
+            assertEquals(504, slow.statusCode(), slow.body());
+            assertTrue(took < 5, "took " + took + " s");
+
+            var xxe = post(ep.url(), "application/sparql-update", "LOAD <" + base(remote) + "/xxe.rdf>", null);
+            assertEquals(502, xxe.statusCode(), xxe.body());
+            assertFalse(ask(ep.url(), "ASK { ?s ?p \"server-side secret\" }"), "an XML entity read a local file");
+        } finally {
+            remote.stop(0);
+            docs.stop(0);
+        }
+    }
+
+    /**
      * A chunked body whose framing never yields a byte — a chunk extension sent a character at a
      * time — kept the slot past the deadline, the traffic keeping the idle timeout away.
      */
@@ -1149,6 +1204,9 @@ class SparqlProtocolServletTest {
             String url = "http://127.0.0.1:" + ((ServerConnector) ep.server().getConnectors()[0]).getLocalPort() + "/sparql";
             var again = get(url, q, null);
             assertEquals(200, again.statusCode(), again.body());
+            // the servlet instance is reused: a POST (which arms the upload watchdog) still works
+            var posted = post(url, "application/sparql-query", "ASK {}", null);
+            assertEquals(200, posted.statusCode(), posted.body());
             // and once the endpoint stops, the engine's own resolver still works
             ep.server().stop();
             try (RepositoryConnection c = ep.engine().getRepository().getConnection();
