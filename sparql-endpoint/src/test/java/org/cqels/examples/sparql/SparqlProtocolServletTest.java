@@ -1121,6 +1121,10 @@ class SparqlProtocolServletTest {
                         + secret.toUri() + "\">]><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\" "
                         + "xmlns:e=\"urn:ex:\"><rdf:Description rdf:about=\"urn:ex:xxe\"><e:p>&s;</e:p></rdf:Description></rdf:RDF>", 0)));
         var docs = serve(java.util.Map.of(
+                "/page.html", respond(200, "text/html", "<html></html>", 0,
+                        "Link", "<" + base(remote) + "/ctx.json>; rel=\"alternate\"; type=\"application/ld+json\""),
+                "/viapage.jsonld", ex -> respond(200, json, "{\"@context\":\"http://127.0.0.1:" + ex.getLocalAddress().getPort()
+                        + "/page.html\",\"@id\":\"urn:ex:viapage\",\"p\":\"linked\"}", 0).handle(ex),
                 "/ok.jsonld", respond(200, json, "{\"@context\":\"" + base(remote) + "/ctx.json\",\"@id\":\"urn:ex:ok\",\"p\":\"yes\"}", 0),
                 "/file.jsonld", respond(200, json, "{\"@context\":\"" + ctx.toUri() + "\",\"@id\":\"urn:ex:file\",\"p\":\"read\"}", 0),
                 "/slow.jsonld", respond(200, json, "{\"@context\":\"" + base(remote) + "/slowctx.json\",\"@id\":\"urn:ex:slow\",\"p\":\"x\"}", 0)));
@@ -1130,6 +1134,9 @@ class SparqlProtocolServletTest {
             var ok = post(ep.url(), "application/sparql-update", "LOAD <" + d + "/ok.jsonld>", null);
             assertEquals(204, ok.statusCode(), ok.body());
             assertTrue(ask(ep.url(), "ASK { <urn:ex:ok> <urn:ex:p> \"yes\" }"), "an http context is still fetched");
+            var viaPage = post(ep.url(), "application/sparql-update", "LOAD <" + d + "/viapage.jsonld>", null);
+            assertEquals(204, viaPage.statusCode(), viaPage.body());
+            assertTrue(ask(ep.url(), "ASK { <urn:ex:viapage> <urn:ex:p> \"linked\" }"), "a Link rel=alternate context was not followed");
 
             var file = post(ep.url(), "application/sparql-update", "LOAD <" + d + "/file.jsonld>", null);
             assertEquals(502, file.statusCode(), file.body());
@@ -1216,10 +1223,49 @@ class SparqlProtocolServletTest {
                 long t0 = System.nanoTime();
                 var r = get(ep.url(), "SELECT * WHERE { SERVICE <http://127.0.0.1:" + remote.getLocalPort() + "/sparql> { ?s ?p ?o } }", null);
                 double took = (System.nanoTime() - t0) / 1e9;
-                assertEquals(504, r.statusCode(), prefix + " -> " + r.body());
+                // 504 when the SERVICE deadline ends the read, 503 when RDF4J's own execution
+                // limit (the same 1 s) gets there first: both say the limit was hit, and either
+                // way the slot is back at once
+                assertTrue(r.statusCode() == 504 || r.statusCode() == 503, prefix + " -> " + r.statusCode() + " " + r.body());
                 assertTrue(took < 4, "took " + took + " s");
                 assertEquals(200, get(ep.url(), "ASK {}", null).statusCode(), "the slot was not given back");
             }
+        }
+    }
+
+    /**
+     * A finished SERVICE call disarms its deadline at once: cancelled timers stayed queued, with
+     * their requests, for the whole deadline. And SPARQL XML from SERVICE is refused: RDF4J's
+     * results parser let an external entity read a local file into the results.
+     */
+    @Test
+    void serviceLeavesNoDeadlineArmedAndTakesNoXml(@org.junit.jupiter.api.io.TempDir java.nio.file.Path dir) throws Exception {
+        java.nio.file.Path secret = dir.resolve("secret.txt");
+        java.nio.file.Files.writeString(secret, "server-side secret");
+        String xml = "<?xml version=\"1.0\"?><!DOCTYPE s [<!ENTITY x SYSTEM \"" + secret.toUri() + "\">]>"
+                + "<sparql xmlns=\"http://www.w3.org/2005/sparql-results#\"><head><variable name=\"o\"/></head><results>"
+                + "<result><binding name=\"o\"><literal>&x;</literal></binding></result></results></sparql>";
+        var accepts = new java.util.concurrent.ConcurrentLinkedQueue<String>();
+        var remote = serve(java.util.Map.of(
+                "/json", ex -> {
+                    accepts.add(String.valueOf(ex.getRequestHeaders().getFirst("Accept")));
+                    respond(200, "application/sparql-results+json",
+                            "{\"head\":{\"vars\":[\"o\"]},\"results\":{\"bindings\":[]}}", 0).handle(ex);
+                },
+                "/xml", respond(200, "application/sparql-results+xml", xml, 0)));
+        try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true), 0)) {
+            for (int i = 0; i < 20; i++) {
+                assertEquals(200, get(fed.url(), "SELECT * WHERE { SERVICE <" + base(remote) + "/json> { ?s ?p ?o } }", null).statusCode());
+            }
+            assertEquals(0, TimedServiceClient.armedDeadlines(), "finished SERVICE calls left deadlines armed");
+            assertFalse(accepts.isEmpty());
+            accepts.forEach(a -> assertFalse(a.contains("xml"), "SERVICE asked for XML: " + a));
+
+            var leak = get(fed.url(), "SELECT ?o WHERE { SERVICE <" + base(remote) + "/xml> { ?s ?p ?o } }", "text/csv");
+            assertTrue(leak.statusCode() >= 500, leak.statusCode() + " " + leak.body());
+            assertFalse(leak.body().contains("server-side secret"), "an XML entity in a SERVICE answer read a local file");
+        } finally {
+            remote.stop(0);
         }
     }
 

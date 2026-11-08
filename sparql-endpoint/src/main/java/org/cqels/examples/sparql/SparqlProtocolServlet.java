@@ -859,6 +859,31 @@ public final class SparqlProtocolServlet extends HttpServlet {
                 if (fetched.statusCode() / 100 != 2) {
                     throw new com.github.jsonldjava.core.JsonLdError(refused, url + " answered HTTP " + fetched.statusCode());
                 }
+                // A context page that is not JSON may point at its JSON-LD with
+                // Link: <…>; rel="alternate"; type="application/ld+json" (JSON-LD 1.1 §9.4.4),
+                // which jsonld-java's own loader followed (found in co-review of #123). Followed
+                // once, through the same fetch.
+                String type = fetched.headers().firstValue("Content-Type").map(SparqlProtocolServlet::mediaType).orElse("");
+                if (!type.endsWith("json")) {
+                    Optional<String> alternate = fetched.headers().allValues("Link").stream()
+                            .flatMap(v -> java.util.Arrays.stream(v.split(",")))
+                            .map(String::trim)
+                            .filter(l -> l.matches("(?i)<[^>]+>.*;\\s*rel=\"?alternate\"?.*")
+                                    && l.toLowerCase(Locale.ROOT).contains("application/ld+json"))
+                            .map(l -> l.substring(1, l.indexOf('>')))
+                            .findFirst();
+                    if (alternate.isPresent()) {
+                        String next = fetched.uri().resolve(alternate.get()).toString();
+                        String lowerNext = next.toLowerCase(Locale.ROOT);
+                        if (!lowerNext.startsWith("http://") && !lowerNext.startsWith("https://")) {
+                            throw new com.github.jsonldjava.core.JsonLdError(refused, "only http and https contexts: " + next);
+                        }
+                        fetched = fetch(next, "application/ld+json, application/json;q=0.9", deadline);
+                        if (fetched.statusCode() / 100 != 2) {
+                            throw new com.github.jsonldjava.core.JsonLdError(refused, next + " answered HTTP " + fetched.statusCode());
+                        }
+                    }
+                }
                 return new com.github.jsonldjava.core.RemoteDocument(url,
                         com.github.jsonldjava.utils.JsonUtils.fromInputStream(new java.io.ByteArrayInputStream(fetched.body())));
             } catch (java.util.concurrent.TimeoutException e) {
