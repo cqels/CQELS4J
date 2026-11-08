@@ -23,8 +23,9 @@ import java.util.List;
  * @param maxBufferedBytes     what such a buffer may hold, estimated from the values' lengths;
  *                             reaching it truncates the same way. A row cap alone bounds rows, not
  *                             memory: one computed literal can be megabytes (found in the audit
- *                             after #121, an 8 MB row under {@code maxRows=1}). Not used when
- *                             {@code maxRows} is {@code 0}, since nothing is then buffered
+ *                             after #121, an 8 MB row under {@code maxRows=1}). Not used for
+ *                             results when {@code maxRows} is {@code 0}, since nothing is then
+ *                             buffered. Also the most a {@code LOAD} source's body may be
  * @param maxUploadSeconds     a POST body must arrive within this; {@code 0} = no deadline. A body
  *                             is read while holding a query slot, so a client that trickles one
  *                             holds that slot, and this is what gives it back. Checked as bytes
@@ -36,9 +37,10 @@ import java.util.List;
  *                             accepted. Off by default: both make this <em>server</em> send
  *                             requests — with bindings from the graph — to any URL the request
  *                             names, which no browser-side protection can see or stop. Even when
- *                             on, only {@code http} and {@code https} IRIs are accepted, and
- *                             {@code SparqlEndpointLauncher.limitOutboundRequests} bounds the
- *                             requests themselves
+ *                             on, only {@code http} and {@code https} IRIs are accepted; the
+ *                             servlet performs {@code LOAD} itself within {@code maxExecutionSeconds},
+ *                             and {@code SparqlEndpointLauncher.limitOutboundRequests} gives
+ *                             {@code SERVICE} the same deadline
  * @param metadataEnabled      whether the launcher serves {@link SparqlProtocolServlet#METADATA_GRAPH},
  *                             a snapshot of the engine's streams and status ({@link EngineMetadata}).
  *                             Read by {@code SparqlEndpointLauncher.startServer}, which then hands

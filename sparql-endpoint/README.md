@@ -111,7 +111,7 @@ All settings are environment variables, named like the MCP server's `CQELS_MCP_H
 | `CQELS_SPARQL_MAX_ROWS` | `0` | SELECT rows, or CONSTRUCT / DESCRIBE statements, beyond this are dropped and `X-CQELS-Truncated: true` is set. `0` = unlimited, streamed. |
 | `CQELS_SPARQL_MAX_BUFFERED_BYTES` | `33554432` | With `MAX_ROWS` set the result is held before it is sent; this bounds what is held (estimated from the values' lengths), truncating the same way. See *Memory*. |
 | `CQELS_SPARQL_UPDATE_ENABLED` | `false` | Accept SPARQL Update. |
-| `CQELS_SPARQL_FEDERATION_ENABLED` | `false` | Accept `SERVICE` (in queries and updates) and `LOAD`. Both make the endpoint itself send requests to a URL the client names; only `http` and `https` IRIs are accepted, `LOAD` follows no redirect, and both give up after `MAX_EXECUTION_SECONDS`. See *Security*. |
+| `CQELS_SPARQL_FEDERATION_ENABLED` | `false` | Accept `SERVICE` (in queries and updates) and `LOAD`. Both make the endpoint itself send requests to a URL the client names; only `http` and `https` IRIs are accepted (redirects too), and both give up after `MAX_EXECUTION_SECONDS`. `LOAD` must be the only operation in its request. See *Security*. |
 | `CQELS_SPARQL_METADATA_ENABLED` | `false` | Serve the engine's streams and status as the read-only graph `cqels://endpoint/metadata`; see *The metadata graph*. |
 | `CQELS_SPARQL_STORE_PATH` | unset | NativeStore directory for a graph that survives restarts; unset = memory store. |
 | `CQELS_SPARQL_SEED_FLEET` | `false` | Seed the fleet world. |
@@ -145,6 +145,7 @@ All settings are environment variables, named like the MCP server's `CQELS_MCP_H
 | `415` | unknown POST `Content-Type` or charset |
 | `500` | evaluation failed, or the request ran out of heap (see *Memory*) |
 | `503` | execution limit exceeded by a query or an update (as Fuseki answers), or every query slot busy (then with `Retry-After: 1`) |
+| `502` | a `LOAD` source failed: an HTTP error, a redirect to anything but `http`/`https`, a body over `CQELS_SPARQL_MAX_BUFFERED_BYTES`, or no parseable RDF (`LOAD SILENT`: `204`, nothing changed) |
 | `504` | a `SERVICE` or `LOAD` target did not answer within `CQELS_SPARQL_MAX_EXECUTION_SECONDS` |
 
 A result streams as it is produced, so the status is sent with the first buffer. If the
@@ -287,12 +288,16 @@ requested upstream as cqels/claude#1387; the Jetty version here is pinned to the
   URL from the server's network position — there is no allow-list of hosts.
 - **With federation on, only `http` and `https` are reachable.** `LOAD <file:///…>` read an RDF
   file off the server's disk into the store, where the next query returned it; `SERVICE` and
-  `LOAD` naming any other scheme are now refused (`403`). RDF4J's `LOAD` also follows redirects
-  by hand, to any scheme, so the launcher sets `http.maxRedirects=0` for the JVM: a `LOAD` must
-  name the final URL, and a redirect is a `500`. Neither request had a deadline (a stalled
-  remote held the slot past the execution limit); both now give up after
-  `CQELS_SPARQL_MAX_EXECUTION_SECONDS` with a `504`. The redirect and `LOAD` deadline settings
-  are JVM-wide — see `SparqlEndpointLauncher.limitOutboundRequests`.
+  `LOAD` naming any other scheme are now refused (`403`). RDF4J's own `LOAD` also followed
+  redirects by hand, to any scheme — an http URL redirecting to `file:` read the file — and
+  waited without a deadline, so **the endpoint performs `LOAD` itself**, with Java's HTTP
+  client: redirects are followed only to `http`/`https` (never from `https` to `http`), the
+  whole fetch must finish within `CQELS_SPARQL_MAX_EXECUTION_SECONDS` (`504`), and at most
+  `CQELS_SPARQL_MAX_BUFFERED_BYTES` of body is held (`502` beyond). The cost: `LOAD` must be
+  the only operation in its request (`400` otherwise). `SERVICE` gets the same deadline
+  through a timed client installed on the engine repository's federated-service resolver
+  (`SparqlEndpointLauncher.limitOutboundRequests`); it stays installed for the repository's
+  lifetime, so the engine's own `SERVICE` calls get the deadline too. Nothing is set JVM-wide.
 - **Browser requests from other origins are refused (`403`).** Loopback is not a boundary
   against a browser: any page the user visits can submit a cross-origin form POST — a CORS
   "simple" request, sent without a preflight — to `127.0.0.1:8089`. Withholding CORS headers
@@ -350,8 +355,8 @@ context.addServlet(new ServletHolder(new SparqlProtocolServlet(engine::getReposi
 ```
 
 With federation enabled, also call `SparqlEndpointLauncher.limitOutboundRequests(engine.getRepository(),
-seconds)` once, before the first request: it gives `SERVICE` and `LOAD` their deadline and
-refuses `LOAD` redirects (see *Security*); `startServer` does this for you.
+seconds)` once, before the first request: it gives `SERVICE` its deadline (see *Security*);
+`startServer` does this for you. `LOAD` needs nothing: the servlet performs it itself.
 
 To serve [the metadata graph](#the-metadata-graph), pass a third argument,
 `EngineMetadata.of(engine)`: `new SparqlProtocolServlet(engine::getRepository, options,

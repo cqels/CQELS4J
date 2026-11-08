@@ -53,8 +53,8 @@ import java.util.function.Supplier;
  *   CQELS_SPARQL_MAX_BUFFERED_BYTES       33554432    what a MAX_ROWS buffer may hold, estimated
  *   CQELS_SPARQL_MAX_UPLOAD_SECONDS       30          a POST body must arrive within this; 0 = none
  *   CQELS_SPARQL_UPDATE_ENABLED           false
- *   CQELS_SPARQL_FEDERATION_ENABLED       false       accept SERVICE and LOAD (outbound requests), http(s)
- *                                                     only, bounded by limitOutboundRequests
+ *   CQELS_SPARQL_FEDERATION_ENABLED       false       accept SERVICE and LOAD (outbound requests): http(s)
+ *                                                     only, within the execution limit
  *   CQELS_SPARQL_METADATA_ENABLED         false       serve the engine's streams and status as the
  *                                                     graph cqels://endpoint/metadata (EngineMetadata)
  *   CQELS_SPARQL_STORE_PATH               (memory)    NativeStore directory for a durable graph
@@ -179,83 +179,61 @@ public final class SparqlEndpointLauncher {
     public static Server startServer(CQELSEngine engine, String host, int port, EndpointOptions options,
                                      int maxThreads, boolean virtualThreads) throws Exception {
         requireTokenForRemoteBind(host, options.authToken(), options.allowUnauthenticatedRemote());
-        AutoCloseable outbound = options.federationEnabled()
-                ? limitOutboundRequests(engine.getRepository(), options.maxExecutionSeconds()) : () -> { };
-        Server server;
-        try {
-            server = startServer(engine::getRepository, options.metadataEnabled() ? EngineMetadata.of(engine) : null,
-                    host, port, options, maxThreads, virtualThreads);
-        } catch (Exception | Error e) {
-            outbound.close();
-            throw e;
+        if (options.federationEnabled()) {
+            limitOutboundRequests(engine.getRepository(), options.maxExecutionSeconds());
         }
-        server.addEventListener(new org.eclipse.jetty.util.component.LifeCycle.Listener() {
-            @Override
-            public void lifeCycleStopped(org.eclipse.jetty.util.component.LifeCycle event) {
-                try {
-                    outbound.close();
-                } catch (Exception e) {
-                    log.warn("could not close the SERVICE HTTP client: {}", e.toString());
-                }
-            }
-        });
-        return server;
+        return startServer(engine::getRepository, options.metadataEnabled() ? EngineMetadata.of(engine) : null,
+                host, port, options, maxThreads, virtualThreads);
     }
 
     /**
-     * Bounds the requests {@code SERVICE} and {@code LOAD} make, for an endpoint with federation
-     * enabled. {@link #startServer(CQELSEngine, String, int, EndpointOptions, int, boolean)} calls
-     * it; a program mounting the servlet itself should call it once, before the first request.
-     * Found in the audit after #121:
+     * Gives {@code SERVICE} a deadline, for an endpoint with federation enabled. RDF4J 4.3.8 builds
+     * its {@code SERVICE} client with no connect or socket timeout, so an endpoint that stopped
+     * answering held the query's slot past the execution limit (found in the audit after #121:
+     * 2.6 s under a 1 s limit). This installs, on {@code repository}'s own federated-service
+     * resolver, a client that gives up after {@code timeoutSeconds} — answered 504.
+     * {@link #startServer(CQELSEngine, String, int, EndpointOptions, int, boolean)} calls it; a
+     * program mounting the servlet itself calls it once. ({@code LOAD} needs none of this: the
+     * servlet performs it with its own bounded client.)
      *
-     * <ul>
-     *   <li><strong>{@code LOAD} follows redirects into local files.</strong> RDF4J 4.3.8's
-     *       {@code RDFLoader} follows a redirect itself, to whatever URL the {@code Location}
-     *       names, {@code file:} included — Java's own HTTP client refuses to change protocol, but
-     *       RDF4J turns that off and loops by hand. The servlet's check of the IRI the request
-     *       names cannot see a redirect, so this sets {@code http.maxRedirects} to {@code 0}
-     *       <em>for the whole JVM</em>: {@code RDFLoader} reads it on every load and refuses the
-     *       first redirect, so a {@code LOAD} must name the final URL and a redirect answers 500.
-     *       Turning redirect-following off instead was tried first: {@code RDFLoader} then parses
-     *       the redirect's own (empty) body and reports success having loaded nothing.</li>
-     *   <li><strong>Neither waits with a deadline.</strong> RDF4J's {@code SERVICE} client is
-     *       built with no connect or socket timeout, and {@code LOAD}'s connection with none
-     *       either, so a target that stops answering held the slot — and an update's
-     *       transaction — past the execution limit (2.6 s under a 1 s limit). Both now give up
-     *       after {@code timeoutSeconds}, answered 504. For {@code SERVICE} that is a client set on
-     *       {@code repository}'s own federated-service resolver, closed by the returned handle.
-     *       For {@code LOAD} it is the JDK's {@code sun.net.client.defaultConnectTimeout} /
-     *       {@code defaultReadTimeout}, again JVM-wide, which the JDK reads once — so this must
-     *       run before the JVM's first {@code HttpURLConnection}, as the launcher's {@code main}
-     *       ensures, and a value already set (say, with {@code -D}) is kept.</li>
-     * </ul>
+     * <p><strong>The client stays installed</strong>, for as long as the repository lives, and the
+     * engine's own {@code SERVICE} calls use it too. It cannot be handed back: RDF4J's
+     * {@code setHttpClient} closes the client RDF4J made and accepts no {@code null}, so
+     * "restoring" it on stop left the engine's resolver holding a closed client, and a first
+     * attempt that closed this one on stop broke federation after a Jetty restart with
+     * "Connection pool shut down" (both found in co-review of #123). Calling this again for the
+     * same repository replaces the client and closes the one this method installed before.
+     * Nothing here is JVM-wide.
      *
-     * @param timeoutSeconds the deadline; {@code 0} sets none (redirects are still refused)
-     * @return closes the {@code SERVICE} client, if one was set
+     * @param timeoutSeconds the deadline; {@code 0} installs nothing
      */
-    public static AutoCloseable limitOutboundRequests(Repository repository, int timeoutSeconds) {
-        System.setProperty("http.maxRedirects", "0");
+    public static void limitOutboundRequests(Repository repository, int timeoutSeconds) {
         if (timeoutSeconds <= 0) {
-            return () -> { };
+            return;
+        }
+        if (!(repository instanceof SailRepository sail)
+                || !(sail.getFederatedServiceResolver() instanceof org.eclipse.rdf4j.http.client.HttpClientDependent dependent)) {
+            log.warn("SERVICE requests have no deadline: the repository ({}) exposes no federated-service HTTP client",
+                    repository == null ? "null" : repository.getClass().getName());
+            return;
         }
         int ms = (int) Math.min(Integer.MAX_VALUE, timeoutSeconds * 1000L);
-        System.getProperties().putIfAbsent("sun.net.client.defaultConnectTimeout", Integer.toString(ms));
-        System.getProperties().putIfAbsent("sun.net.client.defaultReadTimeout", Integer.toString(ms));
-        if (repository instanceof SailRepository sail
-                && sail.getFederatedServiceResolver() instanceof org.eclipse.rdf4j.http.client.HttpClientDependent dependent) {
-            org.apache.http.impl.client.CloseableHttpClient client = org.apache.http.impl.client.HttpClientBuilder.create()
-                    .useSystemProperties()
-                    .setDefaultRequestConfig(org.apache.http.client.config.RequestConfig.custom()
-                            .setCookieSpec("standard")   // what RDF4J's own client sets
-                            .setConnectTimeout(ms).setConnectionRequestTimeout(ms).setSocketTimeout(ms).build())
-                    .build();
-            dependent.setHttpClient(client);
-            return client;
+        org.apache.http.impl.client.CloseableHttpClient client = org.apache.http.impl.client.HttpClientBuilder.create()
+                .useSystemProperties()
+                .setDefaultRequestConfig(org.apache.http.client.config.RequestConfig.custom()
+                        .setCookieSpec("standard")   // what RDF4J's own client sets
+                        .setConnectTimeout(ms).setConnectionRequestTimeout(ms).setSocketTimeout(ms).build())
+                .build();
+        dependent.setHttpClient(client);
+        org.apache.http.impl.client.CloseableHttpClient earlier = INSTALLED.put(dependent, client);
+        if (earlier != null) {
+            org.apache.http.client.utils.HttpClientUtils.closeQuietly(earlier);
         }
-        log.warn("SERVICE requests have no deadline: the repository ({}) exposes no federated-service HTTP client",
-                repository == null ? "null" : repository.getClass().getName());
-        return () -> { };
     }
+
+    /** The client {@link #limitOutboundRequests} installed on each resolver, so a second call can close it. */
+    private static final java.util.Map<Object, org.apache.http.impl.client.CloseableHttpClient> INSTALLED =
+            java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
 
     /**
      * Request threads kept free beyond the query slots, so that a request finding every slot
@@ -388,7 +366,12 @@ public final class SparqlEndpointLauncher {
     }
 
     private static boolean isLoopback(String host) {
-        if (host == null || host.isBlank() || "localhost".equalsIgnoreCase(host)) {
+        // No host is not loopback: Jetty binds every interface for it ([::]), so a null host
+        // let startServer serve unauthenticated to the network (found in co-review of #123).
+        if (host == null || host.isBlank()) {
+            return false;
+        }
+        if ("localhost".equalsIgnoreCase(host)) {
             return true;
         }
         try {

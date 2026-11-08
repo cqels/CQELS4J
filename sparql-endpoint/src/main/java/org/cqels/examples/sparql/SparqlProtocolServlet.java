@@ -154,6 +154,15 @@ public final class SparqlProtocolServlet extends HttpServlet {
     private final transient Supplier<Repository> repository;
     private final EndpointOptions options;
     private final transient Semaphore slots;
+    /** Ends uploads that outlive {@code maxUploadSeconds}; see {@link #readBody}. */
+    private final transient java.util.concurrent.ScheduledExecutorService uploadWatch =
+            java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "sparql-upload-deadline");
+                t.setDaemon(true);
+                return t;
+            });
+    /** Fetches LOAD sources; built on first use. See {@link #executeLoad}. */
+    private transient volatile java.net.http.HttpClient loadClient;
     private final transient Supplier<? extends Collection<Statement>> metadata;
 
     /** Without a metadata graph: a query naming {@link #METADATA_GRAPH} is refused with 403. */
@@ -172,6 +181,12 @@ public final class SparqlProtocolServlet extends HttpServlet {
         this.options = options;
         this.slots = new Semaphore(options.maxConcurrentQueries());
         this.metadata = metadata;
+    }
+
+    @Override
+    public void destroy() {
+        uploadWatch.shutdownNow();
+        super.destroy();
     }
 
     @Override
@@ -370,7 +385,13 @@ public final class SparqlProtocolServlet extends HttpServlet {
 
     /** A memory store holding one snapshot of the metadata graph; the caller shuts it down. */
     private Repository snapshotRepository() {
-        Repository repo = new SailRepository(new MemoryStore());
+        SailRepository repo = new SailRepository(new MemoryStore());
+        // SERVICE in a metadata query must meet the same deadline as anywhere else: the
+        // snapshot would otherwise make its own resolver, with RDF4J's untimed client (found in
+        // co-review of #123). The store does not shut down a resolver it was given.
+        if (repository.get() instanceof SailRepository main) {
+            repo.setFederatedServiceResolver(main.getFederatedServiceResolver());
+        }
         repo.init();
         try (RepositoryConnection c = repo.getConnection()) {
             for (Statement st : metadata.get()) {
@@ -569,7 +590,9 @@ public final class SparqlProtocolServlet extends HttpServlet {
         }
         long size = 48 + 2L * v.stringValue().length();
         if (v instanceof org.eclipse.rdf4j.model.Literal l) {
-            size += 2L * l.getLanguage().map(String::length).orElse(0) + 16;
+            // the datatype IRI too: STRDT with a 10,000-character datatype passed as 66 bytes
+            // (found in co-review of #123)
+            size += 2L * l.getLanguage().map(String::length).orElse(0) + 48 + 2L * l.getDatatype().stringValue().length();
         }
         return size;
     }
@@ -606,6 +629,17 @@ public final class SparqlProtocolServlet extends HttpServlet {
                             + "be combined with USING, USING NAMED or WITH in the update (SPARQL 1.1 Protocol §2.2.3)");
                     return;
                 }
+                Optional<Load> load = parsed.getUpdateExprs().stream()
+                        .filter(Load.class::isInstance).map(Load.class::cast).findFirst();
+                if (load.isPresent()) {
+                    if (parsed.getUpdateExprs().size() != 1) {
+                        fail(resp, HttpServletResponse.SC_BAD_REQUEST, "send LOAD as a request of its own: "
+                                + "this endpoint performs LOAD itself and cannot mix it with other operations");
+                        return;
+                    }
+                    executeLoad(resp, conn, load.get());
+                    return;
+                }
                 update = conn.prepareUpdate(QueryLanguage.SPARQL, updateString, base);
             } catch (MalformedQueryException e) {
                 fail(resp, HttpServletResponse.SC_BAD_REQUEST, "malformed update: " + e.getMessage());
@@ -623,24 +657,9 @@ public final class SparqlProtocolServlet extends HttpServlet {
             // one transaction, an update that leaves anything in that graph is undone before
             // anything — the engine included — can see it. So is one that finds data already
             // there and does not remove it; an update that empties the graph is accepted.
-            conn.begin();
-            try {
-                update.execute();
-                if (conn.hasStatement(null, null, null, false, METADATA_GRAPH)) {
-                    conn.rollback();
-                    fail(resp, HttpServletResponse.SC_FORBIDDEN, "the graph <" + METADATA_GRAPH + "> is reserved "
-                            + "for the endpoint's metadata snapshot; an update may not leave triples in it");
-                    return;
-                }
-                // The engine sees the change on its next element: it listens to its own Sail for
-                // lookup-cache invalidation (measured on 2.0.0-alpha.22, even under FROM <g> CACHE 5m).
-                conn.commit();
-            } finally {
-                if (conn.isActive()) {
-                    conn.rollback();
-                }
+            if (commitUnlessReserved(resp, conn, update::execute)) {
+                resp.setStatus(HttpServletResponse.SC_NO_CONTENT);
             }
-            resp.setStatus(HttpServletResponse.SC_NO_CONTENT);
         } catch (IllegalArgumentException e) {
             fail(resp, HttpServletResponse.SC_BAD_REQUEST, e.getMessage());
         } catch (QueryInterruptedException e) {
@@ -661,6 +680,189 @@ public final class SparqlProtocolServlet extends HttpServlet {
             }
             log.warn("update failed: {}", e.toString());
             fail(resp, HttpServletResponse.SC_INTERNAL_SERVER_ERROR, "update failed: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Runs {@code work} in one transaction and commits it, unless it left a triple in
+     * {@link #METADATA_GRAPH}: then it is rolled back and answered 403. Returns whether it
+     * committed. Rolled back on every other way out too.
+     */
+    private static boolean commitUnlessReserved(HttpServletResponse resp, RepositoryConnection conn, Runnable work)
+            throws IOException {
+        conn.begin();
+        try {
+            work.run();
+            if (conn.hasStatement(null, null, null, false, METADATA_GRAPH)) {
+                conn.rollback();
+                fail(resp, HttpServletResponse.SC_FORBIDDEN, "the graph <" + METADATA_GRAPH + "> is reserved "
+                        + "for the endpoint's metadata snapshot; an update may not leave triples in it");
+                return false;
+            }
+            // The engine sees the change on its next element: it listens to its own Sail for
+            // lookup-cache invalidation (measured on 2.0.0-alpha.22, even under FROM <g> CACHE 5m).
+            conn.commit();
+            return true;
+        } finally {
+            if (conn.isActive()) {
+                conn.rollback();
+            }
+        }
+    }
+
+    /**
+     * {@code LOAD}, performed here rather than by RDF4J. Its {@code RDFLoader} follows redirects by
+     * hand to any scheme ({@code file:} included: an http URL redirecting to a local file read it
+     * into the store) and its connection has no deadline, and neither can be fixed from outside
+     * except JVM-wide — which a co-review of #123 showed fails silently in a JVM that has already
+     * opened an HTTP connection. Java's {@code HttpClient} instead follows redirects only to
+     * {@code http}/{@code https} (never from https to http), and the whole fetch is bounded by
+     * the execution limit (504) and the body by {@code maxBufferedBytes}.
+     *
+     * <p>The price: a request that holds {@code LOAD} must hold nothing else (400), since RDF4J
+     * cannot run the other operations of one request around a load done elsewhere. {@code SILENT}
+     * keeps its meaning: a failed fetch or parse changes nothing and answers 204.
+     */
+    private void executeLoad(HttpServletResponse resp, RepositoryConnection conn, Load load) throws IOException {
+        String source = load.getSource().getValue().stringValue();
+        org.eclipse.rdf4j.model.Resource graph = load.getGraph() == null ? null
+                : (org.eclipse.rdf4j.model.Resource) load.getGraph().getValue();
+        java.net.http.HttpResponse<byte[]> fetched;
+        try {
+            fetched = fetch(source);
+        } catch (java.util.concurrent.TimeoutException e) {
+            loadFailed(resp, load, HttpServletResponse.SC_GATEWAY_TIMEOUT, "LOAD <" + source + "> did not answer within "
+                    + options.maxExecutionSeconds() + " s");
+            return;
+        } catch (IOException | IllegalArgumentException e) {
+            loadFailed(resp, load, HttpServletResponse.SC_BAD_GATEWAY, "LOAD <" + source + "> failed: " + e.getMessage());
+            return;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            loadFailed(resp, load, HttpServletResponse.SC_SERVICE_UNAVAILABLE, "LOAD <" + source + "> was interrupted");
+            return;
+        }
+        if (fetched.statusCode() / 100 != 2) {
+            loadFailed(resp, load, HttpServletResponse.SC_BAD_GATEWAY,
+                    "LOAD <" + source + "> answered HTTP " + fetched.statusCode());
+            return;
+        }
+        String type = fetched.headers().firstValue("Content-Type").map(SparqlProtocolServlet::mediaType).orElse("");
+        Optional<RDFFormat> format = org.eclipse.rdf4j.rio.Rio.getParserFormatForMIMEType(type)
+                .or(() -> org.eclipse.rdf4j.rio.Rio.getParserFormatForFileName(fetched.uri().getPath()));
+        if (format.isEmpty()) {
+            loadFailed(resp, load, HttpServletResponse.SC_BAD_GATEWAY, "LOAD <" + source + ">: no RDF format for "
+                    + "Content-Type '" + type + "' or the file name");
+            return;
+        }
+        boolean committed;
+        try {
+            committed = commitUnlessReserved(resp, conn, () -> {
+                org.eclipse.rdf4j.repository.util.RDFInserter inserter = new org.eclipse.rdf4j.repository.util.RDFInserter(conn);
+                if (graph != null) {
+                    inserter.enforceContext(graph);
+                }
+                org.eclipse.rdf4j.rio.RDFParser parser = org.eclipse.rdf4j.rio.Rio.createParser(format.get());
+                parser.setRDFHandler(inserter);
+                try {
+                    parser.parse(new java.io.ByteArrayInputStream(fetched.body()), fetched.uri().toString());
+                } catch (IOException e) {
+                    throw new java.io.UncheckedIOException(e);
+                }
+            });
+        } catch (org.eclipse.rdf4j.rio.RDFParseException | org.eclipse.rdf4j.rio.RDFHandlerException e) {
+            loadFailed(resp, load, HttpServletResponse.SC_BAD_GATEWAY, "LOAD <" + source + ">: " + e.getMessage());
+            return;
+        }
+        if (committed) {
+            resp.setStatus(HttpServletResponse.SC_NO_CONTENT);
+        }
+    }
+
+    private static void loadFailed(HttpServletResponse resp, Load load, int status, String message) throws IOException {
+        if (load.isSilent()) {
+            resp.setStatus(HttpServletResponse.SC_NO_CONTENT);   // SILENT: the failure changes nothing
+            return;
+        }
+        fail(resp, status, message);
+    }
+
+    /** GETs {@code source} within the execution limit, holding at most {@code maxBufferedBytes} of body. */
+    private java.net.http.HttpResponse<byte[]> fetch(String source)
+            throws IOException, InterruptedException, java.util.concurrent.TimeoutException {
+        java.net.http.HttpClient client = loadClient;
+        if (client == null) {
+            java.net.http.HttpClient.Builder b = java.net.http.HttpClient.newBuilder()
+                    .followRedirects(java.net.http.HttpClient.Redirect.NORMAL);
+            if (options.maxExecutionSeconds() > 0) {
+                b.connectTimeout(java.time.Duration.ofSeconds(options.maxExecutionSeconds()));
+            }
+            client = b.build();
+            loadClient = client;
+        }
+        String accept = String.join(", ", RDFFormat.getAcceptParams(
+                org.eclipse.rdf4j.rio.RDFParserRegistry.getInstance().getKeys(), false, null));
+        java.net.http.HttpRequest request = java.net.http.HttpRequest.newBuilder(java.net.URI.create(source))
+                .header("Accept", accept).GET().build();
+        long cap = options.maxBufferedBytes();
+        var pending = client.sendAsync(request, info -> new CappedBody(cap));
+        try {
+            return options.maxExecutionSeconds() > 0
+                    ? pending.get(options.maxExecutionSeconds(), java.util.concurrent.TimeUnit.SECONDS)
+                    : pending.get();
+        } catch (java.util.concurrent.ExecutionException e) {
+            Throwable cause = e.getCause();
+            throw cause instanceof IOException io ? io : new IOException(String.valueOf(cause), cause);
+        } catch (java.util.concurrent.TimeoutException | InterruptedException e) {
+            pending.cancel(true);
+            throw e;
+        }
+    }
+
+    /** A response body held in memory up to {@code cap} bytes; beyond it the fetch fails. */
+    private static final class CappedBody implements java.net.http.HttpResponse.BodySubscriber<byte[]> {
+        private final long cap;
+        private final java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        private final java.util.concurrent.CompletableFuture<byte[]> result = new java.util.concurrent.CompletableFuture<>();
+        private java.util.concurrent.Flow.Subscription subscription;
+
+        CappedBody(long cap) {
+            this.cap = cap;
+        }
+
+        @Override
+        public java.util.concurrent.CompletionStage<byte[]> getBody() {
+            return result;
+        }
+
+        @Override
+        public void onSubscribe(java.util.concurrent.Flow.Subscription s) {
+            subscription = s;
+            s.request(Long.MAX_VALUE);
+        }
+
+        @Override
+        public void onNext(List<java.nio.ByteBuffer> items) {
+            for (java.nio.ByteBuffer b : items) {
+                if (out.size() + (long) b.remaining() > cap) {
+                    subscription.cancel();
+                    result.completeExceptionally(new IOException("the body exceeds " + cap + " bytes"));
+                    return;
+                }
+                byte[] chunk = new byte[b.remaining()];
+                b.get(chunk);
+                out.writeBytes(chunk);
+            }
+        }
+
+        @Override
+        public void onError(Throwable t) {
+            result.completeExceptionally(t);
+        }
+
+        @Override
+        public void onComplete() {
+            result.complete(out.toByteArray());
         }
     }
 
@@ -724,8 +926,8 @@ public final class SparqlProtocolServlet extends HttpServlet {
      * the next query returned it (found in the audit after #121). Federation is "this server
      * talks to other servers", not "this server's files". A {@code SERVICE ?var} resolved at run
      * time is not checked here; RDF4J's {@code SERVICE} client speaks HTTP only, so it cannot
-     * open a file. {@code LOAD} redirects are the launcher's business
-     * ({@link SparqlEndpointLauncher#limitOutboundRequests}), since RDF4J follows them itself.
+     * open a file. A {@code LOAD} redirect is followed only to {@code http}/{@code https}:
+     * the servlet fetches the source itself ({@link #executeLoad}).
      */
     static String nonHttpTarget(QueryModelNode node) {
         String[] found = {null};
@@ -774,8 +976,8 @@ public final class SparqlProtocolServlet extends HttpServlet {
 
     /**
      * Whether {@code e} or anything it wraps is a socket read or connect timing out: a
-     * {@code SERVICE} or {@code LOAD} target that did not answer within the deadline
-     * {@link SparqlEndpointLauncher#limitOutboundRequests} gives it.
+     * {@code SERVICE} endpoint that did not answer within the deadline
+     * {@link SparqlEndpointLauncher#limitOutboundRequests} gives its client.
      */
     private static boolean outboundTimedOut(Throwable e) {
         for (Throwable t = e; t != null; t = t.getCause()) {
@@ -1009,30 +1211,68 @@ public final class SparqlProtocolServlet extends HttpServlet {
      * Reads a POST body within the size and time limits. Answers 413 beyond the size, 408 past
      * {@code maxUploadSeconds}, or 415 for a charset this runtime does not know, and returns
      * {@code null} in each case.
+     *
+     * <p>The deadline cannot be checked only between reads: a read blocks until body bytes
+     * arrive, and a client can keep a chunked body's framing busy — a chunk extension sent a
+     * character at a time — without ever delivering one, holding the slot for as long as it
+     * likes while the traffic keeps the idle timeout away (found in co-review of #123). So a
+     * watchdog interrupts the reading thread at the deadline; the container's blocking read
+     * gives up with an {@code InterruptedIOException}. The interrupt is delivered and cleared
+     * under one lock, so it can never land after the body is read, on the query that follows.
      */
     private String readBody(HttpServletRequest req, HttpServletResponse resp) throws IOException {
         long max = options.maxRequestBytes();
         // Never 0: Math.min(max + 1, …) overflowed for max = Long.MAX_VALUE into an empty buffer,
         // which read every body as empty (found in the audit after #121).
         byte[] buf = new byte[(int) Math.min(max, 64 * 1024) + 1];
-        boolean timed = options.maxUploadSeconds() > 0;
-        long deadline = System.nanoTime() + options.maxUploadSeconds() * 1_000_000_000L;
         java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        Thread reader = Thread.currentThread();
+        Object lock = new Object();
+        boolean[] state = {false, false};   // {reading done, deadline passed}
+        java.util.concurrent.ScheduledFuture<?> watch = options.maxUploadSeconds() == 0 ? null
+                : uploadWatch.schedule(() -> {
+                    synchronized (lock) {
+                        if (!state[0]) {
+                            state[1] = true;
+                            reader.interrupt();
+                        }
+                    }
+                }, options.maxUploadSeconds(), java.util.concurrent.TimeUnit.SECONDS);
+        boolean tooLarge = false;
         try (InputStream in = req.getInputStream()) {
             int n;
             while ((n = in.read(buf)) >= 0) {
                 out.write(buf, 0, n);
                 if (out.size() > max) {
-                    fail(resp, HttpServletResponse.SC_REQUEST_ENTITY_TOO_LARGE,
-                            "request body exceeds " + max + " bytes");
-                    return null;
-                }
-                if (timed && System.nanoTime() - deadline > 0) {
-                    fail(resp, HttpServletResponse.SC_REQUEST_TIMEOUT,
-                            "request body took longer than " + options.maxUploadSeconds() + " s to arrive");
-                    return null;
+                    tooLarge = true;
+                    break;
                 }
             }
+        } catch (IOException e) {
+            synchronized (lock) {
+                if (!state[1]) {
+                    throw e;   // a real I/O failure, not the deadline
+                }
+            }
+        } finally {
+            if (watch != null) {
+                watch.cancel(false);
+            }
+            synchronized (lock) {
+                state[0] = true;
+                if (state[1]) {
+                    Thread.interrupted();   // the watchdog's interrupt: consumed here, never seen later
+                }
+            }
+        }
+        if (state[1]) {
+            fail(resp, HttpServletResponse.SC_REQUEST_TIMEOUT,
+                    "request body took longer than " + options.maxUploadSeconds() + " s to arrive");
+            return null;
+        }
+        if (tooLarge) {
+            fail(resp, HttpServletResponse.SC_REQUEST_ENTITY_TOO_LARGE, "request body exceeds " + max + " bytes");
+            return null;
         }
         Charset cs;
         try {
