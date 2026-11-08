@@ -18,19 +18,23 @@ import java.util.List;
  *                             Bounds the damage of queries the limit cannot stop
  * @param maxRows              SELECT rows, or CONSTRUCT / DESCRIBE statements, beyond this are
  *                             dropped and the response carries {@code X-CQELS-Truncated: true};
- *                             {@code 0} = unlimited and streamed. When set, the result is buffered
- *                             so the header can be decided before the body starts
+ *                             {@code 0} = unlimited and streamed (except JSON-LD and NDJSON-LD; see
+ *                             {@code maxBufferedBytes}). When set, the result is buffered so the
+ *                             header can be decided before the body starts
  * @param maxBufferedBytes     what such a buffer may hold, estimated from the values' lengths;
  *                             reaching it truncates the same way. A row cap alone bounds rows, not
  *                             memory: one computed literal can be megabytes (found in the audit
- *                             after #121, an 8 MB row under {@code maxRows=1}). Not used for
- *                             results when {@code maxRows} is {@code 0}, since nothing is then
- *                             buffered. Also the most a {@code LOAD} source's body may be
+ *                             after #121, an 8 MB row under {@code maxRows=1}). With {@code maxRows}
+ *                             {@code 0}, results stream and this is not used — except JSON-LD and
+ *                             NDJSON-LD, whose RDF4J writers hold statements in memory: those are
+ *                             always held to this, and refused (503) beyond it. Also the most a
+ *                             {@code LOAD} source's body may be, unpacked
  * @param maxUploadSeconds     a POST body must arrive within this; {@code 0} = no deadline. A body
  *                             is read while holding a query slot, so a client that trickles one
- *                             holds that slot, and this is what gives it back. Checked as bytes
- *                             arrive: a connection that stalls completely is ended by the
- *                             container's idle timeout instead (Jetty's default is 30 s)
+ *                             holds that slot, and this is what gives it back: at the deadline a
+ *                             watchdog interrupts the read, even one that is blocked with no body
+ *                             byte arriving (a chunked body stuck in its framing), and the
+ *                             request is answered 408
  * @param updateEnabled        whether SPARQL Update is accepted at all; off by default because
  *                             an update rewrites the graph the engine joins its streams against
  * @param federationEnabled    whether {@code SERVICE} (queries and updates) and {@code LOAD} are

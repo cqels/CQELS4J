@@ -942,36 +942,59 @@ public final class SparqlProtocolServlet extends HttpServlet {
     record Part(String name, String type, byte[] bytes) { }
 
     /**
-     * A LOAD source as RDF4J's own loader read it: a gzip file ({@code application/gzip} or
-     * {@code .gz}) unpacked, its format taken from the name without {@code .gz}; a zip archive
-     * ({@code application/zip} or {@code .zip}) one part per file; anything else as it came.
-     * The servlet's first LOAD parsed a {@code .ttl.gz} file as Turtle and failed on the gzip
-     * magic byte (found in co-review of #123). Unpacked bytes count against
-     * {@code maxBufferedBytes}, all parts together.
+     * A LOAD source as RDF4J's own loader read it: gzip unpacked and zip archives opened, one part
+     * per file — told apart by their bytes (the gzip and zip signatures), not by name or media
+     * type, and unpacked again if what came out is packed too. The servlet's first LOAD parsed a
+     * {@code .ttl.gz} file as Turtle; its second, going by name, unpacked a {@code .ttl.gz} that
+     * the server's {@code Content-Encoding: gzip} had already undone, and sent a gzipped file
+     * inside a zip straight to the parser (both found in co-review of #123). A part's format
+     * comes from its media type when it is the source itself, else from its name, a
+     * {@code .gz} / {@code .zip} suffix dropped. Unpacked bytes count against
+     * {@code maxBufferedBytes}, all parts together, and packing nests at most four deep.
      */
     private List<Part> unpack(String path, String type, byte[] body) throws IOException {
-        String lower = path == null ? "" : path.toLowerCase(Locale.ROOT);
+        List<Part> parts = new ArrayList<>();
         long[] budget = {options.maxBufferedBytes()};
-        if (type.equals("application/gzip") || type.equals("application/x-gzip") || lower.endsWith(".gz")) {
-            String name = lower.endsWith(".gz") ? path.substring(0, path.length() - 3) : path;
-            byte[] bytes = readCapped(new java.util.zip.GZIPInputStream(new java.io.ByteArrayInputStream(body)), budget);
-            return List.of(new Part(name, "", bytes));
+        unpack(path == null ? "" : path, type, body, budget, 0, parts);
+        if (parts.isEmpty()) {
+            throw new IOException("the archive holds no files");
         }
-        if (type.equals("application/zip") || lower.endsWith(".zip")) {
-            List<Part> parts = new ArrayList<>();
-            try (var zip = new java.util.zip.ZipInputStream(new java.io.ByteArrayInputStream(body))) {
-                for (var entry = zip.getNextEntry(); entry != null; entry = zip.getNextEntry()) {
-                    if (!entry.isDirectory()) {
-                        parts.add(new Part(entry.getName(), "", readCapped(zip, budget)));
-                    }
+        return parts;
+    }
+
+    private static void unpack(String name, String type, byte[] bytes, long[] budget, int depth, List<Part> into)
+            throws IOException {
+        boolean gzip = bytes.length >= 2 && (bytes[0] & 0xff) == 0x1f && (bytes[1] & 0xff) == 0x8b;
+        boolean zip = bytes.length >= 4 && bytes[0] == 'P' && bytes[1] == 'K' && bytes[2] == 3 && bytes[3] == 4;
+        if (!gzip && !zip) {
+            boolean packedType = type.equals("application/gzip") || type.equals("application/x-gzip")
+                    || type.equals("application/zip") || type.equals("application/octet-stream");
+            into.add(new Part(unpackedName(name), packedType ? "" : type, bytes));
+            return;
+        }
+        if (depth >= 4) {
+            throw new IOException("packed more than four deep");
+        }
+        if (gzip) {
+            try (var in = new java.util.zip.GZIPInputStream(new java.io.ByteArrayInputStream(bytes))) {
+                unpack(unpackedName(name), "", readCapped(in, budget), budget, depth + 1, into);
+            }
+            return;
+        }
+        try (var in = new java.util.zip.ZipInputStream(new java.io.ByteArrayInputStream(bytes))) {
+            for (var entry = in.getNextEntry(); entry != null; entry = in.getNextEntry()) {
+                if (!entry.isDirectory()) {
+                    unpack(entry.getName(), "", readCapped(in, budget), budget, depth + 1, into);
                 }
             }
-            if (parts.isEmpty()) {
-                throw new IOException("the zip archive holds no files");
-            }
-            return parts;
         }
-        return List.of(new Part(path == null ? "" : path, type, body));
+    }
+
+    /** {@code data.ttl.gz} → {@code data.ttl}: the name the format is read from. */
+    private static String unpackedName(String name) {
+        String lower = name.toLowerCase(Locale.ROOT);
+        return lower.endsWith(".gz") || lower.endsWith(".zip")
+                ? name.substring(0, name.lastIndexOf('.')) : name;
     }
 
     /** Reads {@code in} to its end, failing once more than {@code budget[0]} bytes have come, and debits them. */
