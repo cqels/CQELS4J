@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# Regenerate examples/src/main/resources/s2dm/trailer/{skos,data_graph}.ttl with COVESA s2dm.
+# Regenerate examples/src/main/resources/s2dm/trailer/{skos,data_graph}.ttl with COVESA s2dm,
+# and supplement.ttl with this repository's own scripts/s2dm/supplement.py (what the RDF export
+# leaves out of the same schema: field descriptions, units, @range, instance-tag fields).
 #
 # Fetching the pinned s2dm commit from GitHub and building the Docker image (s2dm's locked
 # dependencies) need network access. The export itself runs in a throwaway container with no
-# network, a read-only root filesystem, your uid, and only two host folders mounted: the input
-# schema (read-only) and the output folder.
+# network, a read-only root filesystem, your uid, and only the input schema (read-only), the
+# output folder and, for the supplement, this script's folder (read-only) mounted.
 #
 # Input: s2dm's own trailer example, examples/trailer/full_schema.graphl, at the pinned commit.
 # Usage: scripts/s2dm/export-trailer.sh        (needs git and docker)
@@ -34,7 +36,11 @@ docker run --rm --network none --read-only --tmpfs /tmp --user "$(id -u):$(id -g
   export rdf -s /in/trailer.graphql -o /out \
   --namespace "$NAMESPACE" --prefix trailer --output-formats turtle
 
+docker run --rm --network none --read-only --tmpfs /tmp --user "$(id -u):$(id -g)" \
+  -v "$work/in:/in:ro" -v "$here:/tool:ro" -v "$work/out:/out" --entrypoint python "$IMAGE" \
+  -I /tool/supplement.py /in/trailer.graphql "$NAMESPACE" /out/supplement.ttl
+
 mkdir -p "$dest"
-cp "$work/out/skos.ttl" "$work/out/data_graph.ttl" "$dest/"
-echo "wrote $dest/skos.ttl and $dest/data_graph.ttl (s2dm $S2DM_COMMIT)"
+cp "$work/out/skos.ttl" "$work/out/data_graph.ttl" "$work/out/supplement.ttl" "$dest/"
+echo "wrote $dest/{skos,data_graph,supplement}.ttl (s2dm $S2DM_COMMIT)"
 echo "remove the image when done: docker rmi $IMAGE"

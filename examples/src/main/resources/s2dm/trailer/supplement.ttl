@@ -1,0 +1,58 @@
+# What `s2dm export rdf` leaves out of the schema, extracted by CQELS4J's
+# scripts/s2dm/supplement.py. Not s2dm output; see S2DM_MAPPING.md.
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix s2x: <https://example.org/s2dm/supplement#> .
+
+<https://example.org/s2dm/trailer#TrailerWheelBrake.fluidLevel> s2x:defaultUnit <https://example.org/s2dm/trailer#Relation_Unit_Enum.PERCENT> .
+<https://example.org/s2dm/trailer#TrailerWheelBrake.fluidLevel> skos:definition "Brake fluid level as percent. 0 = Empty. 100 = Full."@en .
+<https://example.org/s2dm/trailer#TrailerWheelBrake.isBrakesWorn> skos:definition "Brake pad wear status. True = Worn. False = Not Worn."@en .
+<https://example.org/s2dm/trailer#TrailerWheelBrake.isFluidLevelLow> skos:definition "Brake fluid level status. True = Brake fluid level low. False = Brake fluid level OK."@en .
+<https://example.org/s2dm/trailer#TrailerWheelBrake.padWear> s2x:defaultUnit <https://example.org/s2dm/trailer#Relation_Unit_Enum.PERCENT> .
+<https://example.org/s2dm/trailer#TrailerWheelBrake.padWear> skos:definition "Brake pad wear as percent. 0 = No Wear. 100 = Worn."@en .
+<https://example.org/s2dm/trailer#TrailerWheelTire.isPressureLow> skos:definition "Tire Pressure Status. True = Low tire pressure. False = Good tire pressure."@en .
+<https://example.org/s2dm/trailer#TrailerWheelTire.pressure> s2x:defaultUnit <https://example.org/s2dm/trailer#Pressure_Unit_Enum.KILOPASCAL> .
+<https://example.org/s2dm/trailer#TrailerWheelTire.pressure> skos:definition "Tire pressure in kilo-Pascal."@en .
+<https://example.org/s2dm/trailer#TrailerWheelTire.temperature> s2x:defaultUnit <https://example.org/s2dm/trailer#Temperature_Unit_Enum.DEGREE_CELSIUS> .
+<https://example.org/s2dm/trailer#TrailerWheelTire.temperature> skos:definition "Tire temperature in Celsius."@en .
+<https://example.org/s2dm/trailer#Vehicle.maxTowBallWeight> s2x:defaultUnit <https://example.org/s2dm/trailer#Mass_Unit_Enum.KILOGRAM> .
+<https://example.org/s2dm/trailer#Vehicle.maxTowBallWeight> skos:definition "Maximum vertical weight on the tow ball of a trailer."@en .
+<https://example.org/s2dm/trailer#Vehicle.maxTowWeight> s2x:defaultUnit <https://example.org/s2dm/trailer#Mass_Unit_Enum.KILOGRAM> .
+<https://example.org/s2dm/trailer#Vehicle.maxTowWeight> skos:definition "Maximum weight of trailer."@en .
+<https://example.org/s2dm/trailer#Vehicle.trailerCount> skos:definition "Number of trailers connected to the vehicle"@en .
+<https://example.org/s2dm/trailer#Vehicle.trailers> skos:definition "List of trailers attached to the vehicle."@en .
+<https://example.org/s2dm/trailer#VehicleTrailer.axleCount> skos:definition "Number of axles on the trailer"@en .
+<https://example.org/s2dm/trailer#VehicleTrailer.axleLoadSum> s2x:defaultUnit <https://example.org/s2dm/trailer#Mass_Unit_Enum.KILOGRAM> .
+<https://example.org/s2dm/trailer#VehicleTrailer.axleLoadSum> skos:definition "The sum of the static vertical loads of the trailer axles."@en .
+<https://example.org/s2dm/trailer#VehicleTrailer.axles> skos:definition "List of axles on the trailer."@en .
+<https://example.org/s2dm/trailer#VehicleTrailer.customerTrailerName> skos:definition "The customer's name for the trailer"@en .
+<https://example.org/s2dm/trailer#VehicleTrailer.trailer> s2x:instanceTag true .
+<https://example.org/s2dm/trailer#VehicleTrailer.trailerKind> skos:definition "Type of trailer as defined in ISO 11992-2"@en .
+<https://example.org/s2dm/trailer#VehicleTrailer.vin> skos:definition "17-character Vehicle Identification Number (VIN) as defined by ISO 3779."@en .
+<https://example.org/s2dm/trailer#VehicleTrailerAxle.axleLoad> skos:definition "The static vertical load of a trailer axle in kilograms."@en .
+<https://example.org/s2dm/trailer#VehicleTrailerAxle.axleWidth> s2x:defaultUnit <https://example.org/s2dm/trailer#Length_Unit_Enum.MILLIMETER> .
+<https://example.org/s2dm/trailer#VehicleTrailerAxle.axleWidth> skos:definition "The lateral distance between the wheel mounting faces, measured along the spindle axis."@en .
+<https://example.org/s2dm/trailer#VehicleTrailerAxle.position> skos:definition "Axle position from 1 to 15, 1 being in the front closest to the truck, according to ISO 11992-2."@en .
+<https://example.org/s2dm/trailer#VehicleTrailerAxle.steeringAngle> s2x:defaultUnit <https://example.org/s2dm/trailer#Angle_Unit_Enum.DEGREE> .
+<https://example.org/s2dm/trailer#VehicleTrailerAxle.steeringAngle> skos:definition "Single track two-axle model steering angle. Angle according to ISO 8855. Positive = degrees to the left. Negative = degrees to the right."@en .
+<https://example.org/s2dm/trailer#VehicleTrailerAxle.tireAspectRatio> s2x:defaultUnit <https://example.org/s2dm/trailer#Relation_Unit_Enum.PERCENT> .
+<https://example.org/s2dm/trailer#VehicleTrailerAxle.tireAspectRatio> skos:definition "Aspect ratio between tire section height and tire section width, as per ETRTO / TRA standard."@en .
+<https://example.org/s2dm/trailer#VehicleTrailerAxle.tireDiameter> s2x:defaultUnit <https://example.org/s2dm/trailer#Length_Unit_Enum.INCH> .
+<https://example.org/s2dm/trailer#VehicleTrailerAxle.tireDiameter> skos:definition "Outer diameter of tires, in inches, as per ETRTO / TRA standard."@en .
+<https://example.org/s2dm/trailer#VehicleTrailerAxle.tireWidth> s2x:defaultUnit <https://example.org/s2dm/trailer#Length_Unit_Enum.MILLIMETER> .
+<https://example.org/s2dm/trailer#VehicleTrailerAxle.tireWidth> skos:definition "Nominal section width of tires, in mm, as per ETRTO / TRA standard."@en .
+<https://example.org/s2dm/trailer#VehicleTrailerAxle.trackWidth> s2x:defaultUnit <https://example.org/s2dm/trailer#Length_Unit_Enum.MILLIMETER> .
+<https://example.org/s2dm/trailer#VehicleTrailerAxle.trackWidth> skos:definition "The lateral distance between the centers of the wheels, measured along the spindle, or axle axis. If there are dual rear wheels, measure\nfrom the midway points between the inner and outer tires."@en .
+<https://example.org/s2dm/trailer#VehicleTrailerAxle.trailerAxle> s2x:instanceTag true .
+<https://example.org/s2dm/trailer#VehicleTrailerAxle.treadWidth> s2x:defaultUnit <https://example.org/s2dm/trailer#Length_Unit_Enum.MILLIMETER> .
+<https://example.org/s2dm/trailer#VehicleTrailerAxle.treadWidth> skos:definition "The lateral distance between the centerlines of the base tires at ground, including camber angle. If there are dual rear wheels, measure\nfrom the midway points between the inner and outer tires."@en .
+<https://example.org/s2dm/trailer#VehicleTrailerAxle.wheelCount> skos:definition "Number of wheels on the axle"@en .
+<https://example.org/s2dm/trailer#VehicleTrailerAxle.wheelDiameter> s2x:defaultUnit <https://example.org/s2dm/trailer#Length_Unit_Enum.INCH> .
+<https://example.org/s2dm/trailer#VehicleTrailerAxle.wheelDiameter> skos:definition "Diameter of wheels (rims without tires), in inches, as per ETRTO / TRA standard."@en .
+<https://example.org/s2dm/trailer#VehicleTrailerAxle.wheelWidth> s2x:defaultUnit <https://example.org/s2dm/trailer#Length_Unit_Enum.INCH> .
+<https://example.org/s2dm/trailer#VehicleTrailerAxle.wheelWidth> skos:definition "Width of wheels (rims without tires), in inches, as per ETRTO / TRA standard."@en .
+<https://example.org/s2dm/trailer#VehicleTrailerAxle.wheels> skos:definition "List of wheels on the axle."@en .
+<https://example.org/s2dm/trailer#VehicleTrailerWheel.angularSpeed> s2x:defaultUnit <https://example.org/s2dm/trailer#Angularspeed_Unit_Enum.DEGREE_PER_SECOND> .
+<https://example.org/s2dm/trailer#VehicleTrailerWheel.angularSpeed> skos:definition "Angular (Rotational) speed of a vehicle's wheel."@en .
+<https://example.org/s2dm/trailer#VehicleTrailerWheel.speed> s2x:defaultUnit <https://example.org/s2dm/trailer#Velocity_Unit_Enum.KILOMETER_PER_HOUR> .
+<https://example.org/s2dm/trailer#VehicleTrailerWheel.speed> skos:definition "Linear speed of a vehicle's wheel."@en .
+<https://example.org/s2dm/trailer#VehicleTrailerWheel.trailerWheel> s2x:instanceTag true .

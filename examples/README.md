@@ -195,12 +195,16 @@ Unlike the section above, this demo loads RDF that s2dm itself wrote:
 [`src/main/resources/s2dm/trailer/`](src/main/resources/s2dm/trailer/) holds `skos.ttl` and
 `data_graph.ttl` from `s2dm export rdf` on s2dm's own trailer example, committed as the tool wrote
 them and regenerated offline in Docker by
-[`scripts/s2dm/export-trailer.sh`](../scripts/s2dm/export-trailer.sh).
-[S2DM_MAPPING.md](../S2DM_MAPPING.md) explains what the export contains and what it leaves out.
+[`scripts/s2dm/export-trailer.sh`](../scripts/s2dm/export-trailer.sh). The same script writes
+`supplement.ttl`, which is not s2dm output: field descriptions, default units and instance-tag
+fields that the export drops, read from the same schema by this repository's
+[`scripts/s2dm/supplement.py`](../scripts/s2dm/supplement.py).
+[S2DM_MAPPING.md](../S2DM_MAPPING.md) explains what the export contains, what it leaves out, and
+what the supplement adds.
 
 | Class | CQELS feature | Scenario |
 |-------|---------------|----------|
-| [`TrailerHealthMonitor`](src/main/java/org/cqels/examples/s2dm/TrailerHealthMonitor.java) | Stream–static joins over the s2dm data graph (`s2dm:hasField`, `s2dm:hasOutputType`); `[TRIPLES 1]` over atomic multi-statement elements; windowed `GROUP BY` over instance tags | Trailer wheel telemetry, each reading tagged with the schema's instance tags (trailer, axle, side, and position from the outside in). Each reading is placed in the model: a tire pressure reading comes back as `VehicleTrailerWheel.tire` → `TrailerWheelTire`, "Tire signals for wheel." Every boolean alarm (`isPressureLow`, `isBrakesWorn`, `isFluidLevelLow`) is caught by asking which fields return `s2dm:Boolean`, so the query names none of them; that holds because every boolean in this schema is a fault flag. The lowest tire pressure is tracked per trailer and axle. A misspelled field carrying `true` raises no alarm, because the model does not contain it; without the `s2dm:Boolean` guard it would. |
+| [`TrailerHealthMonitor`](src/main/java/org/cqels/examples/s2dm/TrailerHealthMonitor.java) | Stream–static joins over the s2dm data graph (`s2dm:hasField`, `s2dm:hasOutputType`) and the supplement (`s2x:defaultUnit`, field `skos:definition`); `FILTER` on IRIs; `[TRIPLES 1]` over atomic multi-statement elements; windowed `GROUP BY` joined to static data | Trailer wheel telemetry, each reading tagged with the schema's instance tags (trailer, axle, side, and position from the outside in). Each reading is placed in the model: a tire pressure reading comes back as `VehicleTrailerWheel.tire` → `TrailerWheelTire`, "Tire signals for wheel." Every boolean alarm (`isPressureLow`, `isBrakesWorn`, `isFluidLevelLow`) is caught by asking which fields return `s2dm:Boolean`, so the query names none of them; that holds because every boolean in this schema is a fault flag. A tire pressure sent in PSI is flagged against the schema's `KILOPASCAL`, with the field's own description, "Tire pressure in kilo-Pascal." The lowest tire pressure is tracked per trailer and axle, counting only readings in the schema's unit, so the 32 PSI reading does not become the lowest. A misspelled field carrying `true` raises no alarm, because the model does not contain it; without the `s2dm:Boolean` guard it would. |
 
 ### Query dialects
 | Class | CQELS feature | Scenario |

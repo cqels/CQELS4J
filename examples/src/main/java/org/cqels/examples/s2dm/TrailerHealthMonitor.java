@@ -2,6 +2,7 @@ package org.cqels.examples.s2dm;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -10,6 +11,7 @@ import org.cqels.engine.DataStream;
 import org.cqels.examples.Fleet;
 import org.eclipse.rdf4j.model.IRI;
 import org.eclipse.rdf4j.model.Literal;
+import org.eclipse.rdf4j.model.Statement;
 import org.eclipse.rdf4j.model.ValueFactory;
 import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
 import org.eclipse.rdf4j.repository.RepositoryConnection;
@@ -21,7 +23,7 @@ import org.eclipse.rdf4j.rio.RDFFormat;
  *
  * <p>The scenario: a truck tows up to three trailers, each with up to fifteen axles and up to
  * eight wheels per side of an axle. Every wheel reports tire pressure, a low-pressure flag, brake
- * pad wear and a worn-brakes flag. The fleet operator wants three things from that stream, none of
+ * pad wear and a worn-brakes flag. The fleet operator wants four things from that stream, none of
  * which should need a query edited when the model grows.
  *
  * <p><strong>Where the model comes from.</strong> {@code src/main/resources/s2dm/trailer/} holds
@@ -30,7 +32,9 @@ import org.eclipse.rdf4j.rio.RDFFormat;
  * They are committed exactly as the tool wrote them; {@code scripts/s2dm/export-trailer.sh}
  * regenerates them in Docker. Nothing in them is hand-written, which is the difference from the
  * {@code org.cqels.examples.cdsp.S2dm*} demos, whose concept graph is hand-built in the
- * exporter's shape.
+ * exporter's shape. Next to them, {@code supplement.ttl} is <em>not</em> s2dm output: the same
+ * script writes it with this repository's {@code scripts/s2dm/supplement.py}, which reads the same
+ * schema for what the export drops (see below).
  *
  * <p>The two files describe the <em>schema</em>, not any vehicle:
  * <ul>
@@ -40,7 +44,11 @@ import org.eclipse.rdf4j.rio.RDFFormat;
  *       ({@code s2dm:hasEnumValue});</li>
  *   <li>{@code skos.ttl} — a {@code skos:Concept} per type, field and enum value, with a
  *       {@code skos:prefLabel}, and a {@code skos:definition} where the schema had a description
- *       on a <em>type</em>.</li>
+ *       on a <em>type</em>;</li>
+ *   <li>{@code supplement.ttl} — per field, its description ({@code skos:definition}), the default
+ *       of its {@code unit} argument ({@code s2x:defaultUnit}, e.g.
+ *       {@code trailer:Pressure_Unit_Enum.KILOPASCAL}), and whether it carries
+ *       {@code @instanceTag} ({@code s2x:instanceTag}).</li>
  * </ul>
  *
  * <p><strong>The stream encoding is this demo's, not s2dm's.</strong> s2dm defines the model but
@@ -50,10 +58,11 @@ import org.eclipse.rdf4j.rio.RDFFormat;
  * ({@code TrailerTag.instance}, a {@code ThreeTrailers} value), and which wheel on it
  * ({@code TrailerWheelTag}: the axle, an {@code AxlePositionEnum} value; the side, a
  * {@code TwoSides} value; and the position counted from the outside in, an
- * {@code EightOutsideInNumber} value, which tells twin tires apart). The tags are the exporter's
+ * {@code EightOutsideInNumber} value, which tells twin tires apart). A reading of a field with a
+ * unit also says which unit the sender used ({@code ex:unit}). Tags and units are the exporter's
  * own enum-value IRIs.
  *
- * <p>Three queries:
+ * <p>Four queries:
  * <ol>
  *   <li><em>Where in the model is this reading?</em> Each reading is placed by walking the data
  *       graph one fixed step up: the field's owning type, the slot that type fills, and the type
@@ -69,9 +78,17 @@ import org.eclipse.rdf4j.rio.RDFFormat;
  *       {@code isHealthy}, would raise a false alarm, and the model has no marking that tells the
  *       two kinds apart.</li>
  *   <li><em>Lowest tire pressure per trailer and axle.</em> A windowed {@code GROUP BY} over the
- *       instance tags, restricted to the tire-pressure field. It prints its current groups on
- *       every arrival, including readings it filters out, so the same {@code [lowest]} line
- *       repeats; see "Reading the output" in {@code examples/README.md}.</li>
+ *       instance tags, restricted to the tire-pressure field and to readings sent in the unit the
+ *       schema declares for it. It prints its current groups on every arrival, including readings
+ *       it filters out, so the same {@code [lowest]} line repeats; see "Reading the output" in
+ *       {@code examples/README.md}.</li>
+ *   <li><em>A reading in the wrong unit.</em> A reading whose unit differs from its field's
+ *       declared unit is flagged with the field's description: a 32 PSI tire pressure comes back
+ *       against {@code KILOPASCAL}, "Tire pressure in kilo-Pascal." Counted as kPa, 32 would have
+ *       become that axle's lowest pressure; query 3 leaves it out instead. The declared unit is the
+ *       schema's default for the field's {@code unit} argument; treating it as the unit a streamed
+ *       reading must be in is this demo's rule, and the schema has no conversion factors, so the
+ *       reading is flagged rather than converted.</li>
  * </ol>
  *
  * <p>Query 1 places only fields whose owning type fills a slot of another type and has a
@@ -83,12 +100,14 @@ import org.eclipse.rdf4j.rio.RDFFormat;
  * contain that field. Query 2 without its {@code s2dm:Boolean} guard <em>does</em> raise an alarm
  * for it, so the guard is what rejects it, not the filter on the value.
  *
- * <p><strong>What the export does not carry</strong>, so this demo cannot use it: units (the
- * schema says pressure is in kPa, via {@code pressure(unit: Pressure_Unit_Enum = KILOPASCAL)}, but
- * the RDF export drops field arguments), {@code @range} limits, which fields are instance tags,
- * and descriptions on fields (only types get a {@code skos:definition}). s2dm's VSPEC, LinkML and
- * JSON Schema exporters carry some of these, but at the pinned commit all three reject this same
- * trailer schema. See {@code S2DM_MAPPING.md}.
+ * <p><strong>What the export does not carry</strong>: units (the schema says pressure is in kPa,
+ * via {@code pressure(unit: Pressure_Unit_Enum = KILOPASCAL)}, but the RDF export drops field
+ * arguments), {@code @range} limits, which fields are instance tags, and descriptions on fields
+ * (only types get a {@code skos:definition}). s2dm's VSPEC, LinkML and JSON Schema exporters carry
+ * some of these, but at the pinned commit all three reject this same trailer schema. So the
+ * supplement takes them from the schema directly: descriptions, units and instance-tag fields (the
+ * trailer schema puts {@code @range} on no field). Queries 3 and 4 depend on it; queries 1 and 2
+ * use the export alone. See {@code S2DM_MAPPING.md} §5–§6.
  *
  * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.examples.s2dm.TrailerHealthMonitor}
  */
@@ -113,11 +132,18 @@ public class TrailerHealthMonitor {
     static final String AXLE = Fleet.EX + "axle";
     static final String SIDE = Fleet.EX + "side";
     static final String NTH = Fleet.EX + "outsideIn";
+    static final String UNIT = Fleet.EX + "unit";
+
+    // units the demo's senders declare (the exporter's enum-value IRIs)
+    static final String KPA = T + "Pressure_Unit_Enum.KILOPASCAL";
+    static final String PSI = T + "Pressure_Unit_Enum.POUNDS_PER_SQUARE_INCH";
+    static final String PERCENT = T + "Relation_Unit_Enum.PERCENT";
 
     static final String PREFIXES = Fleet.PREFIXES + """
             PREFIX skos:    <http://www.w3.org/2004/02/skos/core#>
             PREFIX s2dm:    <https://covesa.global/models/s2dm#>
             PREFIX trailer: <https://example.org/s2dm/trailer#>
+            PREFIX s2x:     <https://example.org/s2dm/supplement#>
             """;
 
     public static void main(String[] args) throws Exception {
@@ -128,7 +154,7 @@ public class TrailerHealthMonitor {
 
             long triples = loadModel(engine);
             System.out.println("loaded the s2dm trailer model: " + triples + " triples"
-                    + " (skos.ttl + data_graph.ttl, as exported)");
+                    + " (skos.ttl + data_graph.ttl as exported, plus supplement.ttl)");
 
             DataStream wheels = engine.createStream("Wheels");
 
@@ -168,47 +194,67 @@ public class TrailerHealthMonitor {
                     """;
             engine.registerCqelsQuery(alarms, row -> System.out.println("  [ALARM] " + brief(row)));
 
-            // 3 — lowest tire pressure per trailer and axle over the last 10 s.
+            // 3 — lowest tire pressure per trailer and axle over the last 10 s, counting only
+            // readings sent in the unit the schema declares for the field (from supplement.ttl).
             String lowest = PREFIXES + """
                     REGISTER QUERY LowestPressure AS
-                    SELECT ?trailer ?axle (MIN(?kpa) AS ?minKpa) (COUNT(*) AS ?readings)
+                    SELECT ?trailer ?axle (MIN(?p) AS ?lowest) (COUNT(*) AS ?readings)
                     FROM STREAM Wheels [RANGE 10s]
                     WHERE {
                       STREAM Wheels {
                         ?r ex:field trailer:TrailerWheelTire.pressure ; ex:trailer ?trailer ;
-                           ex:axle ?axle ; sosa:hasSimpleResult ?kpa .
+                           ex:axle ?axle ; ex:unit ?unit ; sosa:hasSimpleResult ?p .
                       }
+                      trailer:TrailerWheelTire.pressure s2x:defaultUnit ?unit .
                     }
                     GROUP BY ?trailer ?axle
                     """;
             engine.registerCqelsQuery(lowest, row -> System.out.println("  [lowest] " + brief(row)));
 
+            // 4 — a reading sent in a different unit from the one the schema declares for its
+            // field, with the field's own description (both from supplement.ttl).
+            String units = PREFIXES + """
+                    REGISTER QUERY UnitMismatch AS
+                    SELECT ?vehicle ?trailer ?axle ?side ?field ?value ?sent ?declared ?about
+                    FROM STREAM Wheels [TRIPLES 1]
+                    WHERE {
+                      STREAM Wheels {
+                        ?r ex:field ?field ; ex:vehicle ?vehicle ; ex:trailer ?trailer ;
+                           ex:axle ?axle ; ex:side ?side ; ex:unit ?sent ;
+                           sosa:hasSimpleResult ?value .
+                      }
+                      ?field s2x:defaultUnit ?declared ; skos:definition ?about .
+                      FILTER(?sent != ?declared)
+                    }
+                    """;
+            engine.registerCqelsQuery(units, row -> System.out.println("  [UNIT] " + brief(row)));
+
             engine.start();
 
             String truck = Fleet.EX + "vehicle/TRUCK-41";
             System.out.println("\npush: trailer 1, axle 2, left — tire pressure 612 kPa");
-            push(wheels, truck, TIRE_PRESSURE, "TRAILER_1", "POSITION_2", "LEFT", "_1ST", VF.createLiteral(612));
+            push(wheels, truck, TIRE_PRESSURE, "TRAILER_1", "POSITION_2", "LEFT", "_1ST", KPA, VF.createLiteral(612));
             Thread.sleep(700);
 
             System.out.println("\npush: trailer 1, axle 2, right, inner twin — tire pressure 455 kPa");
-            push(wheels, truck, TIRE_PRESSURE, "TRAILER_1", "POSITION_2", "RIGHT", "_2ND", VF.createLiteral(455));
+            push(wheels, truck, TIRE_PRESSURE, "TRAILER_1", "POSITION_2", "RIGHT", "_2ND", KPA, VF.createLiteral(455));
             Thread.sleep(700);
 
             System.out.println("\npush: trailer 1, axle 2, right, inner twin — isPressureLow = true");
-            push(wheels, truck, TIRE_PRESSURE_LOW, "TRAILER_1", "POSITION_2", "RIGHT", "_2ND", VF.createLiteral(true));
+            push(wheels, truck, TIRE_PRESSURE_LOW, "TRAILER_1", "POSITION_2", "RIGHT", "_2ND", null, VF.createLiteral(true));
             Thread.sleep(700);
 
             System.out.println("\npush: trailer 2, axle 1, left — brake pad wear 35 %");
-            push(wheels, truck, BRAKE_PAD_WEAR, "TRAILER_2", "POSITION_1", "LEFT", "_1ST", VF.createLiteral(35));
+            push(wheels, truck, BRAKE_PAD_WEAR, "TRAILER_2", "POSITION_1", "LEFT", "_1ST", PERCENT, VF.createLiteral(35));
             Thread.sleep(700);
 
             System.out.println("\npush: trailer 2, axle 1, left — isBrakesWorn = false   (a boolean"
                     + " field, but false: no alarm)");
-            push(wheels, truck, BRAKES_WORN, "TRAILER_2", "POSITION_1", "LEFT", "_1ST", VF.createLiteral(false));
+            push(wheels, truck, BRAKES_WORN, "TRAILER_2", "POSITION_1", "LEFT", "_1ST", null, VF.createLiteral(false));
             Thread.sleep(700);
 
             System.out.println("\npush: trailer 2, axle 3, right — isBrakesWorn = true");
-            push(wheels, truck, BRAKES_WORN, "TRAILER_2", "POSITION_3", "RIGHT", "_1ST", VF.createLiteral(true));
+            push(wheels, truck, BRAKES_WORN, "TRAILER_2", "POSITION_3", "RIGHT", "_1ST", null, VF.createLiteral(true));
             Thread.sleep(700);
 
             // Not a field of the model (a typo for "isPressureLow"), carrying the value true. The
@@ -217,11 +263,19 @@ public class TrailerHealthMonitor {
             System.out.println("\npush: trailer 1, axle 4, left — TrailerWheelTire.isPresureLow = true"
                     + "   (no such field in the model: no [placed], no [ALARM])");
             push(wheels, truck, T + "TrailerWheelTire.isPresureLow", "TRAILER_1", "POSITION_4", "LEFT",
-                    "_1ST", VF.createLiteral(true));
+                    "_1ST", null, VF.createLiteral(true));
+            Thread.sleep(700);
+
+            // A gateway that reports pressure in PSI. 32 is a low number in kPa; counted as kPa it
+            // would become trailer 1 axle 2's [lowest]. The schema says kPa, so it is flagged
+            // instead and LowestPressure leaves it out.
+            System.out.println("\npush: trailer 1, axle 2, left — tire pressure 32 PSI   (the schema"
+                    + " declares kPa: [UNIT], and not counted in [lowest])");
+            push(wheels, truck, TIRE_PRESSURE, "TRAILER_1", "POSITION_2", "LEFT", "_1ST", PSI, VF.createLiteral(32));
             Thread.sleep(700);
 
             System.out.println("\npush: trailer 2, axle 1, left — tire pressure 598 kPa");
-            push(wheels, truck, TIRE_PRESSURE, "TRAILER_2", "POSITION_1", "LEFT", "_1ST", VF.createLiteral(598));
+            push(wheels, truck, TIRE_PRESSURE, "TRAILER_2", "POSITION_1", "LEFT", "_1ST", KPA, VF.createLiteral(598));
             Thread.sleep(900);
         }
         System.out.println("\nDone.");
@@ -232,10 +286,10 @@ public class TrailerHealthMonitor {
         return String.valueOf(row).replace(T, "");
     }
 
-    /** Load the two exported Turtle files into the engine's static store. */
+    /** Load the two exported Turtle files and the supplement into the engine's static store. */
     static long loadModel(CQELSEngine engine) throws IOException {
         try (RepositoryConnection conn = engine.getRepository().getConnection()) {
-            for (String file : List.of("skos.ttl", "data_graph.ttl")) {
+            for (String file : List.of("skos.ttl", "data_graph.ttl", "supplement.ttl")) {
                 try (InputStream in = TrailerHealthMonitor.class
                         .getResourceAsStream("/s2dm/trailer/" + file)) {
                     if (in == null) {
@@ -250,12 +304,13 @@ public class TrailerHealthMonitor {
 
     /**
      * Push one wheel reading as a single atomic element: the s2dm field, the vehicle, the four
-     * instance tags (as the exporter's enum-value IRIs) and the value.
+     * instance tags (as the exporter's enum-value IRIs), the unit the sender used ({@code null}
+     * for a field without one) and the value.
      */
-    static void push(DataStream stream, String vehicle, String field,
-                     String trailer, String axle, String side, String outsideIn, Literal value) {
+    static void push(DataStream stream, String vehicle, String field, String trailer, String axle,
+                     String side, String outsideIn, String unit, Literal value) {
         IRI r = VF.createIRI(Fleet.EX + "wheel-reading/" + SEQ.incrementAndGet());
-        stream.push(List.of(
+        List<Statement> element = new ArrayList<>(List.of(
                 VF.createStatement(r, VF.createIRI(FIELD), VF.createIRI(field)),
                 VF.createStatement(r, VF.createIRI(VEHICLE), VF.createIRI(vehicle)),
                 VF.createStatement(r, VF.createIRI(TRAILER), VF.createIRI(T + "ThreeTrailers." + trailer)),
@@ -263,5 +318,9 @@ public class TrailerHealthMonitor {
                 VF.createStatement(r, VF.createIRI(SIDE), VF.createIRI(T + "TwoSides." + side)),
                 VF.createStatement(r, VF.createIRI(NTH), VF.createIRI(T + "EightOutsideInNumber." + outsideIn)),
                 VF.createStatement(r, VF.createIRI(Fleet.HAS_SIMPLE_RESULT), value)));
+        if (unit != null) {
+            element.add(VF.createStatement(r, VF.createIRI(UNIT), VF.createIRI(unit)));
+        }
+        stream.push(element);
     }
 }
