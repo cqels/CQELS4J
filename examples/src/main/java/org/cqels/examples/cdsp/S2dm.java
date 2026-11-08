@@ -62,12 +62,14 @@ import java.util.concurrent.atomic.AtomicLong;
  *
  * <p><strong>Instance tags.</strong> VSS explodes repeated structures into paths
  * ({@code Vehicle.Cabin.Door.Row1.DriverSide.IsOpen}). S2DM models the repetition once and tags
- * the instance with a small object — the {@code InCabinZone} pattern from
- * {@code /spec/common_enums.graphql}:
+ * the instance with a small object — the {@code InCabinZone} example from s2dm's data-modelling
+ * guideline ({@code docs-gen/content/docs/data-modeling-guideline/pre-defined-elements.md},
+ * "Common enumeration sets"; at s2dm commit {@code d97b449} it is a documentation example, not a
+ * schema file):
  * <pre>
- *   type InCabinZone { row: InCabinRowEnum!  side: InCabinSideEnum! }
- *   enum InCabinRowEnum  { FRONT REAR }
- *   enum InCabinSideEnum { DRIVER_SIDE PASSENGER_SIDE }
+ *   type InCabinZone { row: InCabinRowEnum!  side: InCabinSide! }
+ *   enum InCabinRowEnum { FRONT REAR }
+ *   enum InCabinSide    { DRIVER_SIDE PASSENGER_SIDE }
  *   type Door { instance: InCabinZone  isOpen: Boolean }
  * </pre>
  * {@link #pushZonedSignal} streams a reading in that shape: one atomic element carrying the
