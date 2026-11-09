@@ -312,7 +312,8 @@ requested upstream as cqels/claude#1387; the Jetty version here is pinned to the
   through a client installed on the engine repository's federated-service resolver
   (`SparqlEndpointLauncher.limitOutboundRequests`). The deadline is absolute: a request still
   running at it is aborted, so a remote that trickles its headers or body a byte at a time
-  cannot hold the slot. The client stays installed for the repository's lifetime, so the
+  cannot hold the slot; the host name lookup is held to it too, on a small pool of its own,
+  since an abort cannot interrupt one. The client stays installed for the repository's lifetime, so the
   engine's own `SERVICE` calls get the deadline too (with `MAX_EXECUTION_SECONDS=0` it is
   installed with no deadline, for the format rule below); its connections are released when Jetty
   stops and reopen if it is used again. A `SERVICE` endpoint must answer SPARQL JSON, TSV or
