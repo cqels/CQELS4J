@@ -164,6 +164,14 @@ final class TimedServiceClient extends CloseableHttpClient {
                     return t;
                 });
 
+        /**
+         * The current request's absolute deadline ({@link System#nanoTime}), set by
+         * {@code doExecute} on the thread Apache resolves on. A lookup waited the full timeout
+         * afresh, so time already spent waiting for a pooled connection was counted twice: 1.8 s
+         * under a 1 s limit (found in co-review of #123).
+         */
+        static final ThreadLocal<Long> DEADLINE = new ThreadLocal<>();
+
         private final org.apache.http.conn.DnsResolver delegate;
         private final int timeoutMillis;
 
@@ -180,8 +188,11 @@ final class TimedServiceClient extends CloseableHttpClient {
             } catch (java.util.concurrent.RejectedExecutionException e) {
                 throw new java.net.UnknownHostException(host + ": too many name lookups pending");
             }
+            Long deadline = DEADLINE.get();
+            long waitNanos = deadline == null ? TimeUnit.MILLISECONDS.toNanos(timeoutMillis)
+                    : Math.max(0, deadline - System.nanoTime());
             try {
-                return lookup.get(timeoutMillis, TimeUnit.MILLISECONDS);
+                return lookup.get(waitNanos, TimeUnit.NANOSECONDS);
             } catch (java.util.concurrent.TimeoutException e) {
                 lookup.cancel(true);
                 java.net.UnknownHostException timedOut = new java.net.UnknownHostException(
@@ -242,6 +253,9 @@ final class TimedServiceClient extends CloseableHttpClient {
         // below still hold: skipping the whole client for a 0 limit let an XML answer through
         // (found in co-review of #123).
         java.util.concurrent.atomic.AtomicBoolean fired = new java.util.concurrent.atomic.AtomicBoolean();
+        if (timeoutMillis > 0) {
+            BoundedDns.DEADLINE.set(System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis));
+        }
         ScheduledFuture<?> deadline = timeoutMillis > 0 && request instanceof AbstractExecutionAwareRequest abortable
                 ? DEADLINES.schedule(() -> {
                     fired.set(true);
@@ -258,6 +272,8 @@ final class TimedServiceClient extends CloseableHttpClient {
         } catch (RuntimeException e) {
             deadline.cancel(false);
             throw e;
+        } finally {
+            BoundedDns.DEADLINE.remove();
         }
         org.apache.http.Header[] types = response.getHeaders("Content-Type");
         if (refused(types)) {
