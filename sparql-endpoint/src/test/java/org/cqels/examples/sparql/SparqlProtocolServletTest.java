@@ -1523,6 +1523,30 @@ class SparqlProtocolServletTest {
         }
     }
 
+    /** A lookup gets what is left of the request's deadline, not a fresh timeout. */
+    @Test
+    void aNameLookupGetsOnlyWhatIsLeftOfTheDeadline() throws Exception {
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var dns = new TimedServiceClient.BoundedDns(host -> {
+            try {
+                release.await();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            throw new java.net.UnknownHostException(host);
+        }, 1000);
+        TimedServiceClient.BoundedDns.DEADLINE.set(System.nanoTime() + 300_000_000L);   // only 300 ms of the deadline left
+        try {
+            long t0 = System.nanoTime();
+            assertThrows(java.net.UnknownHostException.class, () -> dns.resolve("stalled.example"));
+            double took = (System.nanoTime() - t0) / 1e9;
+            assertTrue(took < 0.8, "the lookup waited a fresh timeout: " + took + " s");
+        } finally {
+            TimedServiceClient.BoundedDns.DEADLINE.remove();
+            release.countDown();
+        }
+    }
+
     /** A metadata query made its own SERVICE resolver, with RDF4J's untimed client. */
     @Test
     void serviceInAMetadataQueryHasTheDeadlineToo() throws Exception {
