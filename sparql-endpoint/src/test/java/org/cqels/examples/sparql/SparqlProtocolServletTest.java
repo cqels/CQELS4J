@@ -1494,6 +1494,35 @@ class SparqlProtocolServletTest {
         }
     }
 
+    /** Apache resolves names before abort() can reach anything: a stalled lookup outlived the deadline. */
+    @Test
+    void aStalledNameLookupEndsAtTheDeadline() throws Exception {
+        var release = new java.util.concurrent.CountDownLatch(1);
+        TimedServiceClient client = new TimedServiceClient(1000, host -> {
+            try {
+                release.await();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            throw new java.net.UnknownHostException(host);
+        });
+        try {
+            long t0 = System.nanoTime();
+            var e = assertThrows(IOException.class,
+                    () -> client.execute(new org.apache.http.client.methods.HttpGet("http://stalled.example/sparql")));
+            double took = (System.nanoTime() - t0) / 1e9;
+            assertTrue(took < 2.5, "took " + took + " s");
+            boolean timeout = false;
+            for (Throwable t = e; t != null; t = t.getCause()) {
+                timeout |= t instanceof java.net.SocketTimeoutException;
+            }
+            assertTrue(timeout, "not reported as a timeout: " + e);
+        } finally {
+            release.countDown();
+            client.close();
+        }
+    }
+
     /** A metadata query made its own SERVICE resolver, with RDF4J's untimed client. */
     @Test
     void serviceInAMetadataQueryHasTheDeadlineToo() throws Exception {

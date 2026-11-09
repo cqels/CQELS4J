@@ -135,14 +135,79 @@ final class TimedServiceClient extends CloseableHttpClient {
     };
     private CloseableHttpClient pool;   // guarded by this
 
+    private final org.apache.http.conn.DnsResolver dns;
+
     TimedServiceClient(int timeoutMillis) {
+        this(timeoutMillis, org.apache.http.impl.conn.SystemDefaultDnsResolver.INSTANCE);
+    }
+
+    /** {@code dns} is the resolver the deadline is put around; tests pass one that stalls. */
+    TimedServiceClient(int timeoutMillis, org.apache.http.conn.DnsResolver dns) {
         this.timeoutMillis = timeoutMillis;
+        this.dns = timeoutMillis > 0 ? new BoundedDns(dns, timeoutMillis) : dns;
+    }
+
+    /**
+     * Name resolution within the deadline. Apache resolves a host synchronously before it opens
+     * a socket, and {@code abort()} cannot reach into that call: a stalled lookup held the slot
+     * for as long as it stalled, the deadline notwithstanding (found in co-review of #123). So a
+     * lookup runs on a small pool of its own and is waited for only until the deadline; a lookup
+     * still pending then is given up on (it ends when the system resolver does, on its pool
+     * thread, not the request's). With every lookup thread busy, a new one is refused at once
+     * rather than queued.
+     */
+    static final class BoundedDns implements org.apache.http.conn.DnsResolver {
+        private static final java.util.concurrent.ThreadPoolExecutor LOOKUPS = new java.util.concurrent.ThreadPoolExecutor(
+                0, 8, 30, TimeUnit.SECONDS, new java.util.concurrent.SynchronousQueue<>(), r -> {
+                    Thread t = new Thread(r, "sparql-service-dns");
+                    t.setDaemon(true);
+                    return t;
+                });
+
+        private final org.apache.http.conn.DnsResolver delegate;
+        private final int timeoutMillis;
+
+        BoundedDns(org.apache.http.conn.DnsResolver delegate, int timeoutMillis) {
+            this.delegate = delegate;
+            this.timeoutMillis = timeoutMillis;
+        }
+
+        @Override
+        public java.net.InetAddress[] resolve(String host) throws java.net.UnknownHostException {
+            java.util.concurrent.Future<java.net.InetAddress[]> lookup;
+            try {
+                lookup = LOOKUPS.submit(() -> delegate.resolve(host));
+            } catch (java.util.concurrent.RejectedExecutionException e) {
+                throw new java.net.UnknownHostException(host + ": too many name lookups pending");
+            }
+            try {
+                return lookup.get(timeoutMillis, TimeUnit.MILLISECONDS);
+            } catch (java.util.concurrent.TimeoutException e) {
+                lookup.cancel(true);
+                java.net.UnknownHostException timedOut = new java.net.UnknownHostException(
+                        host + ": name lookup did not finish within " + timeoutMillis + " ms");
+                timedOut.initCause(new java.net.SocketTimeoutException("name lookup deadline"));
+                throw timedOut;
+            } catch (java.util.concurrent.ExecutionException e) {
+                if (e.getCause() instanceof java.net.UnknownHostException u) {
+                    throw u;
+                }
+                java.net.UnknownHostException u = new java.net.UnknownHostException(host + ": " + e.getCause());
+                u.initCause(e.getCause());
+                throw u;
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                lookup.cancel(true);
+                throw new java.net.UnknownHostException(host + ": interrupted");
+            }
+        }
     }
 
     private synchronized CloseableHttpClient pool() {
         if (pool == null) {
             pool = HttpClientBuilder.create()
                     .useSystemProperties()
+                    .setDnsResolver(dns)
                     .setDefaultRequestConfig(RequestConfig.custom()
                             .setCookieSpec("standard")   // what RDF4J's own client sets
                             .setConnectTimeout(timeoutMillis)
