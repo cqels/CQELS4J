@@ -1523,6 +1523,32 @@ class SparqlProtocolServletTest {
         }
     }
 
+    /** Apache shuts its pool down on an Error: kept, that pool failed every later SERVICE. */
+    @Test
+    void serviceRecoversFromAnErrorInsideTheHttpClient() throws Exception {
+        var remote = serve(java.util.Map.of("/fast", respond(200, "application/sparql-results+json",
+                "{\"head\":{\"vars\":[]},\"results\":{\"bindings\":[]}}", 0)));
+        var first = new java.util.concurrent.atomic.AtomicBoolean(true);
+        TimedServiceClient client = new TimedServiceClient(5000, host -> {
+            if (first.getAndSet(false)) {
+                throw new OutOfMemoryError("stand-in for a heap that ran out mid-request");
+            }
+            return org.apache.http.impl.conn.SystemDefaultDnsResolver.INSTANCE.resolve(host);
+        });
+        String url = "http://localhost:" + remote.getAddress().getPort() + "/fast";
+        try {
+            int armedBefore = TimedServiceClient.armedDeadlines();
+            assertThrows(OutOfMemoryError.class, () -> client.execute(new org.apache.http.client.methods.HttpGet(url)));
+            assertEquals(armedBefore, TimedServiceClient.armedDeadlines(), "the Error left its deadline armed");
+            try (var response = client.execute(new org.apache.http.client.methods.HttpGet(url))) {
+                assertEquals(200, response.getStatusLine().getStatusCode(), "the pool the Error shut down was kept");
+            }
+        } finally {
+            client.close();
+            remote.stop(0);
+        }
+    }
+
     /** A lookup gets what is left of the request's deadline, not a fresh timeout. */
     @Test
     void aNameLookupGetsOnlyWhatIsLeftOfTheDeadline() throws Exception {

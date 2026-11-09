@@ -203,6 +203,9 @@ final class TimedServiceClient extends CloseableHttpClient {
                 if (e.getCause() instanceof java.net.UnknownHostException u) {
                     throw u;
                 }
+                if (e.getCause() instanceof Error error) {
+                    throw error;   // not a name that failed to resolve: passed on as it is
+                }
                 java.net.UnknownHostException u = new java.net.UnknownHostException(host + ": " + e.getCause());
                 u.initCause(e.getCause());
                 throw u;
@@ -271,6 +274,13 @@ final class TimedServiceClient extends CloseableHttpClient {
             throw fired.get() ? timedOut(e) : e;
         } catch (RuntimeException e) {
             deadline.cancel(false);
+            throw e;
+        } catch (Error e) {
+            // Apache shuts its connection manager down on an Error (an OutOfMemoryError, say);
+            // kept, that pool failed every later SERVICE with "Connection pool shut down" (found
+            // in co-review of #123). Let it go so the next request opens a new one.
+            deadline.cancel(false);
+            release();
             throw e;
         } finally {
             BoundedDns.DEADLINE.remove();
