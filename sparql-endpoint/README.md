@@ -106,10 +106,12 @@ All settings are environment variables, named like the MCP server's `CQELS_MCP_H
 | `CQELS_SPARQL_ALLOWED_ORIGINS` | unset | Comma-separated browser origins allowed to call the endpoint (or `*`); they get CORS headers. A request carrying any **other** `Origin` is refused with `403` (see *Security*). Requests without `Origin` — curl, rdflib, Jena — are unaffected. |
 | `CQELS_SPARQL_MAX_REQUEST_BYTES` | `1048576` | Larger bodies → `413`, form bodies and chunked bodies included. |
 | `CQELS_SPARQL_MAX_EXECUTION_SECONDS` | `30` | `Query.setMaxExecutionTime`; exceeding it → `503`, or an aborted response if rows were already sent. `0` = unlimited. **Best effort** — see *The execution limit*. |
-| `CQELS_SPARQL_MAX_CONCURRENT_QUERIES` | `16` | Queries and updates evaluating at once. Beyond it the request is answered `503` with `Retry-After: 1` immediately, not queued. |
-| `CQELS_SPARQL_MAX_ROWS` | `0` | SELECT rows beyond this are dropped and `X-CQELS-Truncated: true` is set. `0` = unlimited. |
+| `CQELS_SPARQL_MAX_CONCURRENT_QUERIES` | `16` | Queries and updates in progress at once, counted from the moment their body starts to arrive. Beyond it the request is answered `503` with `Retry-After: 1` immediately, not queued. |
+| `CQELS_SPARQL_MAX_UPLOAD_SECONDS` | `30` | A POST body must arrive within this, or `408`. `0` = no deadline. A watchdog enforces it while the read is blocked too, so an upload that stops sending, or keeps a chunked body's framing busy without delivering a byte, is ended at the deadline. |
+| `CQELS_SPARQL_MAX_ROWS` | `0` | SELECT rows, or CONSTRUCT / DESCRIBE statements, beyond this are dropped and `X-CQELS-Truncated: true` is set. `0` = unlimited, streamed. |
+| `CQELS_SPARQL_MAX_BUFFERED_BYTES` | `33554432` | With `MAX_ROWS` set the result is held before it is sent; this bounds what is held (estimated from the values' lengths), truncating the same way. See *Memory*. |
 | `CQELS_SPARQL_UPDATE_ENABLED` | `false` | Accept SPARQL Update. |
-| `CQELS_SPARQL_FEDERATION_ENABLED` | `false` | Accept `SERVICE` (in queries and updates) and `LOAD`. Both make the endpoint itself send requests to a URL the client names; see *Security*. |
+| `CQELS_SPARQL_FEDERATION_ENABLED` | `false` | Accept `SERVICE` (in queries and updates) and `LOAD`. Both make the endpoint itself send requests to a URL the client names; only `http` and `https` IRIs are accepted (redirects too), and both give up after `MAX_EXECUTION_SECONDS`. `LOAD` must be the only operation in its request. See *Security*. |
 | `CQELS_SPARQL_METADATA_ENABLED` | `false` | Serve the engine's streams and status as the read-only graph `cqels://endpoint/metadata`; see *The metadata graph*. |
 | `CQELS_SPARQL_STORE_PATH` | unset | NativeStore directory for a graph that survives restarts; unset = memory store. |
 | `CQELS_SPARQL_SEED_FLEET` | `false` | Seed the fleet world. |
@@ -128,20 +130,23 @@ All settings are environment variables, named like the MCP server's `CQELS_MCP_H
 | `default-graph-uri`, `named-graph-uri` | query dataset; overrides `FROM` / `FROM NAMED` in the query |
 | `using-graph-uri`, `using-named-graph-uri` | update dataset; together with `USING`, `USING NAMED` or `WITH` in the update → `400` (§2.2.3) |
 | relative IRIs | resolved against the request URL, the service-defined base of §2.3 |
-| `Accept` | negotiated through RDF4J's writer registries per RFC 9110: `q` values honoured, `q=0` excludes, the most specific range wins, repeated `Accept` fields form one list, parameters count (`text/csv;charset=UTF-8` is more specific than `text/csv`; `charset=ISO-8859-1` matches nothing, since the writers emit UTF-8), and the response is labelled with the media type that matched (`application/json` if that is what was asked for). Defaults: SPARQL JSON for SELECT/ASK, Turtle for CONSTRUCT/DESCRIBE. Also XML, CSV, TSV, binary; N-Triples, N-Quads, TriG, JSON-LD, RDF/XML as far as the RDF4J Rio modules on the classpath go. |
+| `Accept` | negotiated through RDF4J's writer registries per RFC 9110: `q` values honoured, `q=0` excludes, the most specific range wins, repeated `Accept` fields form one list, parameters count (`text/csv;charset=UTF-8` is more specific than `text/csv`; `charset=ISO-8859-1` matches nothing, since the writers emit UTF-8), and the response is labelled with the media type that matched (`application/json` if that is what was asked for). Defaults: SPARQL JSON for SELECT/ASK, Turtle for CONSTRUCT/DESCRIBE. Also XML, CSV, TSV, binary for results; N-Triples, N-Quads, TriG, RDF/XML, JSON-LD, NDJSON-LD for graphs. JSON-LD and NDJSON-LD are held before they are written, so they are bounded by `CQELS_SPARQL_MAX_BUFFERED_BYTES`; the others stream, Turtle and TriG without pretty-printing (statements are grouped only when consecutive), since RDF4J's pretty-printer buffers. |
 | `GET /health`, `GET /ready` | `200` once the engine has started and Jetty is bound (never behind the token). |
 
 | Status | When |
 |---|---|
-| `400` | malformed query or update, graph parameter that is not an absolute IRI, missing `query`, update dataset parameters plus `USING`/`WITH`, malformed percent-encoding |
+| `400` | malformed query or update, graph parameter that is not an absolute IRI, missing `query`, update dataset parameters plus `USING`/`WITH`, malformed percent-encoding, a request nested too deeply to parse (thousands of parentheses) |
 | `401` | token set and missing or wrong |
-| `403` | update while `CQELS_SPARQL_UPDATE_ENABLED` is false; `SERVICE` or `LOAD` while `CQELS_SPARQL_FEDERATION_ENABLED` is false; `Host` not in `CQELS_SPARQL_ALLOWED_HOSTS` (no token set); `Origin` not in `CQELS_SPARQL_ALLOWED_ORIGINS`; a browser request marked `Sec-Fetch-Site: cross-site` or `same-site` with no allowed `Origin` |
+| `403` | update while `CQELS_SPARQL_UPDATE_ENABLED` is false; `SERVICE` or `LOAD` while `CQELS_SPARQL_FEDERATION_ENABLED` is false, or naming anything but an `http`/`https` IRI while it is true; `Host` not in `CQELS_SPARQL_ALLOWED_HOSTS` (no token set); `Origin` not in `CQELS_SPARQL_ALLOWED_ORIGINS`; a browser request marked `Sec-Fetch-Site: cross-site` or `same-site` with no allowed `Origin` |
 | `405` | update sent via GET |
 | `406` | nothing in `Accept` matches a registered writer |
+| `408` | body not received within `CQELS_SPARQL_MAX_UPLOAD_SECONDS` |
 | `413` | body over `CQELS_SPARQL_MAX_REQUEST_BYTES` |
 | `415` | unknown POST `Content-Type` or charset |
-| `500` | evaluation failed |
-| `503` | execution limit exceeded by a query or an update (as Fuseki answers), or every query slot busy (then with `Retry-After: 1`) |
+| `500` | evaluation failed, or the request ran out of heap (see *Memory*) |
+| `503` | execution limit exceeded by a query or an update (as Fuseki answers), every query slot busy (then with `Retry-After: 1`), a JSON-LD / NDJSON-LD result larger than `CQELS_SPARQL_MAX_BUFFERED_BYTES` with no `MAX_ROWS` set (with one, it is truncated instead), or `SERVICE` while the repository's `SERVICE` client lacks the endpoint's limits (an embedding that skipped `limitOutboundRequests`) |
+| `502` | a `LOAD` source failed: an HTTP error, a redirect to anything but `http`/`https`, a body over `CQELS_SPARQL_MAX_BUFFERED_BYTES`, or no parseable RDF (`LOAD SILENT`: `204`, nothing changed) |
+| `504` | a `SERVICE` or `LOAD` target did not answer within `CQELS_SPARQL_MAX_EXECUTION_SECONDS` |
 
 A result streams as it is produced, so the status is sent with the first buffer. If the
 execution limit trips **after** that, the response is aborted — the connection closes without
@@ -230,6 +235,36 @@ so probes keep working. Both need a free request thread, which is why start-up r
 `CQELS_SPARQL_MAX_THREADS` that does not exceed the slots. The only cure for a stuck query is a restart. This is one more reason to
 keep an exposed endpoint behind a token.
 
+## Memory
+
+The endpoint runs in the engine's JVM and shares its heap — it has to, to share the engine's
+repository object. RDF4J builds `GROUP BY` groups, sorts, `DISTINCT` sets and computed strings
+in that heap, and nothing outside RDF4J can bound them: measured on a 256 MB heap, one
+`GROUP BY` over a two-way cross product of 3,000 triples ran out of memory in 3 s. On a 1 GB
+heap, a five-way `GROUP BY` over the 43-triple fleet seed was stopped by the execution limit
+instead (after 40 s, under a 30 s limit). So:
+
+- **Size the heap for the queries you accept** (`java -Xmx…`), with the engine's own windows
+  on top. The execution limit is the main guard: most such queries hit it before the heap.
+- **A query that runs out of heap gets a plain `500`** and gives its slot back; the log says
+  what happened. Other threads — the engine's included — can still fail while the heap is
+  full, which is why the heap size, not this answer, is the defence.
+- **What the endpoint itself holds is bounded.** Results stream unless `MAX_ROWS` is set; then
+  at most `MAX_ROWS` rows (or statements) and `MAX_BUFFERED_BYTES` of them are held per query,
+  so `MAX_CONCURRENT_QUERIES × MAX_BUFFERED_BYTES` in all. A row cap alone did not bound bytes:
+  one computed literal made an 8 MB response under `MAX_ROWS=1`. JSON-LD and NDJSON-LD are the
+  exceptions to streaming — RDF4J's writers hold the graph, or 1,024 statements of any size —
+  so they are always held to `MAX_BUFFERED_BYTES`, and refused (`503`) beyond it when no row
+  cap is set. Turtle and TriG stream with pretty-printing off, because the pretty-printer
+  buffers too. One path stays unbounded: RDF4J's **binary** SELECT format
+  (`application/x-binary-rdf-results-table`) keeps a table of every distinct IRI namespace it
+  has written, so a result of many IRIs with long, distinct namespaces grows the heap in
+  proportion; a 128 MB heap ran out where SPARQL JSON did not. Capping it would cut legitimate
+  large binary results at `MAX_BUFFERED_BYTES`, so it is left as is: if untrusted callers can
+  query, expect them to choose it, and size the heap or set `MAX_ROWS`.
+- Behind a token, only token holders can send such queries. Without one, anyone who can reach
+  the port can.
+
 ## Continuous queries
 
 This endpoint serves one-shot SPARQL only: the SPARQL Protocol has no request/response shape for
@@ -258,7 +293,35 @@ requested upstream as cqels/claude#1387; the Jetty version here is pinned to the
   server has already posted the data to the attacker's service. CORS cannot stop that, since the
   data never passes through the browser. The test suite reproduces it with federation on (the
   stand-in remote receives the vehicles' IRIs) and checks that nothing leaves with it off.
-  Enable federation only behind a token.
+  Enable federation only behind a token, and only for callers you would let fetch any web
+  URL from the server's network position — there is no allow-list of hosts.
+- **With federation on, only `http` and `https` are reachable.** `LOAD <file:///…>` read an RDF
+  file off the server's disk into the store, where the next query returned it; `SERVICE` and
+  `LOAD` naming any other scheme are now refused (`403`). RDF4J's own `LOAD` also followed
+  redirects by hand, to any scheme — an http URL redirecting to `file:` read the file — and
+  waited without a deadline, so **the endpoint performs `LOAD` itself**, with Java's HTTP
+  client: redirects are followed only to `http`/`https` (never from `https` to `http`), the
+  whole fetch must finish within `CQELS_SPARQL_MAX_EXECUTION_SECONDS` (`504`), and at most
+  `CQELS_SPARQL_MAX_BUFFERED_BYTES` of body is held, after undoing a `gzip` or `deflate`
+  `Content-Encoding` and unpacking a `.gz` file or `.zip` archive as RDF4J's loader did
+  (`502` beyond). A JSON-LD `@context` the
+  document names is fetched under the same rules and the same deadline (jsonld-java's own loader
+  read `file:` contexts), and RDF/XML and TriX are parsed with no doctype and no external
+  entities (RDF4J's defaults let an entity read a local file). The cost: `LOAD` must be
+  the only operation in its request (`400` otherwise). `SERVICE` gets the same deadline
+  through a client installed on the engine repository's federated-service resolver
+  (`SparqlEndpointLauncher.limitOutboundRequests`). The deadline is absolute: a request still
+  running at it is aborted, so a remote that trickles its headers or body a byte at a time
+  cannot hold the slot; the host name lookup is held to it too, on a small pool of its own,
+  since an abort cannot interrupt one. The client stays installed for the repository's lifetime, so the
+  engine's own `SERVICE` calls get the deadline too (with `MAX_EXECUTION_SECONDS=0` it is
+  installed with no deadline, for the format rule below); its connections are released when Jetty
+  stops and reopen if it is used again. A `SERVICE` endpoint must answer SPARQL JSON, TSV or
+  CSV, in exactly one `Content-Type` header (an allow-list, not a deny-list: an empty header
+  followed by an XML one got past a check of the first): SPARQL XML is refused, because RDF4J parses it with settings under which an XML entity
+  read a local file into the results, and so is RDF4J's binary format, whose parser sizes arrays
+  from counts in the stream (a 12-byte answer ran it out of heap, and the query then reported an
+  empty result). Nothing is set JVM-wide.
 - **Browser requests from other origins are refused (`403`).** Loopback is not a boundary
   against a browser: any page the user visits can submit a cross-origin form POST — a CORS
   "simple" request, sent without a preflight — to `127.0.0.1:8089`. Withholding CORS headers
@@ -279,7 +342,12 @@ requested upstream as cqels/claude#1387; the Jetty version here is pinned to the
   `Sec-Fetch-Site` at all (curl, rdflib, Jena) pass. Browsers that predate Fetch Metadata
   are not covered; the federation default above does not depend on it.
 - Binding anything but a loopback address with no `CQELS_SPARQL_AUTH_TOKEN` is refused at
-  start-up, unless `CQELS_SPARQL_ALLOW_UNAUTHENTICATED_REMOTE=true`.
+  start-up, unless `CQELS_SPARQL_ALLOW_UNAUTHENTICATED_REMOTE=true`. `startServer` refuses it
+  too (`EndpointOptions.allowUnauthenticatedRemote`), so a program embedding the endpoint
+  through it gets the same rule.
+- A request takes its query slot before its body is read, so a client that trickles a body
+  holds a slot — the next request beyond the cap is still told `503` at once and `/health`
+  still answers — until `CQELS_SPARQL_MAX_UPLOAD_SECONDS` gives the slot back.
 - TLS is not terminated here. Front the endpoint with a TLS-terminating proxy, as the MCP
   README says for its own HTTP transport.
 - A bearer token is compared in constant time. `/health` and `/ready` are never behind it.
@@ -309,6 +377,13 @@ context.addFilter(new FilterHolder(new AccessFilters.Hosts(List.of("localhost", 
 context.addFilter(new FilterHolder(new AccessFilters.Origins(List.of())), "/sparql", requests);
 context.addServlet(new ServletHolder(new SparqlProtocolServlet(engine::getRepository, options)), "/sparql");
 ```
+
+With federation enabled, also call `SparqlEndpointLauncher.limitOutboundRequests(engine.getRepository(),
+seconds)` once, before the first request: it gives `SERVICE` its deadline and its refusal of
+XML answers (see *Security*); `startServer` does this for you, and refuses to start when the
+repository's `SERVICE` client cannot be replaced. Until it has run, the servlet answers any
+`SERVICE` with `503`, rather than run it without those limits. `LOAD` needs nothing: the
+servlet performs it itself.
 
 To serve [the metadata graph](#the-metadata-graph), pass a third argument,
 `EngineMetadata.of(engine)`: `new SparqlProtocolServlet(engine::getRepository, options,
