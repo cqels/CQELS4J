@@ -216,6 +216,12 @@ instead: [`../sparql-endpoint/`](../sparql-endpoint/) is a SPARQL 1.1 Protocol e
 the same kind of embedded engine and the same fleet seed. It answers one-shot queries only;
 continuous queries stay here.
 
+### LangGraph / LangChain agents
+
+[`LANGGRAPH.md`](LANGGRAPH.md) shows how to give a LangGraph agent the published server as its
+long-term memory through LangChain's built-in MCP support: connecting over stdio or HTTP,
+ontology-aware and point-in-time recall, stream watches, durable storage, and per-user memory.
+
 ### Try it
 
 > *Memory:* "What do we know about vehicle EV-7Q2?" → the assistant calls `recall_memory` (or
