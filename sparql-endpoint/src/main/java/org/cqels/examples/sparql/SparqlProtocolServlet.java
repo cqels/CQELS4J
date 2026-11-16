@@ -174,12 +174,18 @@ public final class SparqlProtocolServlet extends HttpServlet {
     /** Fetches LOAD sources; built on first use. See {@link #executeLoad}. */
     private transient volatile java.net.http.HttpClient loadClient;
     /**
-     * Set by {@link #destroy()}, under {@link #commitGate}'s write lock: no update commits after
-     * it. Jetty cuts off a request still running when its drain ends but does not stop its thread,
-     * so an update held up until then committed afterwards, for a client long since told the
-     * connection was gone (found in co-review of #128). Cleared by {@link #init()} on a restart.
+     * Which lifetime of this servlet instance a request belongs to. Each request records it on
+     * arrival ({@link #GENERATION}); {@link #destroy()} advances it under {@link #commitGate}'s write
+     * lock, and an update commits only if its request's generation is still the current one.
+     *
+     * <p>Why: Jetty cuts off a request still running when its drain ends but does not stop its
+     * thread, so an update held up until then committed afterwards, for a client long since told
+     * the connection was gone (found in co-review of #128). A flag that {@code destroy()} set and
+     * {@code init()} cleared was not enough: Jetty reuses the instance across a restart, and the
+     * restart re-armed the old request's commit (found in the next round).
      */
-    private transient volatile boolean stopped;
+    private final java.util.concurrent.atomic.AtomicLong generation = new java.util.concurrent.atomic.AtomicLong();
+    private static final String GENERATION = SparqlProtocolServlet.class.getName() + ".generation";
     private final transient java.util.concurrent.locks.ReadWriteLock commitGate =
             new java.util.concurrent.locks.ReentrantReadWriteLock();
     private final transient Supplier<? extends Collection<Statement>> metadata;
@@ -212,7 +218,6 @@ public final class SparqlProtocolServlet extends HttpServlet {
 
     @Override
     public void init() {
-        stopped = false;
         var watch = new java.util.concurrent.ScheduledThreadPoolExecutor(1, r -> {
             Thread t = new Thread(r, "sparql-upload-deadline");
             t.setDaemon(true);
@@ -233,9 +238,9 @@ public final class SparqlProtocolServlet extends HttpServlet {
 
     @Override
     public void destroy() {
-        commitGate.writeLock().lock();   // waits for a commit in progress, then admits none
+        commitGate.writeLock().lock();   // waits for a commit in progress; none of this lifetime follows
         try {
-            stopped = true;
+            generation.incrementAndGet();
         } finally {
             commitGate.writeLock().unlock();
         }
@@ -293,6 +298,7 @@ public final class SparqlProtocolServlet extends HttpServlet {
     @Override
     protected void service(HttpServletRequest req, HttpServletResponse resp)
             throws jakarta.servlet.ServletException, IOException {
+        req.setAttribute(GENERATION, generation.get());
         switch (req.getMethod()) {
             case "GET", "HEAD", "POST", "OPTIONS" -> super.service(req, resp);
             default -> methodNotAllowed(resp, "method " + req.getMethod() + " is not supported; use GET or POST "
@@ -850,7 +856,7 @@ public final class SparqlProtocolServlet extends HttpServlet {
                                 + "this endpoint performs LOAD itself and cannot mix it with other operations");
                         return;
                     }
-                    executeLoad(resp, conn, load.get());
+                    executeLoad(req, resp, conn, load.get());
                     return;
                 }
                 update = conn.prepareUpdate(QueryLanguage.SPARQL, updateString, base);
@@ -870,7 +876,7 @@ public final class SparqlProtocolServlet extends HttpServlet {
             // one transaction, an update that leaves anything in that graph is undone before
             // anything — the engine included — can see it. So is one that finds data already
             // there and does not remove it; an update that empties the graph is accepted.
-            if (commitUnlessReserved(resp, conn, update::execute)) {
+            if (commitUnlessReserved(req, resp, conn, update::execute)) {
                 resp.setStatus(HttpServletResponse.SC_NO_CONTENT);
             }
         } catch (IllegalArgumentException e) {
@@ -900,9 +906,10 @@ public final class SparqlProtocolServlet extends HttpServlet {
      * Runs {@code work} in one transaction and commits it, unless it left a triple in
      * {@link #METADATA_GRAPH}: then it is rolled back and answered 403. Returns whether it
      * committed. Rolled back on every other way out too — and when the servlet has been
-     * destroyed meanwhile (503): see {@link #stopped}.
+     * destroyed since {@code req} arrived (503): see {@link #generation}.
      */
-    private boolean commitUnlessReserved(HttpServletResponse resp, RepositoryConnection conn, Runnable work)
+    private boolean commitUnlessReserved(HttpServletRequest req, HttpServletResponse resp, RepositoryConnection conn,
+                                         Runnable work)
             throws IOException {
         conn.begin();
         try {
@@ -917,7 +924,7 @@ public final class SparqlProtocolServlet extends HttpServlet {
             // lookup-cache invalidation (measured on 2.0.0-alpha.22, even under FROM <g> CACHE 5m).
             commitGate.readLock().lock();
             try {
-                if (stopped) {
+                if (!Long.valueOf(generation.get()).equals(req.getAttribute(GENERATION))) {
                     conn.rollback();
                     fail(resp, HttpServletResponse.SC_SERVICE_UNAVAILABLE,
                             "the endpoint stopped before the update could commit; nothing was changed");
@@ -948,7 +955,8 @@ public final class SparqlProtocolServlet extends HttpServlet {
      * cannot run the other operations of one request around a load done elsewhere. {@code SILENT}
      * keeps its meaning: a failed fetch or parse changes nothing and answers 204.
      */
-    private void executeLoad(HttpServletResponse resp, RepositoryConnection conn, Load load) throws IOException {
+    private void executeLoad(HttpServletRequest req, HttpServletResponse resp, RepositoryConnection conn, Load load)
+            throws IOException {
         String source = load.getSource().getValue().stringValue();
         org.eclipse.rdf4j.model.Resource graph = load.getGraph() == null ? null
                 : (org.eclipse.rdf4j.model.Resource) load.getGraph().getValue();
@@ -1001,7 +1009,7 @@ public final class SparqlProtocolServlet extends HttpServlet {
         ContextLoader contexts = new ContextLoader(deadline);
         boolean committed;
         try {
-            committed = commitUnlessReserved(resp, conn, () -> {
+            committed = commitUnlessReserved(req, resp, conn, () -> {
                 org.eclipse.rdf4j.repository.util.RDFInserter inserter = new org.eclipse.rdf4j.repository.util.RDFInserter(conn);
                 if (graph != null) {
                     inserter.enforceContext(graph);

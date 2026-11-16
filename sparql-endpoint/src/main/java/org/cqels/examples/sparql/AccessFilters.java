@@ -106,8 +106,9 @@ public final class AccessFilters {
      * change is the {@code Host} it sends, which still names the attacker's domain, so a request
      * whose host is not one this endpoint is known by is refused (403).
      *
-     * <p>The launcher installs it whenever no bearer token is set (a token defeats rebinding on
-     * its own: the browser never attaches it for the attacker's page), or when
+     * <p>The launcher installs it whenever no read token is set (a read token defeats rebinding on
+     * its own: the browser never attaches it for the attacker's page; an update token alone does
+     * not, since reads are then open), or when
      * {@code CQELS_SPARQL_ALLOWED_HOSTS} is given. Names compare case-insensitively, without the
      * port and without IPv6 brackets.
      */

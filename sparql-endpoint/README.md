@@ -99,12 +99,12 @@ All settings are environment variables, named like the MCP server's `CQELS_MCP_H
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `CQELS_SPARQL_HOST` | `127.0.0.1` | Bind address. A non-loopback host **without a token refuses to start** (see *Security*). |
+| `CQELS_SPARQL_HOST` | `127.0.0.1` | Bind address. A non-loopback host **without a read token refuses to start** (see *Security*). |
 | `CQELS_SPARQL_PORT` | `8089` | `0` picks an ephemeral port, printed in the `listening on` line. |
 | `CQELS_SPARQL_PATH` | `/sparql` | |
 | `CQELS_SPARQL_AUTH_TOKEN` | unset | Bearer token. Missing or wrong → `401` with `WWW-Authenticate: Bearer`. Read-only when `CQELS_SPARQL_UPDATE_TOKEN` is set. |
 | `CQELS_SPARQL_UPDATE_TOKEN` | unset | A second bearer token, the only one that may update; must differ from `AUTH_TOKEN`. An update with the read token (or, if `AUTH_TOKEN` is unset, with no token) → `403`. See *Security*. |
-| `CQELS_SPARQL_ALLOWED_HOSTS` | unset | Comma-separated host names a request's `Host` header may carry **in addition to** `localhost`, `127.0.0.1`, `::1` and the bind host (or `*` for any). Checked whenever no token is set, as the defence against DNS rebinding; behind a proxy or under a DNS name, list the name clients use. |
+| `CQELS_SPARQL_ALLOWED_HOSTS` | unset | Comma-separated host names a request's `Host` header may carry **in addition to** `localhost`, `127.0.0.1`, `::1` and the bind host (or `*` for any). Checked whenever no read token is set (an update token alone leaves reads open), as the defence against DNS rebinding; behind a proxy or under a DNS name, list the name clients use. |
 | `CQELS_SPARQL_ALLOWED_ORIGINS` | unset | Comma-separated browser origins allowed to call the endpoint (or `*`); they get CORS headers. A request carrying any **other** `Origin` is refused with `403` (see *Security*). Requests without `Origin` — curl, rdflib, Jena — are unaffected. |
 | `CQELS_SPARQL_MAX_REQUEST_BYTES` | `1048576` | Larger bodies → `413`, form bodies and chunked bodies included. |
 | `CQELS_SPARQL_MAX_EXECUTION_SECONDS` | `30` | `Query.setMaxExecutionTime`; exceeding it → `503`, or an aborted response if rows were already sent. `0` = unlimited. **Best effort** — see *The execution limit*. |
@@ -369,9 +369,10 @@ requested upstream as cqels/claude#1387; the Jetty version here is pinned to the
 - **DNS rebinding is refused by `Host`.** An attacker's page can re-resolve its own domain to
   `127.0.0.1`; its requests are then same-origin to the browser (no `Origin`,
   `Sec-Fetch-Site: same-origin`) and it can read the answers. Only the `Host` header still names
-  the attacker's domain, so without a token the endpoint accepts only `localhost`, `127.0.0.1`,
-  `::1` and the bind host, plus `CQELS_SPARQL_ALLOWED_HOSTS`. With a token there is no host
-  check unless you list hosts: the browser never sends the token for the attacker's page.
+  the attacker's domain, so without a read token (`CQELS_SPARQL_AUTH_TOKEN`) the endpoint accepts
+  only `localhost`, `127.0.0.1`, `::1` and the bind host, plus `CQELS_SPARQL_ALLOWED_HOSTS`. An
+  update token alone does not lift the check, since reads are open then. With a read token there
+  is no host check unless you list hosts: the browser never sends the token for the attacker's page.
   Binding `0.0.0.0` with `CQELS_SPARQL_ALLOWED_HOSTS` unset and `…_ALLOW_UNAUTHENTICATED_REMOTE`
   therefore answers only to loopback names; list the names remote clients use.
 - A browser GET from an `<img>` or a link carries no `Origin`, so it also checks Fetch Metadata:
@@ -410,7 +411,8 @@ requested upstream as cqels/claude#1387; the Jetty version here is pinned to the
 `SparqlProtocolServlet` depends only on `jakarta.servlet` and RDF4J. Mount it in any Servlet 6
 container. It parses its own parameters and enforces `maxRequestBytes` itself, so the
 container's form limit does not matter. It checks **neither tokens, hosts nor origins**:
-install `AccessFilters.Hosts` (without a token), `AccessFilters.Origins` (always) and
+install `AccessFilters.Hosts` (whenever there is no read token — an update token alone leaves
+reads open, so it does not count), `AccessFilters.Origins` (always) and
 `AccessFilters.BearerToken` (when exposed; `new BearerToken(readToken, updateToken)` for two) in
 front of it, as the launcher does, or your container's equivalents. To keep a request from
 updating, set the request attribute `AccessFilters.READ_ONLY` to `Boolean.TRUE` before it reaches
@@ -419,7 +421,7 @@ the servlet, which is what `BearerToken` does for the read token:
 ```java
 EndpointOptions options = EndpointOptions.defaults().withMaxRows(10_000);
 var requests = EnumSet.of(DispatcherType.REQUEST);
-// without a token, Hosts is what stops DNS rebinding: list every name clients reach you by
+// without a read token, Hosts is what stops DNS rebinding: list every name clients reach you by
 context.addFilter(new FilterHolder(new AccessFilters.Hosts(List.of("localhost", "127.0.0.1", "::1"))), "/sparql", requests);
 context.addFilter(new FilterHolder(new AccessFilters.Origins(List.of())), "/sparql", requests);
 context.addServlet(new ServletHolder(new SparqlProtocolServlet(engine::getRepository, options)), "/sparql");

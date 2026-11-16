@@ -379,6 +379,10 @@ class SparqlProtocolServletTest {
         try (Endpoint locked = Endpoint.start(EndpointOptions.defaults().withAuthToken("s3cret"), 0)) {
             assertEquals(401, statusWithHost(locked.url(), "rebind.attacker.example"));
         }
+        // an update token alone leaves reads open, so the host check stays
+        try (Endpoint writeLocked = Endpoint.start(EndpointOptions.defaults().withUpdateToken("w"), 0)) {
+            assertEquals(403, statusWithHost(writeLocked.url(), "rebind.attacker.example"));
+        }
         try (Endpoint named = Endpoint.start(EndpointOptions.defaults().withAllowedHosts(List.of("sparql.fleet.example")), 0)) {
             assertEquals(200, statusWithHost(named.url(), "sparql.fleet.example"));
             assertEquals(200, statusWithHost(named.url(), "localhost"));   // listed names add to the defaults
@@ -2134,6 +2138,9 @@ class SparqlProtocolServletTest {
                     HttpResponse.BodyHandlers.ofString());
             assertTrue(holder.entered.await(10, java.util.concurrent.TimeUnit.SECONDS));
             stopPastTheDrain(server);
+            // Jetty reuses the servlet instance on a restart; the old request must not commit in
+            // the new lifetime either
+            server.start();
             holder.release.countDown();
             awaitSlotsInUse(servlet, 0);
             try (RepositoryConnection c = engine.getRepository().getConnection()) {
@@ -2144,6 +2151,32 @@ class SparqlProtocolServletTest {
             holder.release.countDown();
             server.stop();
             engine.close();
+        }
+    }
+
+    /** The access log writes a line per request — with the path, never the query — and keeps doing so after a restart. */
+    @Test
+    void theAccessLogWritesAndLeavesTheQueryOut() throws Exception {
+        java.io.PrintStream original = System.err;
+        java.io.ByteArrayOutputStream captured = new java.io.ByteArrayOutputStream();
+        System.setErr(new java.io.PrintStream(captured, true, StandardCharsets.UTF_8));
+        try (Endpoint ep = Endpoint.start(EndpointOptions.defaults(), 0)) {
+            String secret = "urn:ex:do-not-log-" + System.nanoTime();
+            assertEquals(200, get(ep.url(), "ASK { <" + secret + "> ?p ?o }", null).statusCode());
+            ep.server().stop();
+            ep.server().start();   // on a new ephemeral port
+            assertEquals(400, get(base(ep.server()) + "/sparql", "SELEKT", null).statusCode());
+            String log = "";
+            for (int i = 0; i < 50 && !log.contains("\"GET /sparql HTTP/1.1\" 400"); i++) {   // written as each request completes
+                Thread.sleep(20);
+                log = captured.toString(StandardCharsets.UTF_8);
+            }
+            assertTrue(log.contains("\"GET /sparql HTTP/1.1\" 200"), log);
+            assertTrue(log.contains("\"GET /sparql HTTP/1.1\" 400"), "after a restart: " + log);
+            assertFalse(log.contains("do-not-log") || log.contains("SELEKT"), log);
+            assertFalse(log.contains("NullPointerException"), log);
+        } finally {
+            System.setErr(original);
         }
     }
 
