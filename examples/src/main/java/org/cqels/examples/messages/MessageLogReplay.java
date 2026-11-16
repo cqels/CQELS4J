@@ -45,8 +45,9 @@ import org.eclipse.rdf4j.rio.RDFFormat;
  *       one message at a time, and joins the observation to its own result through the blank
  *       node. Four readings, one per observation.</li>
  *   <li><em>Messages taken together.</em> {@code CabinAverage} runs over {@code [RANGE 30s]} and
- *       averages each sensor across messages. The draft leaves combining messages to an "RDF
- *       Message Stream Profile" (its §3, still unwritten); in CQELS the window is that choice.</li>
+ *       averages each sensor across messages. The draft allows combining messages when an "RDF
+ *       Message Stream Profile" says so (§1.3) but has not defined profiles yet (§3); reading the
+ *       window as that choice is this demo's interpretation.</li>
  *   <li><em>What message scoping prevents.</em> The same log read as one plain Turtle document,
  *       delimiters removed, merges the four {@code _:r} into one blank node with four values. The
  *       same {@code Reading} query then joins every observation to every value: 16 rows instead

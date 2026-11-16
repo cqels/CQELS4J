@@ -240,4 +240,106 @@ class RdfMessageLogTest {
         assertNotEquals(back.get(0).get(0).getSubject(), back.get(1).get(0).getSubject());
         assertTrue(back.get(0).get(0).getSubject().isBNode());
     }
+
+    // ------------------------------------------------------ co-review round 1: token boundaries
+
+    /** Our parse of one message must equal RDF4J's parse of the intended fragment. */
+    private static void sameAsRio(String prologue, String fragment, List<Statement> parsed) throws Exception {
+        org.eclipse.rdf4j.model.Model expected = org.eclipse.rdf4j.rio.Rio.parse(
+                new java.io.StringReader(prologue + fragment), BASE, RDFFormat.TRIG);
+        assertTrue(org.eclipse.rdf4j.model.util.Models.isomorphic(expected,
+                new org.eclipse.rdf4j.model.impl.LinkedHashModel(parsed)), fragment + " -> " + parsed);
+    }
+
+    @Test
+    void namesThatContainMessageAreOneToken() throws Exception {
+        String prologue = "PREFIX ex: <http://example.org/>\nPREFIX MESSAGE.foo: <http://example.org/m/>\n";
+        for (String fragment : List.of(
+                "ex:a ex:p ex:x..MESSAGE .\n",
+                "ex:a ex:p ex:x\\.MESSAGE .\n",
+                "MESSAGE.foo:s ex:p 1 .\n",
+                "ex:a ex:p ex:x\\#MESSAGE .\n",
+                "ex:a ex:p ex:x\\(MESSAGE .\n")) {
+            List<List<Statement>> messages = ttl(V + prologue + fragment);
+            assertEquals(List.of(1), sizes(messages), fragment);
+            sameAsRio(prologue, fragment, messages.get(0));
+        }
+    }
+
+    @Test
+    void anIntegerThenADotThenMessageCuts() {
+        assertEquals(List.of(1, 1), sizes(ttl(V + "<http://e/s> <http://e/p> 1.MESSAGE\n<http://e/s> <http://e/p> 2 .\n")));
+        // numbers whose dots are not terminators
+        assertEquals(List.of(4), sizes(ttl(V + "<http://e/s> <http://e/p> 1.5, .5, -1.5e3, +2 .\n")));
+    }
+
+    @Test
+    void commentsInsideDirectives() {
+        assertEquals(List.of(1), sizes(ttl(V + "PREFIX ex: #c\n<http://e/>\nex:s ex:p 1 .\n")));
+        // the @prefix is carried into message 2 with its '.' even though a comment split it
+        List<List<Statement>> carried = ttl(V + "@prefix ex: <http://e/> #c\n.\nex:s ex:p 1 .\nMESSAGE\nex:s ex:p 2 .\n");
+        assertEquals(List.of(1, 1), sizes(carried));
+        assertEquals(iri("http://e/s"), carried.get(1).get(0).getSubject());
+        assertEquals(List.of(1, 1), sizes(ttl(V + "<http://e/s> <http://e/p> 1 .\n@message #c\n.\n<http://e/s> <http://e/p> 2 .\n")));
+        assertEquals(List.of(1, 1), sizes(ttl("@version #c\n\"1.2-messages\" #c\n.\n<http://e/s> <http://e/p> 1 .\n"
+                + "MESSAGE\n<http://e/s> <http://e/p> 2 .\n")));
+    }
+
+    @Test
+    void versionLabelsApplyFromWhereTheyStand() {
+        String a = "<http://e/s> <http://e/p> 1 .\n";
+        // a later VERSION "1.2" does not invalidate the delimiter before it
+        assertEquals(List.of(1, 2), sizes(ttl(V + a + "MESSAGE\n" + a.replace("1 .", "2 .") + "VERSION \"1.2\"\n" + a)));
+        // but a delimiter after it is refused
+        assertThrows(IllegalArgumentException.class,
+                () -> ttl(V + a + "VERSION \"1.2\"\nMESSAGE\n" + a));
+        // labels are decoded
+        assertEquals(List.of(1, 1), sizes(ttl("VERSION \"1.2\\u002Dmessages\"\n" + a + "MESSAGE\n" + a)));
+    }
+
+    @Test
+    void unterminatedTokensAreErrors() {
+        assertThrows(IllegalArgumentException.class, () -> ttl("VERSION \"1.2-messages\n<http://e/s> <http://e/p> 1 .\n"));
+        assertThrows(IllegalArgumentException.class, () -> ttl(V + "<http://e/s> <http://e/p> \"open .\n"));
+        assertThrows(IllegalArgumentException.class, () -> ttl(V + "<http://e/s> <http://e/p> <http://e/o .\n"));
+    }
+
+    @Test
+    void trigGraphKeywordAndDefaultGraphBlock() {
+        String log = V + "PREFIX ex: <http://e/>\nGRAPH ex:g { ex:s ex:p 1 }\n{ ex:s ex:p 2 }\nMESSAGE\nex:g2 { ex:s ex:p 3 }\n";
+        List<List<Statement>> messages = trig(log);
+        assertEquals(List.of(2, 1), sizes(messages));
+        assertEquals(iri("http://e/g2"), messages.get(1).get(0).getContext());
+    }
+
+    // --------------------------------------------- co-review round 1: N-Triples/N-Quads comments
+
+    @Test
+    void ntriplesCommentFormsAroundDelimiters() {
+        assertEquals(List.of(1, 1), sizes(nt(V + NT_A + "MESSAGE#c\n" + NT_C)));
+        assertEquals(List.of(1), sizes(nt(V + NT_A + "MESSAGE\n# tail\n")));
+        assertEquals(List.of(), sizes(nt(V + "# only a comment\n")));
+        assertEquals(List.of(1, 1), sizes(RdfMessageLog.parse(V + NT_A + "MESSAGE # c\n" + NT_C, RDFFormat.NQUADS, BASE)));
+    }
+
+    // ------------------------------------------------------------- co-review round 1: writers
+
+    @Test
+    void turtleWriterRefusesNamedGraphs() {
+        Statement inGraph = VF.createStatement(iri("http://e/s"), iri("http://e/p"), VF.createLiteral(1), iri("http://e/g"));
+        assertThrows(IllegalArgumentException.class, () -> RdfMessageLog.writeTurtle(List.of(List.of(inGraph)), Map.of()));
+        // N-Quads keeps it
+        assertEquals(iri("http://e/g"), nt(RdfMessageLog.writeNQuads(List.of(List.of(inGraph)))).get(0).get(0).getContext());
+    }
+
+    @Test
+    void turtleWriterOutputWithMessageLikeNamesRereads() {
+        List<List<Statement>> messages = List.of(
+                List.of(VF.createStatement(iri("http://e/x..MESSAGE"), iri("http://e/p"), VF.createLiteral(1))),
+                List.of(VF.createStatement(iri("http://e/x...MESSAGE"), iri("http://e/p"), VF.createLiteral(2))));
+        List<List<Statement>> back = ttl(RdfMessageLog.writeTurtle(messages, Map.of("e", "http://e/")));
+        assertEquals(List.of(1, 1), sizes(back));
+        assertEquals(iri("http://e/x..MESSAGE"), back.get(0).get(0).getSubject());
+        assertEquals(iri("http://e/x...MESSAGE"), back.get(1).get(0).getSubject());
+    }
 }

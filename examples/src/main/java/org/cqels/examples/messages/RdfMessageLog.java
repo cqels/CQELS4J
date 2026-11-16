@@ -29,17 +29,19 @@ import org.eclipse.rdf4j.rio.Rio;
  * <p><strong>What is the engine's and what is this class's.</strong>
  * <ul>
  *   <li><em>N-Triples and N-Quads</em> are the engine's: {@link RdfMessageCodec#parseNQuads} and
- *       {@link RdfMessageCodec#writeNQuads} (cqels-core). This class adds two workarounds, each
- *       tracked in <a href="https://github.com/cqels/CQELS4J/issues/126">#126</a>: it strips a
- *       comment that follows {@code MESSAGE} on the same line, which the codec rejects; and when
- *       the last message is empty it writes one more delimiter, which the codec's writer omits so
- *       that the empty message is lost on re-reading.</li>
+ *       {@link RdfMessageCodec#writeNQuads} (cqels-core). This class adds workarounds for three
+ *       codec gaps, all tracked in <a href="https://github.com/cqels/CQELS4J/issues/126">#126</a>:
+ *       before parsing it removes a comment that follows {@code MESSAGE} on the same line (the
+ *       codec rejects it) and every comment-only line (the codec opens an empty message for one
+ *       after the last delimiter); and when the last message is empty it writes one more
+ *       delimiter, which the codec's writer omits, so that the empty message survives
+ *       re-reading.</li>
  *   <li><em>Turtle and TriG</em> are this class's. RDF4J 4.3.8, the version the engine ships,
- *       rejects both {@code VERSION} and {@code MESSAGE}, so the log is split here and each
+ *       rejects both {@code VERSION} and {@code MESSAGE}, so the log is tokenised here and each
  *       message is handed to RDF4J's ordinary Turtle or TriG parser.</li>
  * </ul>
  *
- * <p><strong>Rules implemented</strong> (§2.1.1–§2.1.3), the same for every format:
+ * <p><strong>Rules implemented</strong> (§2.1.1 to §2.1.3), the same for every format:
  * <ul>
  *   <li>A delimiter ends the current message. A message is opened by a triple, a quad, or another
  *       delimiter, so a delimiter before any statement makes the first message empty, and a
@@ -48,11 +50,23 @@ import org.eclipse.rdf4j.rio.Rio;
  *       {@code _:b} label in two messages gives two different blank nodes.</li>
  *   <li>{@code PREFIX} and {@code BASE} (and {@code @prefix}, {@code @base}) carry over into later
  *       messages; a repeated one overrides the earlier one from that point on.</li>
- *   <li>The Turtle/TriG reader is strict: a delimiter in a document whose version label lacks the
- *       {@code -messages} suffix, or that has no version label, is rejected. (The engine's N-Quads
- *       codec accepts such a document; see #126.)</li>
- *   <li>{@code MESSAGE} and {@code @message .} are both delimiters in Turtle/TriG; {@code MESSAGE},
- *       like {@code PREFIX}, is matched case-insensitively.</li>
+ * </ul>
+ *
+ * <p><strong>Turtle/TriG specifics.</strong>
+ * <ul>
+ *   <li>A delimiter is recognised only as a whole token where a statement may start: never inside
+ *       a string, an IRI, a comment, a prefixed name ({@code ex:MESSAGE}, {@code ex:x..MESSAGE},
+ *       {@code MESSAGE.x:y}, escaped local names), a {@code [ ]}, {@code ( )} or graph block.</li>
+ *   <li>Comments may stand wherever whitespace may, including inside directives.</li>
+ *   <li>Strict about the version label: a delimiter is accepted only while the version label most
+ *       recently announced ends in {@code -messages}; a delimiter with no such label in force is
+ *       rejected. (The engine's N-Quads codec accepts one; see #126.) A label is decoded, so
+ *       {@code "1.2-messages"} is {@code 1.2-messages}.</li>
+ *   <li>{@code MESSAGE}, {@code VERSION}, {@code PREFIX} and {@code BASE} are matched
+ *       case-insensitively, as Turtle matches its SPARQL-style directives; the {@code @} forms are
+ *       lower-case only.</li>
+ *   <li>Not handled: RDF 1.2 triple terms and quoted triples ({@code <<…>>}), which RDF4J 4.3.8's
+ *       Turtle and TriG parsers do not read either.</li>
  * </ul>
  */
 public final class RdfMessageLog {
@@ -63,9 +77,12 @@ public final class RdfMessageLog {
     /** The version label this class writes. */
     public static final String VERSION_LABEL = "1.2-messages";
 
-    /** {@code MESSAGE} followed by a comment on the same line (the codec rejects it, #126). */
+    /** {@code MESSAGE} followed, with or without a space, by a comment on the same line (#126). */
     private static final Pattern MESSAGE_WITH_COMMENT =
-            Pattern.compile("(?m)^([ \\t]*MESSAGE)[ \\t]+#[^\\r\\n]*$");
+            Pattern.compile("(?m)^([ \\t]*MESSAGE)[ \\t]*#[^\\r\\n]*$");
+
+    /** A line holding only a comment. In N-Triples/N-Quads no statement can start with '#'. */
+    private static final Pattern COMMENT_ONLY_LINE = Pattern.compile("(?m)^[ \\t]*#[^\\r\\n]*$");
 
     // ------------------------------------------------------------------------------------ reading
 
@@ -76,10 +93,13 @@ public final class RdfMessageLog {
      * @param format  N-Triples, N-Quads, Turtle or TriG
      * @param baseIri base IRI for relative IRIs (Turtle/TriG; ignored for N-Triples/N-Quads)
      * @return one statement list per message, in order; an empty message is an empty list
+     * @throws IllegalArgumentException if the log is malformed
      */
     public static List<List<Statement>> parse(String log, RDFFormat format, String baseIri) {
         if (format.equals(RDFFormat.NTRIPLES) || format.equals(RDFFormat.NQUADS)) {
-            return RdfMessageCodec.parseNQuads(MESSAGE_WITH_COMMENT.matcher(log).replaceAll("$1"));
+            String cleaned = MESSAGE_WITH_COMMENT.matcher(log).replaceAll("$1");
+            cleaned = COMMENT_ONLY_LINE.matcher(cleaned).replaceAll("");
+            return RdfMessageCodec.parseNQuads(cleaned);
         }
         if (format.equals(RDFFormat.TURTLE) || format.equals(RDFFormat.TRIG)) {
             return parseTurtleFamily(log, format, baseIri);
@@ -88,17 +108,11 @@ public final class RdfMessageLog {
     }
 
     private static List<List<Statement>> parseTurtleFamily(String log, RDFFormat format, String baseIri) {
-        Split split = new Splitter(log).split();
-        if (split.delimiters > 0 && (split.versionLabel == null || !split.versionLabel.endsWith("-messages"))) {
-            throw new IllegalArgumentException("MESSAGE delimiter in a document whose version label is "
-                    + (split.versionLabel == null ? "missing" : "\"" + split.versionLabel + "\"")
-                    + "; RDF Message Logs announce a label ending in -messages (§2.1.1)");
-        }
+        List<Segment> segments = new Splitter(log).split();
         List<List<Statement>> messages = new ArrayList<>();
-        int last = split.segments.size() - 1;
+        int last = segments.size() - 1;
         for (int i = 0; i <= last; i++) {
-            Segment segment = split.segments.get(i);
-            List<Statement> statements = parseSegment(segment, format, baseIri, i);
+            List<Statement> statements = parseSegment(segments.get(i), format, baseIri, i);
             // A segment followed by a delimiter is a message even when empty; the last segment is a
             // message only if it holds a statement (a trailing delimiter adds nothing).
             if (i < last || !statements.isEmpty()) {
@@ -109,7 +123,8 @@ public final class RdfMessageLog {
     }
 
     private static List<Statement> parseSegment(Segment segment, RDFFormat format, String baseIri, int index) {
-        String text = segment.header + segment.body;
+        // RDF4J reads "1." as an integer and its terminator only if something follows the dot
+        String text = segment.header() + segment.body() + "\n";
         if (text.isBlank()) {
             return List.of();
         }
@@ -126,7 +141,7 @@ public final class RdfMessageLog {
 
     /**
      * Write an N-Quads RDF Message Log with the engine's writer, adding a final delimiter when the
-     * last message is empty so that it survives re-reading (#126).
+     * last message is empty so that it survives re-reading (#126). Named graphs are kept.
      */
     public static String writeNQuads(List<? extends Collection<Statement>> messages) {
         String log = RdfMessageCodec.writeNQuads(messages);
@@ -142,12 +157,24 @@ public final class RdfMessageLog {
      * than separating them) keeps an empty last message (§2.1.2). Each message carries its own
      * {@code @prefix} lines, which §2.1.3 allows.
      *
-     * @param namespaces prefix → namespace pairs to declare in every message (may be empty)
+     * <p>Turtle has no named graphs, so a statement with a graph name is refused rather than
+     * written into the default graph; write such messages with {@link #writeNQuads}.
+     *
+     * @param namespaces prefix to namespace pairs to declare in every message (may be empty)
+     * @throws IllegalArgumentException if a statement has a graph name
      */
     public static String writeTurtle(List<? extends Collection<Statement>> messages,
                                      Map<String, String> namespaces) {
         StringBuilder out = new StringBuilder("VERSION \"").append(VERSION_LABEL).append("\"\n");
+        int n = 0;
         for (Collection<Statement> message : messages) {
+            n++;
+            for (Statement st : message) {
+                if (st.getContext() != null) {
+                    throw new IllegalArgumentException("message " + n + " has a statement in graph "
+                            + st.getContext() + "; Turtle has no named graphs, use writeNQuads");
+                }
+            }
             if (!message.isEmpty()) {
                 Model model = new LinkedHashModel(message);
                 namespaces.forEach(model::setNamespace);
@@ -163,172 +190,278 @@ public final class RdfMessageLog {
         return out.toString();
     }
 
-    // ------------------------------------------------------------------- Turtle/TriG log splitter
+    // ---------------------------------------------------------------- Turtle/TriG log tokeniser
 
     /** One message's text, plus the PREFIX/BASE directives in force where it starts. */
     private record Segment(String header, String body) {
     }
 
-    private record Split(List<Segment> segments, int delimiters, String versionLabel) {
-    }
-
     /**
-     * Walks a Turtle/TriG log once, tracking strings, IRIs, comments and nesting, and cuts it at
-     * every {@code MESSAGE} / {@code @message .} that stands where a statement could start. The
-     * {@code VERSION} / {@code @version} announcement is removed from the text (RDF4J 4.3.8 does
-     * not accept it) and its label recorded. PREFIX/BASE directives are kept in place and also
-     * accumulated, so every later message is parsed with the directives in force where it starts.
+     * Tokenises a Turtle/TriG log once and cuts it at every {@code MESSAGE} / {@code @message .}
+     * that stands, as a whole token, where a statement may start. Strings, IRIs and names are read
+     * as whole tokens, so nothing inside them can look like a delimiter; comments are dropped.
+     * {@code VERSION} / {@code @version} is removed (RDF4J 4.3.8 does not accept it) and its decoded
+     * label tracked. PREFIX/BASE directives are rewritten without their comments, kept in place,
+     * and accumulated, so every later message is parsed with the directives in force where it
+     * starts.
      */
     private static final class Splitter {
+        /** Characters that end a name token (besides whitespace). */
+        private static final String DELIMITERS = "<>\"'{}[](),;#";
+
         private final String s;
         private int i;
         private int depth;                 // nesting of {}, [] and ()
         private boolean statementStart = true;
-        private final StringBuilder header = new StringBuilder();   // directives seen so far
+        private String versionLabel;       // most recent VERSION label, decoded
+        private final StringBuilder header = new StringBuilder();
         private String segmentHeader = "";
         private StringBuilder body = new StringBuilder();
         private final List<Segment> segments = new ArrayList<>();
-        private int delimiters;
-        private String versionLabel;
 
         Splitter(String s) {
             this.s = s;
         }
 
-        Split split() {
-            while (i < s.length()) {
+        List<Segment> split() {
+            while (true) {
+                skipSpace(true);
+                if (i >= s.length()) {
+                    break;
+                }
                 char c = s.charAt(i);
-                if (c == '#') {
-                    skipComment();
+                if (c == '<') {
+                    body.append(readIri());
+                    statementStart = false;
                 } else if (c == '"' || c == '\'') {
-                    copyString(c);
+                    body.append(readString());
                     statementStart = false;
-                } else if (c == '<') {
-                    copyIri();
-                    statementStart = false;
-                } else if (Character.isWhitespace(c)) {
+                } else if (c == '{' || c == '[' || c == '(') {
+                    depth++;
                     body.append(c);
                     i++;
-                } else if (depth == 0 && statementStart && startsDirective()) {
-                    // handled inside startsDirective()
+                    statementStart = c == '{';     // a graph block's content starts statements
+                } else if (c == '}' || c == ']' || c == ')') {
+                    depth = Math.max(0, depth - 1);
+                    body.append(c);
+                    i++;
+                    // a TriG graph block closed at the top level ends a statement without '.'
+                    statementStart = c == '}' && depth == 0;
+                } else if (c == ',' || c == ';') {
+                    body.append(c);
+                    i++;
+                    statementStart = false;
+                } else if (c == '.' && !(i + 1 < s.length() && Character.isDigit(s.charAt(i + 1)))) {
+                    body.append(c);                // a statement terminator
+                    i++;
+                    statementStart = true;
                 } else {
-                    copyOrdinary(c);
+                    String word = readWord();
+                    if (depth == 0 && statementStart && directive(word)) {
+                        statementStart = true;
+                    } else {
+                        body.append(word);
+                        statementStart = false;
+                    }
                 }
             }
             segments.add(new Segment(segmentHeader, body.toString()));
-            return new Split(segments, delimiters, versionLabel);
+            return segments;
         }
 
-        private void copyOrdinary(char c) {
-            body.append(c);
-            i++;
-            switch (c) {
-                case '{', '[', '(' -> {
-                    depth++;
-                    statementStart = c == '{';          // a graph block's content starts statements
+        /** Skip whitespace and comments; whitespace is copied when {@code copy}, comments never. */
+        private void skipSpace(boolean copy) {
+            while (i < s.length()) {
+                char c = s.charAt(i);
+                if (c == '#') {
+                    while (i < s.length() && s.charAt(i) != '\n' && s.charAt(i) != '\r') {
+                        i++;
+                    }
+                } else if (Character.isWhitespace(c)) {
+                    if (copy) {
+                        body.append(c);
+                    }
+                    i++;
+                } else {
+                    return;
                 }
-                case '}', ']', ')' -> {
-                    depth = Math.max(0, depth - 1);
-                    // a TriG graph block closed at the top level ends a statement without '.'
-                    statementStart = c == '}' && depth == 0;
-                }
-                case '.' -> statementStart = !insideName();
-                default -> statementStart = false;
             }
         }
 
         /**
-         * A '.' between two name characters is part of a token (the decimal point in 0.5, or a dot
-         * inside a prefixed name such as {@code ex:a.b}), not the end of a statement.
+         * A name-like token: a prefixed name, a keyword, a number, a blank-node label, a language
+         * tag or a datatype marker. It runs to whitespace or a delimiter character; a backslash
+         * escapes the next character (escaped local names such as {@code ex:a\.b}); trailing dots
+         * are not part of it, because a name cannot end in '.', so they are left to end the
+         * statement.
          */
-        private boolean insideName() {
-            int before = i - 2;
-            return before >= 0 && isNameChar(s.charAt(before)) && i < s.length() && isNameChar(s.charAt(i));
+        private String readWord() {
+            if (startsNumber()) {
+                return readNumber();
+            }
+            int start = i;
+            while (i < s.length()) {
+                char c = s.charAt(i);
+                if (c == '\\') {
+                    i = Math.min(s.length(), i + 2);
+                } else if (Character.isWhitespace(c) || DELIMITERS.indexOf(c) >= 0) {
+                    break;
+                } else {
+                    i++;
+                }
+            }
+            int end = i;
+            while (end > start + 1 && s.charAt(end - 1) == '.' && s.charAt(end - 2) != '\\') {
+                end--;
+            }
+            if (end == start) {                 // a lone character no other branch took
+                end = Math.min(s.length(), start + 1);
+            }
+            i = end;
+            return s.substring(start, end);
         }
 
-        private static boolean isNameChar(char c) {
-            return Character.isLetterOrDigit(c) || c == '_' || c == '-' || c == ':' || c == '%';
+        /** A digit, or a sign or '.' directly followed by one. */
+        private boolean startsNumber() {
+            char c = s.charAt(i);
+            if (Character.isDigit(c)) {
+                return true;
+            }
+            int k = i;
+            if (c == '+' || c == '-') {
+                k++;
+            }
+            if (k < s.length() && s.charAt(k) == '.') {
+                k++;
+            }
+            return k > i && k < s.length() && Character.isDigit(s.charAt(k));
         }
 
-        private void skipComment() {
-            while (i < s.length() && s.charAt(i) != '\n' && s.charAt(i) != '\r') {
+        /**
+         * A Turtle number, by its grammar: {@code [+-]? [0-9]* ('.' [0-9]+)? ([eE] [+-]? [0-9]+)?}.
+         * A '.' not followed by a digit is not part of it, so {@code 1.MESSAGE} is the integer 1,
+         * a statement terminator, and a delimiter.
+         */
+        private String readNumber() {
+            int start = i;
+            if (s.charAt(i) == '+' || s.charAt(i) == '-') {
                 i++;
             }
+            while (i < s.length() && Character.isDigit(s.charAt(i))) {
+                i++;
+            }
+            if (i + 1 < s.length() && s.charAt(i) == '.' && Character.isDigit(s.charAt(i + 1))) {
+                i++;
+                while (i < s.length() && Character.isDigit(s.charAt(i))) {
+                    i++;
+                }
+            }
+            if (i < s.length() && (s.charAt(i) == 'e' || s.charAt(i) == 'E')) {
+                int k = i + 1;
+                if (k < s.length() && (s.charAt(k) == '+' || s.charAt(k) == '-')) {
+                    k++;
+                }
+                if (k < s.length() && Character.isDigit(s.charAt(k))) {
+                    i = k;
+                    while (i < s.length() && Character.isDigit(s.charAt(i))) {
+                        i++;
+                    }
+                }
+            }
+            return s.substring(start, i);
         }
 
-        private void copyIri() {
+        private String readIri() {
             int start = i;
             i++;
             while (i < s.length() && s.charAt(i) != '>') {
+                char c = s.charAt(i);
+                if (c == '\n' || c == '\r') {
+                    throw new IllegalArgumentException("unterminated IRI at offset " + start);
+                }
                 i++;
             }
-            i = Math.min(s.length(), i + 1);
-            body.append(s, start, i);
+            if (i >= s.length()) {
+                throw new IllegalArgumentException("unterminated IRI at offset " + start);
+            }
+            i++;
+            return s.substring(start, i);
         }
 
-        private void copyString(char quote) {
+        private String readString() {
             int start = i;
-            boolean longString = s.startsWith(String.valueOf(quote).repeat(3), i);
+            char quote = s.charAt(i);
+            String triple = String.valueOf(quote).repeat(3);
+            boolean longString = s.startsWith(triple, i);
             i += longString ? 3 : 1;
             while (i < s.length()) {
                 char c = s.charAt(i);
                 if (c == '\\') {
                     i += 2;
-                } else if (longString && s.startsWith(String.valueOf(quote).repeat(3), i)) {
+                } else if (longString && s.startsWith(triple, i)) {
+                    // the first unescaped triple quote closes it: Turtle's grammar does not let a
+                    // long string's content end in a quote
                     i += 3;
-                    // a long string may end with extra quotes: """a"""" is a then "
-                    while (i < s.length() && s.charAt(i) == quote) {
-                        i++;
-                    }
-                    break;
+                    return s.substring(start, i);
                 } else if (!longString && c == quote) {
                     i++;
+                    return s.substring(start, i);
+                } else if (!longString && (c == '\n' || c == '\r')) {
                     break;
                 } else {
                     i++;
                 }
             }
-            body.append(s, start, Math.min(i, s.length()));
+            throw new IllegalArgumentException("unterminated string at offset " + start);
         }
 
-        /** At a statement start: consume and act on a directive, or return false. */
-        private boolean startsDirective() {
-            String word = wordAt(i);
+        /** Handle {@code word} as a directive if it is one; return false if it is not. */
+        private boolean directive(String word) {
             String upper = word.toUpperCase(Locale.ROOT);
+            boolean at = word.startsWith("@");
+            if (at && !word.equals(word.toLowerCase(Locale.ROOT))) {
+                return false;                       // @-directives are lower-case only
+            }
             switch (upper) {
-                case "MESSAGE" -> {
-                    i += word.length();
-                    cut();
-                    return true;
-                }
-                case "@MESSAGE" -> {
-                    if (!word.equals("@message")) {
-                        return false;                  // @-directives are case-sensitive
+                case "MESSAGE", "@MESSAGE" -> {
+                    if (at) {
+                        expectDot(word);
                     }
-                    i += word.length();
-                    expectDot("@message");
                     cut();
                     return true;
                 }
                 case "VERSION", "@VERSION" -> {
-                    boolean atForm = word.startsWith("@");
-                    if (atForm && !word.equals("@version")) {
-                        return false;
+                    skipSpace(false);
+                    if (i >= s.length() || (s.charAt(i) != '"' && s.charAt(i) != '\'')) {
+                        throw new IllegalArgumentException(word + " must be followed by a quoted label");
                     }
-                    i += word.length();
-                    versionLabel = readQuotedLabel();
-                    if (atForm) {
-                        expectDot("@version");
+                    versionLabel = decode(readString());
+                    if (at) {
+                        expectDot(word);
                     }
-                    statementStart = true;
                     return true;
                 }
-                case "PREFIX", "BASE", "@PREFIX", "@BASE" -> {
-                    boolean atForm = word.startsWith("@");
-                    if (atForm && !word.equals(word.toLowerCase(Locale.ROOT))) {
-                        return false;
+                case "PREFIX", "@PREFIX" -> {
+                    skipSpace(false);
+                    String ns = readWord();
+                    if (!ns.endsWith(":")) {
+                        throw new IllegalArgumentException(word + " needs a prefix ending in ':', found '" + ns + "'");
                     }
-                    copyDirective(atForm);
+                    skipSpace(false);
+                    String iri = expectIri(word);
+                    if (at) {
+                        expectDot(word);
+                    }
+                    keep((at ? "@prefix " : "PREFIX ") + ns + " " + iri + (at ? " ." : ""));
+                    return true;
+                }
+                case "BASE", "@BASE" -> {
+                    skipSpace(false);
+                    String iri = expectIri(word);
+                    if (at) {
+                        expectDot(word);
+                    }
+                    keep((at ? "@base " : "BASE ") + iri + (at ? " ." : ""));
                     return true;
                 }
                 default -> {
@@ -337,88 +470,69 @@ public final class RdfMessageLog {
             }
         }
 
-        /** The run of letters (with an optional leading '@') starting at {@code p}. */
-        private String wordAt(int p) {
-            int end = p;
-            if (end < s.length() && s.charAt(end) == '@') {
-                end++;
+        private String expectIri(String directive) {
+            if (i >= s.length() || s.charAt(i) != '<') {
+                throw new IllegalArgumentException(directive + " must be followed by an IRI");
             }
-            while (end < s.length() && Character.isLetter(s.charAt(end))) {
-                end++;
-            }
-            // MESSAGE must be a whole token: "MESSAGES" or "MESSAGE:x" is not the delimiter
-            if (end < s.length() && (Character.isLetterOrDigit(s.charAt(end)) || s.charAt(end) == ':'
-                    || s.charAt(end) == '_' || s.charAt(end) == '-')) {
-                return "";
-            }
-            return s.substring(p, end);
-        }
-
-        /** Copy a PREFIX/BASE directive into the current body and the running header. */
-        private void copyDirective(boolean atForm) {
-            int start = i;
-            // a directive ends after its IRI (SPARQL form) or after the '.' that follows it (@ form)
-            while (i < s.length() && s.charAt(i) != '<') {
-                if (s.charAt(i) == '#') {
-                    throw new IllegalArgumentException("malformed directive at offset " + start);
-                }
-                i++;
-            }
-            if (i < s.length()) {
-                i++;
-                while (i < s.length() && s.charAt(i) != '>') {
-                    i++;
-                }
-                i = Math.min(s.length(), i + 1);
-            }
-            if (atForm) {
-                while (i < s.length() && Character.isWhitespace(s.charAt(i))) {
-                    i++;
-                }
-                if (i < s.length() && s.charAt(i) == '.') {
-                    i++;
-                }
-            }
-            String directive = s.substring(start, i);
-            body.append(directive);
-            header.append(directive).append('\n');
-            statementStart = true;
-        }
-
-        private String readQuotedLabel() {
-            while (i < s.length() && Character.isWhitespace(s.charAt(i))) {
-                i++;
-            }
-            if (i >= s.length() || (s.charAt(i) != '"' && s.charAt(i) != '\'')) {
-                throw new IllegalArgumentException("VERSION must be followed by a quoted label");
-            }
-            char q = s.charAt(i++);
-            int start = i;
-            while (i < s.length() && s.charAt(i) != q) {
-                i++;
-            }
-            String label = s.substring(start, Math.min(i, s.length()));
-            i = Math.min(s.length(), i + 1);
-            return label;
+            return readIri();
         }
 
         private void expectDot(String directive) {
-            while (i < s.length() && Character.isWhitespace(s.charAt(i))) {
-                i++;
-            }
+            skipSpace(false);
             if (i >= s.length() || s.charAt(i) != '.') {
                 throw new IllegalArgumentException(directive + " must end with '.'");
             }
             i++;
         }
 
-        /** End the current message at a delimiter. */
+        /** A PREFIX/BASE directive: into this message's text and the header carried forward. */
+        private void keep(String directive) {
+            body.append(directive).append('\n');
+            header.append(directive).append('\n');
+        }
+
+        /** End the current message at a delimiter, if the version label in force allows one. */
         private void cut() {
-            delimiters++;
+            if (versionLabel == null || !versionLabel.endsWith("-messages")) {
+                throw new IllegalArgumentException("MESSAGE delimiter while the version label is "
+                        + (versionLabel == null ? "not announced" : "\"" + versionLabel + "\"")
+                        + "; an RDF Message Log announces a label ending in -messages (§2.1.1)");
+            }
             segments.add(new Segment(segmentHeader, body.toString()));
             segmentHeader = header.toString();
             body = new StringBuilder();
-            statementStart = true;
+        }
+
+        /** The value of a quoted Turtle string: quotes removed, escapes decoded. */
+        private static String decode(String quoted) {
+            int q = quoted.length() >= 6 && (quoted.startsWith("\"\"\"") || quoted.startsWith("'''")) ? 3 : 1;
+            String inner = quoted.substring(q, quoted.length() - q);
+            StringBuilder out = new StringBuilder();
+            for (int k = 0; k < inner.length(); k++) {
+                char c = inner.charAt(k);
+                if (c != '\\' || k + 1 >= inner.length()) {
+                    out.append(c);
+                    continue;
+                }
+                char e = inner.charAt(++k);
+                switch (e) {
+                    case 't' -> out.append('\t');
+                    case 'b' -> out.append('\b');
+                    case 'n' -> out.append('\n');
+                    case 'r' -> out.append('\r');
+                    case 'f' -> out.append('\f');
+                    case 'u', 'U' -> {
+                        int len = e == 'u' ? 4 : 8;
+                        if (k + len >= inner.length()) {
+                            throw new IllegalArgumentException("truncated \\" + e + " escape in " + quoted);
+                        }
+                        out.appendCodePoint(Integer.parseInt(inner.substring(k + 1, k + 1 + len), 16));
+                        k += len;
+                    }
+                    default -> out.append(e);          // \" \' \\
+                }
+            }
+            return out.toString();
         }
     }
 }

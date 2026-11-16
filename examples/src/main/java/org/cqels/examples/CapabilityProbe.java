@@ -104,6 +104,9 @@ public class CapabilityProbe {
         knownBug("#126 RdfMessageCodec rejects MESSAGE followed by a comment on the same line",
                 codecMessageWithComment(), "rejected", "2 messages",
                 "RdfMessageLog.java (MESSAGE_WITH_COMMENT workaround and Javadoc), RDF_MESSAGES_MAPPING.md §3");
+        knownBug("#126 RdfMessageCodec opens an empty message for a comment-only line after the last MESSAGE",
+                codecCommentAfterLastDelimiter(), "[1, 0]", "[1]",
+                "RdfMessageLog.java (COMMENT_ONLY_LINE workaround and Javadoc), RDF_MESSAGES_MAPPING.md §3");
         knownBug("#126 RdfMessageCodec.writeNQuads drops a trailing empty message on re-reading",
                 codecTrailingEmptyMessage(), "[1]", "[1, 0]",
                 "RdfMessageLog.java (writeNQuads workaround and Javadoc), RDF_MESSAGES_MAPPING.md §3");
@@ -220,13 +223,33 @@ public class CapabilityProbe {
     private static final String MSG_V = "VERSION \"1.2-messages\"\n";
     private static final String MSG_T = "<https://example.org/probe#s> <https://example.org/probe#p> \"1\" .\n";
 
-    /** #126: "rejected", or how many messages the codec reads from two triples split by "MESSAGE # c". */
+    /**
+     * #126: "rejected" when the codec fails on two triples split by {@code MESSAGE # c} with the
+     * documented parse error, else how many messages it read. The same document without the comment
+     * is the control: it must read as 2 messages, or the verdict means nothing.
+     */
     private static String codecMessageWithComment() {
         try {
-            return RdfMessageCodec.parseNQuads(MSG_V + MSG_T + "MESSAGE # c\n" + MSG_T).size() + " messages";
+            int control = RdfMessageCodec.parseNQuads(MSG_V + MSG_T + "MESSAGE\n" + MSG_T).size();
+            if (control != 2) {
+                return "control read " + control + " messages, not 2";
+            }
         } catch (RuntimeException e) {
-            return "rejected";
+            return "control failed: " + e;
         }
+        try {
+            return RdfMessageCodec.parseNQuads(MSG_V + MSG_T + "MESSAGE # c\n" + MSG_T).size() + " messages";
+        } catch (org.eclipse.rdf4j.rio.RDFParseException e) {
+            return String.valueOf(e.getMessage()).contains("found: M") ? "rejected" : "other parse error: " + e.getMessage();
+        } catch (RuntimeException e) {
+            return "unexpected " + e;
+        }
+    }
+
+    /** #126: the message sizes the codec reads from one triple, MESSAGE, then a comment-only line. */
+    private static String codecCommentAfterLastDelimiter() {
+        return RdfMessageCodec.parseNQuads(MSG_V + MSG_T + "MESSAGE\n# tail\n").stream()
+                .map(List::size).toList().toString();
     }
 
     /** #126: the message sizes read back after writing [one triple, empty]. */

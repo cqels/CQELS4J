@@ -35,9 +35,9 @@ The worked example is
 |---|---|
 | RDF Message | One stream element: one `DataStream.push(Collection<Statement>, long)`. `[TRIPLES n]` counts elements, not statements (CQELS-QL_SPEC.md §3) |
 | Empty message | `push(List.of(), t)` is accepted and takes a window slot: under `[TRIPLES 2]`, pushing a two-statement element, an empty one, then a one-statement element gives counts 2, 2, 1, because the empty element pushed the first one out |
-| RDF Message Stream | A `DataStream`, ordered by event time |
+| RDF Message Stream | A `DataStream`. Elements are delivered in arrival order (pushed at event times 3000, 1000, 2000, they arrive in that order); time windows use each element's event time |
 | Each message its own world | `[NOW]` and `[TRIPLES 1]` see one message at a time |
-| A profile that combines messages | A wider window (`[RANGE]`, `[TRIPLES n]`) joins and aggregates across messages. The window is the profile |
+| A profile that combines messages | A wider window (`[RANGE]`, `[TRIPLES n]`) joins and aggregates across messages. The draft allows combining when a profile says so (§1.3) but has not yet defined profiles (§3), so treating the window as that choice is this demo's reading, not the draft's |
 | Blank nodes scoped to a message | Holds when each message is parsed on its own, which both readers below do |
 | A message is a dataset | The engine keeps a quad's graph name, but a query cannot read it: `GRAPH` inside `STREAM` is refused ([#125](https://github.com/cqels/CQELS4J/issues/125)) |
 | Producing messages (§4.4, `CONSTRUCT` results) | No continuous `CONSTRUCT` ([#45](https://github.com/cqels/CQELS4J/issues/45)); results are `SELECT` rows |
@@ -55,8 +55,9 @@ uses it. Measured against the draft's own §2.1.2 examples and some edge cases:
 | `1.1-messages`, `1.2-basic-messages`, `1.2-messages` labels | accepted |
 | blank nodes: the same `_:x` in two messages | two different blank nodes |
 | a quad's graph name | kept |
-| CRLF line endings; a comment after a triple, on its own line, or after `VERSION` | correct |
-| **`MESSAGE # comment`** (the draft's own example uses it) | **rejected**: `RDFParseException: Expected '<' or '_', found: M` ([#126](https://github.com/cqels/CQELS4J/issues/126)) |
+| CRLF line endings; a comment after a triple or after `VERSION`; a comment on its own line between two messages | correct |
+| **`MESSAGE # comment`** (the draft's own example uses it), and `MESSAGE#comment` | **rejected**: `RDFParseException: Expected '<' or '_', found: M` ([#126](https://github.com/cqels/CQELS4J/issues/126)) |
+| **a comment-only line after the last delimiter**, or as the only line after `VERSION` | **opens an empty message**: triple · `MESSAGE` · `# tail` reads as `[1, 0]`, not `[1]`; `VERSION` · `# c` as `[0]`, not `[]` (#126) |
 | **writing a log whose last message is empty** | **lost on re-reading**: `[1, 0]` comes back as `[1]`, `[0]` as `[]` (#126) |
 | `MESSAGE` with no version label, or a label without `-messages` | split into messages rather than rejected (lenient; noted in #126) |
 
@@ -69,26 +70,35 @@ log cannot simply be handed to RDF4J.
 [`RdfMessageLog`](examples/src/main/java/org/cqels/examples/messages/RdfMessageLog.java)
 (`org.cqels.examples.messages`):
 
-- **N-Triples and N-Quads** go to the engine codec, with two workarounds for #126: a comment after
-  `MESSAGE` is stripped before parsing, and when the last message is empty the writer adds one more
-  delimiter so it survives re-reading. The probe below says when each can go.
-- **Turtle and TriG** are split here and each message is parsed by RDF4J's ordinary parser:
-  - the splitter cuts only where a statement could start, so `MESSAGE` inside a string (including
-    a long string spanning lines), an IRI, a comment, a prefixed name such as `ex:MESSAGE` or
-    `ex:x.MESSAGE`, or a `[ ]` block is not a delimiter;
-  - `VERSION` / `@version` is removed before parsing and its label checked;
+- **N-Triples and N-Quads** go to the engine codec, with three workarounds for #126: before
+  parsing, a comment after `MESSAGE` (with or without a space) is removed, and so is every
+  comment-only line; and when the last message is empty the writer adds one more delimiter so it
+  survives re-reading. The probe below says when each can go.
+- **Turtle and TriG** are tokenised here and each message is parsed by RDF4J's ordinary parser:
+  - strings (including long strings spanning lines), IRIs, numbers and names are read as whole
+    tokens, so `MESSAGE` inside any of them is not a delimiter: `ex:MESSAGE`, `ex:x..MESSAGE`,
+    `MESSAGE.foo:s`, escaped names such as `ex:x\.MESSAGE`; `1.MESSAGE`, on the other hand, is the
+    integer 1, a terminator and a delimiter, as Turtle's grammar reads it;
+  - a delimiter counts only where a statement may start, not inside `[ ]`, `( )` or a graph block;
+  - comments may stand wherever whitespace may, including inside directives;
+  - `VERSION` / `@version` is removed before parsing; its label is decoded (`"1.2\u002Dmessages"`
+    is `1.2-messages`) and applies from where it stands;
   - `PREFIX` / `BASE` (and the `@` forms) are carried into later messages, with a redefinition
     applying from that point on;
-  - each message is parsed separately, so blank nodes are scoped to it.
-- **Strict where the codec is lenient:** a delimiter in a Turtle/TriG document whose label is
-  missing or lacks `-messages` is rejected.
+  - each message is parsed separately, so blank nodes are scoped to it;
+  - an unterminated string, IRI or label is an error.
+- **Strict where the codec is lenient:** a Turtle/TriG delimiter is accepted only while the label
+  most recently announced ends in `-messages`.
 - **A Turtle writer** that terminates every message with `MESSAGE`, so an empty last message
-  round-trips. Each message carries its own `@prefix` lines, which §2.1.3 allows.
+  round-trips. Each message carries its own `@prefix` lines, which §2.1.3 allows. Turtle has no
+  named graphs, so a statement with a graph name is refused (use the N-Quads writer, which keeps it).
 
 Tested by [`RdfMessageLogTest`](examples/src/test/java/org/cqels/examples/messages/RdfMessageLogTest.java)
-(15 tests: the draft's §2.1.2 and §2.1.3 examples in N-Triples, Turtle and TriG, the old-style
-directives, blank-node scoping, the places a delimiter must not be found, strictness, and writer
-round-trips with empty messages first, last and in between).
+(24 tests: the draft's §2.1.2 and §2.1.3 examples in N-Triples, Turtle and TriG, the old-style
+directives, blank-node scoping, names and numbers that contain `MESSAGE` or dots checked against
+RDF4J's own parse, comments inside directives, version labels in order, unterminated tokens, TriG
+graph blocks, the N-Triples comment forms, and writer round-trips with empty messages first, last
+and in between).
 
 Not handled: RDF 1.2 triple terms, because RDF4J 4.3.8 does not parse them (a `1.2-messages`
 label is accepted, triple terms are not); NDJSON-LD, YAML-LD and the RDF/XML wrapper.
@@ -119,17 +129,19 @@ The fourth row is the draft's case for per-message blank-node scoping, measured.
   header, WebSocket subprotocols, MQTT content type) are out of its scope and out of this demo's.
   The Jetty 12 in [`sparql-endpoint/`](sparql-endpoint/) could serve query results as
   Server-Sent Events, one message per event.
-- **Profiles.** When the draft's §3 is written, the mapping in §2 above ("the window is the
-  profile") should be checked against it.
+- **Profiles.** When the draft's §3 is written, this demo's reading in §2 (a window wider than
+  one message is how messages are combined) should be checked against it.
 - **The draft's companion "RDF Messages Tests"** suite has not been run against `RdfMessageLog`.
 
 ## 7. Keeping this true
 
 [`CapabilityProbe`](examples/src/main/java/org/cqels/examples/CapabilityProbe.java)
-(`scripts/ci/capability-probe.sh`, run on every PR) asserts the three gaps above in both
+(`scripts/ci/capability-probe.sh`, run on every PR) asserts the four gaps above in both
 directions, so this document and the workarounds cannot outlive a fix unnoticed:
 
-- #126, `MESSAGE # comment` rejected by the codec;
+- #126, `MESSAGE # comment` rejected by the codec (with a control: the same log without the
+  comment must read as two messages);
+- #126, a comment-only line after the last delimiter opening an empty message;
 - #126, a trailing empty message lost by `writeNQuads`;
 - #125, `GRAPH` inside `STREAM` refused;
 
