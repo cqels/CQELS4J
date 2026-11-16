@@ -203,6 +203,7 @@ electric-vehicle fleet / vehicle-to-grid (V2G) scenario.)
 |------|---------|
 | [`SosaObservations`](examples/src/main/java/org/cqels/examples/SosaObservations.java) | W3C [SOSA/SSN](https://www.w3.org/TR/vocab-ssn/) + [VSSo](https://www.w3.org/TR/vsso/) + VSS: per (vehicle × observed signal) averages |
 | [`VehicleSignalsCdsp`](examples/src/main/java/org/cqels/examples/VehicleSignalsCdsp.java) | flagship COVESA [VSS](https://covesa.global/) speeding detection + `GROUP BY` / `HAVING` |
+| [`MessageLogReplay`](examples/src/main/java/org/cqels/examples/messages/MessageLogReplay.java) (`org.cqels.examples.messages`) | W3C RSP CG [RDF Messages](https://w3c-cg.github.io/rsp/spec/messages): replay a Turtle message log (one message, one atomic element), per-message blank nodes, `[TRIPLES 1]` vs `[RANGE]` across messages, and results written back as a message log |
 
 ---
 
@@ -261,6 +262,17 @@ knowledge layer onto CQELS rule by rule — what its RDFox Datalog rules and SPA
 become as continuous queries, which CQELS features the port needs, and which are not ready yet.
 The worked example is runnable:
 [`CdspDrivingStyle`](examples/src/main/java/org/cqels/examples/cdsp/CdspDrivingStyle.java).
+
+## RDF Messages (W3C RSP CG)
+
+[RDF_MESSAGES_MAPPING.md](RDF_MESSAGES_MAPPING.md) maps the RSP Community Group's
+[RDF Messages](https://w3c-cg.github.io/rsp/spec/messages) draft onto CQELS: one message is one
+atomic stream element, the window decides whether messages are read alone or together, and the
+engine's N-Quads codec covers the log format. It records the measured gaps
+([#125](https://github.com/cqels/CQELS4J/issues/125), [#126](https://github.com/cqels/CQELS4J/issues/126),
+[#45](https://github.com/cqels/CQELS4J/issues/45)) and the Turtle/TriG log reader this repository
+adds. The worked example is
+[`MessageLogReplay`](examples/src/main/java/org/cqels/examples/messages/MessageLogReplay.java).
 
 ## Query language and standards
 
