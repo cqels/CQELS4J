@@ -547,6 +547,8 @@ class SparqlProtocolServletTest {
         final java.util.concurrent.atomic.AtomicInteger holds;
         final java.util.concurrent.CountDownLatch entered;
         final java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        /** Keep holding through interrupts, as work that does not check for them would (Jetty interrupts on stop). */
+        boolean deaf;
 
         SlotHolder(CQELSEngine engine, int holds) {
             this.engine = engine;
@@ -558,10 +560,16 @@ class SparqlProtocolServletTest {
         public org.eclipse.rdf4j.repository.Repository get() {
             if (holds.getAndDecrement() > 0) {
                 entered.countDown();
-                try {
-                    release.await();
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
+                while (true) {
+                    try {
+                        release.await();
+                        break;
+                    } catch (InterruptedException e) {
+                        if (!deaf) {
+                            Thread.currentThread().interrupt();
+                            break;
+                        }
+                    }
                 }
             }
             return engine.getRepository();
@@ -2115,6 +2123,7 @@ class SparqlProtocolServletTest {
         CQELSEngine engine = CQELSEngine.builder().id("t-" + System.nanoTime()).withMemoryStore().build();
         engine.start();
         SlotHolder holder = new SlotHolder(engine, 1);
+        holder.deaf = true;   // otherwise Jetty's interrupt on stop fails the update before it gets to commit
         Server server = SparqlEndpointLauncher.startServer(holder, null, "127.0.0.1", 0,
                 EndpointOptions.defaults().withUpdateEnabled(true).withShutdownSeconds(1), 64, false);
         try {
