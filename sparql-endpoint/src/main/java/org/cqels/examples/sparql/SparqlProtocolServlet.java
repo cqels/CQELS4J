@@ -111,15 +111,20 @@ import java.util.function.Supplier;
  *   using-graph-uri / using-named-graph-uri               update dataset
  * </pre>
  * The base IRI for relative IRIs (§2.3) is the request URL. Status codes: 400 malformed query,
- * bad graph IRI, update dataset parameters together with USING / WITH (§2.2.3), or a request
- * nested too deeply to parse; 403 update while disabled, SERVICE / LOAD while federation is
+ * bad graph IRI, update dataset parameters together with USING / WITH (§2.2.3), {@code query} or
+ * {@code update} given twice (or in the URL of a direct POST), bytes not valid in the declared
+ * charset, or a request nested too deeply to parse; 403 update while disabled, update by a
+ * request {@link AccessFilters#READ_ONLY} marks, SERVICE / LOAD while federation is
  * disabled ({@link #reachesOut}), or naming a non-HTTP IRI while it is enabled
- * ({@link #nonHttpTarget}); 405 update via GET; 406 no acceptable result format; 408 body not
+ * ({@link #nonHttpTarget}); 405, with {@code Allow}, update via GET or a method other than GET,
+ * HEAD, POST and OPTIONS; 406 no acceptable result format; 408 body not
  * received within {@code maxUploadSeconds}; 413 body over the limit; 415 unknown POST content
  * type or charset; 500 evaluation failure or the heap exhausted; 503 execution time exceeded or
  * every query slot busy (then with {@code Retry-After}); 504 a SERVICE or LOAD target did not
  * answer in time. A failure after the response is committed — the execution limit tripping
  * mid-stream — aborts the response instead.
+ *
+ * <p>Every answer to GET and POST carries {@code Vary: Accept}.
  *
  * <p>A request takes its query slot before its body is read, so a slow upload is bounded by
  * the slots like a slow query, not by the container's request threads.
@@ -168,6 +173,14 @@ public final class SparqlProtocolServlet extends HttpServlet {
     /** Fetches LOAD sources; built on first use. See {@link #executeLoad}. */
     private transient volatile java.net.http.HttpClient loadClient;
     private final transient Supplier<? extends Collection<Statement>> metadata;
+    /** Requests turned away because every slot was taken; for {@code /metrics}. */
+    private final java.util.concurrent.atomic.LongAdder busyRejections = new java.util.concurrent.atomic.LongAdder();
+    /** When the last "every slot taken" warning was logged (nanoTime), so a flood logs once a minute. */
+    private final java.util.concurrent.atomic.AtomicLong lastBusyWarning = new java.util.concurrent.atomic.AtomicLong();
+    private volatile boolean warnedBusy;
+
+    /** The methods this resource answers, for {@code Allow} (RFC 9110 §10.2.1 requires it on a 405). */
+    static final String ALLOW = "GET, HEAD, POST, OPTIONS";
 
     /** Without a metadata graph: a query naming {@link #METADATA_GRAPH} is refused with 403. */
     public SparqlProtocolServlet(Supplier<Repository> repository, EndpointOptions options) {
@@ -235,31 +248,105 @@ public final class SparqlProtocolServlet extends HttpServlet {
         return loadClient != null;
     }
 
+    /** Query slots free now: {@code /ready} answers 503 at none. */
+    public int availableSlots() {
+        return slots.availablePermits();
+    }
+
+    /** Query slots held now. */
+    public int slotsInUse() {
+        return options.maxConcurrentQueries() - slots.availablePermits();
+    }
+
+    /** Query slots in all. */
+    public int slotLimit() {
+        return options.maxConcurrentQueries();
+    }
+
+    /** Requests turned away so far because every slot was taken. */
+    public long busyRejections() {
+        return busyRejections.sum();
+    }
+
+    /**
+     * Only GET (and HEAD), POST and OPTIONS. Anything else was left to {@code HttpServlet}, whose
+     * 405 carried no {@code Allow} (found in the audit after #121) and whose TRACE would echo the
+     * request's headers back. The 405 answering an update sent by GET carries it too.
+     */
+    @Override
+    protected void service(HttpServletRequest req, HttpServletResponse resp)
+            throws jakarta.servlet.ServletException, IOException {
+        switch (req.getMethod()) {
+            case "GET", "HEAD", "POST", "OPTIONS" -> super.service(req, resp);
+            default -> methodNotAllowed(resp, "method " + req.getMethod() + " is not supported; use GET or POST "
+                    + "(SPARQL 1.1 Protocol; the Graph Store Protocol is not served here)");
+        }
+    }
+
+    @Override
+    protected void doOptions(HttpServletRequest req, HttpServletResponse resp) {
+        // HttpServlet's own lists TRACE, which service() refuses
+        resp.setHeader("Allow", ALLOW);
+    }
+
+    private static void methodNotAllowed(HttpServletResponse resp, String message) throws IOException {
+        fail(resp, HttpServletResponse.SC_METHOD_NOT_ALLOWED, message);
+        resp.setHeader("Allow", ALLOW);   // after fail(): fail() resets the response first
+    }
+
+    /**
+     * The one value of {@code name}, or {@code null}; 400 ({@code IllegalArgumentException}) when it
+     * is given more than once. Taking the first silently answered {@code ?query=ASK{}&query=SELEKT}
+     * with 200, and let a URL parameter override the form body (found in the audit after #121):
+     * whatever sits between the client and the endpoint could then make the request say one
+     * thing to it and another to anything that read the last value.
+     */
+    private static String single(Params params, String name) {
+        List<String> values = params.all(name);
+        if (values.size() > 1) {
+            throw new IllegalArgumentException("'" + name + "' is given " + values.size() + " times; send it once");
+        }
+        return values.isEmpty() ? null : values.get(0);
+    }
+
     @Override
     protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+        varyOnAccept(resp);
         Params params;
+        String query;
         try {
             params = Params.parse(req.getQueryString());
+            if (!params.all("update").isEmpty()) {
+                // §2.2: update requests are POST only. Refusing here rather than ignoring the
+                // parameter keeps a misconfigured client from believing its update ran.
+                methodNotAllowed(resp, "SPARQL Update is not accepted via GET; POST it");
+                return;
+            }
+            query = single(params, "query");
         } catch (IllegalArgumentException e) {
             fail(resp, HttpServletResponse.SC_BAD_REQUEST, e.getMessage());
             return;
         }
-        if (params.first("update") != null) {
-            // §2.2: update requests are POST only. Refusing here rather than ignoring the
-            // parameter keeps a misconfigured client from believing its update ran.
-            fail(resp, HttpServletResponse.SC_METHOD_NOT_ALLOWED, "SPARQL Update is not accepted via GET");
-            return;
-        }
-        String query = params.first("query");
         if (query == null) {
-            fail(resp, HttpServletResponse.SC_BAD_REQUEST, "missing 'query' parameter");
+            fail(resp, HttpServletResponse.SC_BAD_REQUEST, "missing 'query' parameter (this endpoint serves no "
+                    + "service description; see its README)");
             return;
         }
         inSlot(resp, () -> evaluateQuery(req, resp, params, query));
     }
 
+    /**
+     * The same GET URL answers JSON or CSV depending on {@code Accept}; without saying so a cache
+     * between client and endpoint could hand one client the other's format (found in the audit
+     * after #121). Added first, so every answer carries it, errors included ({@link #fail} keeps it).
+     */
+    private static void varyOnAccept(HttpServletResponse resp) {
+        resp.addHeader("Vary", "Accept");
+    }
+
     @Override
     protected void doPost(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+        varyOnAccept(resp);
         long declared = req.getContentLengthLong();
         if (declared > options.maxRequestBytes()) {
             fail(resp, HttpServletResponse.SC_REQUEST_ENTITY_TOO_LARGE,
@@ -292,6 +379,8 @@ public final class SparqlProtocolServlet extends HttpServlet {
             return;   // readBody already answered 413 or 415
         }
         Params params;
+        String update;
+        String query;
         try {
             params = Params.parse(req.getQueryString());
             if (type.equals("application/x-www-form-urlencoded")) {
@@ -299,7 +388,15 @@ public final class SparqlProtocolServlet extends HttpServlet {
                 // when none is given, as the URL encoding standard says); the query string
                 // is always UTF-8.
                 params = params.and(Params.parse(body, bodyCharset(req)));
+            } else if (!params.all("query").isEmpty() || !params.all("update").isEmpty()) {
+                // a direct POST's body IS the operation (§2.1.3, §2.2.2); a second one in the URL
+                // left the request saying two things
+                throw new IllegalArgumentException("a direct POST carries its operation in the body; drop the "
+                        + "'query' / 'update' parameter from the URL");
             }
+            // counted across the URL and the form body together
+            update = single(params, "update");
+            query = single(params, "query");
         } catch (IllegalArgumentException e) {
             fail(resp, HttpServletResponse.SC_BAD_REQUEST, e.getMessage());
             return;
@@ -308,8 +405,6 @@ public final class SparqlProtocolServlet extends HttpServlet {
             case "application/sparql-query" -> evaluateQuery(req, resp, params, body);
             case "application/sparql-update" -> handleUpdate(req, resp, params, body);
             default -> {
-                String update = params.first("update");
-                String query = params.first("query");
                 if (update != null && query != null) {
                     fail(resp, HttpServletResponse.SC_BAD_REQUEST, "send either 'query' or 'update', not both");
                 } else if (update != null) {
@@ -688,6 +783,12 @@ public final class SparqlProtocolServlet extends HttpServlet {
         if (!options.updateEnabled()) {
             fail(resp, HttpServletResponse.SC_FORBIDDEN,
                     "SPARQL Update is disabled on this endpoint (CQELS_SPARQL_UPDATE_ENABLED=true enables it)");
+            return;
+        }
+        if (Boolean.TRUE.equals(req.getAttribute(AccessFilters.READ_ONLY))) {
+            fail(resp, HttpServletResponse.SC_FORBIDDEN, "this request may only read: an update needs the update "
+                    + "token (CQELS_SPARQL_UPDATE_TOKEN)");
+            resp.setHeader("WWW-Authenticate", "Bearer error=\"insufficient_scope\"");   // RFC 6750 §3.1
             return;
         }
         executeUpdate(req, resp, params, updateString);
@@ -1470,19 +1571,22 @@ public final class SparqlProtocolServlet extends HttpServlet {
         }
         List<Range> ranges = new ArrayList<>();
         int order = 0;
-        for (String part : accept.split(",")) {
-            String[] pieces = part.trim().split(";");
-            String type = pieces[0].trim().toLowerCase(Locale.ROOT);
+        // Split outside quoted strings: a parameter value may be a quoted-string holding ',' or ';'
+        // (RFC 9110 §5.6.4), and a plain split broke text/csv;x="a,b" into two bogus ranges, the
+        // second of them able to match (found in the audit after #121).
+        for (String part : splitOutsideQuotes(accept, ',')) {
+            List<String> pieces = splitOutsideQuotes(part, ';');
+            String type = pieces.get(0).trim().toLowerCase(Locale.ROOT);
             if (type.isEmpty()) {
                 continue;
             }
             double q = 1.0;
             Map<String, String> params = new LinkedHashMap<>();
-            for (int i = 1; i < pieces.length; i++) {
-                String p = pieces[i].trim();
+            for (int i = 1; i < pieces.size(); i++) {
+                String p = pieces.get(i).trim();
                 int eq = p.indexOf('=');
                 String name = (eq < 0 ? p : p.substring(0, eq)).trim().toLowerCase(Locale.ROOT);   // names are case-insensitive
-                String value = eq < 0 ? "" : p.substring(eq + 1).trim().replace("\"", "");
+                String value = eq < 0 ? "" : unquote(p.substring(eq + 1).trim());
                 if (name.equals("q")) {
                     try {
                         q = Double.parseDouble(value);
@@ -1524,6 +1628,46 @@ public final class SparqlProtocolServlet extends HttpServlet {
             }
         }
         return Optional.ofNullable(best);
+    }
+
+    /** {@code s} split at {@code sep} where it is not inside a quoted-string; empty pieces kept. */
+    static List<String> splitOutsideQuotes(String s, char sep) {
+        List<String> out = new ArrayList<>();
+        StringBuilder cur = new StringBuilder();
+        boolean quoted = false;
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (quoted && c == '\\' && i + 1 < s.length()) {
+                cur.append(c).append(s.charAt(++i));   // quoted-pair: the next character is literal
+                continue;
+            }
+            if (c == '"') {
+                quoted = !quoted;
+            } else if (c == sep && !quoted) {
+                out.add(cur.toString());
+                cur.setLength(0);
+                continue;
+            }
+            cur.append(c);
+        }
+        out.add(cur.toString());
+        return out;
+    }
+
+    /** A parameter value: a quoted-string loses its quotes and its quoted-pair backslashes; a token is as is. */
+    static String unquote(String v) {
+        if (v.length() < 2 || v.charAt(0) != '"' || v.charAt(v.length() - 1) != '"') {
+            return v;
+        }
+        StringBuilder out = new StringBuilder();
+        for (int i = 1; i < v.length() - 1; i++) {
+            char c = v.charAt(i);
+            if (c == '\\' && i + 1 < v.length() - 1) {
+                c = v.charAt(++i);
+            }
+            out.append(c);
+        }
+        return out.toString();
     }
 
     /** Builds the protocol dataset from repeated graph parameters; {@code null} when none were sent. */
@@ -1640,7 +1784,25 @@ public final class SparqlProtocolServlet extends HttpServlet {
                     "unsupported charset '" + req.getCharacterEncoding() + "'");
             return null;
         }
-        return out.toString(cs);
+        try {
+            return strictly(out.toByteArray(), cs);
+        } catch (java.nio.charset.CharacterCodingException e) {
+            fail(resp, HttpServletResponse.SC_BAD_REQUEST, "the request body is not valid " + cs.name());
+            return null;
+        }
+    }
+
+    /**
+     * Decodes or fails. {@code new String(bytes, cs)} replaces a malformed sequence with U+FFFD, so
+     * an update in broken UTF-8 stored altered literals and answered 204 (found in the audit after
+     * #121); a client is better told its bytes were not what it declared.
+     */
+    static String strictly(byte[] bytes, Charset cs) throws java.nio.charset.CharacterCodingException {
+        return cs.newDecoder()
+                .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+                .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
+                .decode(java.nio.ByteBuffer.wrap(bytes))
+                .toString();
     }
 
     /** The body's declared charset, UTF-8 when none; {@code IllegalArgumentException} for an unknown one. */
@@ -1659,6 +1821,16 @@ public final class SparqlProtocolServlet extends HttpServlet {
 
     /** Every slot is taken: answer at once rather than queue behind queries that may never return. */
     private void busy(HttpServletResponse resp) throws IOException {
+        busyRejections.increment();
+        // Logged, but at most once a minute: a client retrying in a loop would otherwise fill the
+        // log with the very condition it is told about. Before the audit after #121 nothing was.
+        long now = System.nanoTime();
+        long last = lastBusyWarning.get();
+        if ((!warnedBusy || now - last >= 60_000_000_000L) && lastBusyWarning.compareAndSet(last, now)) {
+            warnedBusy = true;
+            log.warn("every query slot ({}) is taken; turning requests away with 503 ({} so far)",
+                    options.maxConcurrentQueries(), busyRejections.sum());
+        }
         fail(resp, HttpServletResponse.SC_SERVICE_UNAVAILABLE, "too many concurrent queries (limit "
                 + options.maxConcurrentQueries() + "); retry shortly");
         resp.setHeader("Retry-After", "1");   // after fail(): fail() resets the response first
@@ -1700,7 +1872,8 @@ public final class SparqlProtocolServlet extends HttpServlet {
     /**
      * Request parameters, parsed here rather than through {@code getParameter()} so the form
      * body goes through {@link #readBody}'s limit in any container. Names and values are
-     * {@code application/x-www-form-urlencoded}, UTF-8.
+     * {@code application/x-www-form-urlencoded}, UTF-8 unless the form body declares otherwise,
+     * and decoded strictly: bytes that are not valid in that charset are a 400, not U+FFFD.
      */
     record Params(Map<String, List<String>> map) {
         static Params parse(String encoded) {
@@ -1748,7 +1921,11 @@ public final class SparqlProtocolServlet extends HttpServlet {
                     i = end - 1;
                 }
             }
-            return bytes.toString(cs);
+            try {
+                return strictly(bytes.toByteArray(), cs);
+            } catch (java.nio.charset.CharacterCodingException e) {
+                throw new IllegalArgumentException("request parameters are not valid " + cs.name() + " once percent-decoded");
+            }
         }
 
         Params and(Params other) {

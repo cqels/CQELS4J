@@ -105,6 +105,17 @@ class SparqlProtocolServletTest {
         return HTTP.send(b.build(), HttpResponse.BodyHandlers.ofString());
     }
 
+    /** The SPARQL servlet inside a started endpoint's Jetty. */
+    static SparqlProtocolServlet servletOf(Server server) throws Exception {
+        var context = server.getDescendant(org.eclipse.jetty.ee10.servlet.ServletContextHandler.class);
+        for (var holder : context.getServletHandler().getServlets()) {
+            if (holder.getServlet() instanceof SparqlProtocolServlet s) {
+                return s;
+            }
+        }
+        throw new AssertionError("no SPARQL servlet");
+    }
+
     static String type(HttpResponse<?> r) {
         return r.headers().firstValue("Content-Type").orElse("");
     }
@@ -1147,8 +1158,7 @@ class SparqlProtocolServletTest {
             assertEquals(403, reserved.statusCode(), reserved.body());
 
             // the LOAD client goes with the servlet on stop and comes back after a restart
-            var servlet = (SparqlProtocolServlet) ((org.eclipse.jetty.ee10.servlet.ServletContextHandler) ep.server().getHandler())
-                    .getServletHandler().getServlets()[0].getServlet();
+            var servlet = servletOf(ep.server());
             assertTrue(servlet.loadClientHeld());
             ep.server().stop();
             assertFalse(servlet.loadClientHeld(), "Jetty stopped and the LOAD client stayed");
@@ -1421,8 +1431,7 @@ class SparqlProtocolServletTest {
             for (int i = 0; i < 20; i++) {
                 assertEquals(200, post(fed.url(), "application/sparql-query", "ASK {}", null).statusCode());
             }
-            var servlet = (SparqlProtocolServlet) ((org.eclipse.jetty.ee10.servlet.ServletContextHandler) fed.server().getHandler())
-                    .getServletHandler().getServlets()[0].getServlet();
+            var servlet = servletOf(fed.server());
             assertEquals(0, servlet.armedUploadDeadlines(), "finished uploads left deadlines armed");
             assertFalse(accepts.isEmpty());
             accepts.forEach(a -> assertFalse(a.contains("xml") || a.contains("binary"), "SERVICE asked for XML or binary: " + a));
@@ -1744,6 +1753,418 @@ class SparqlProtocolServletTest {
             store.shutDown();
             assertFalse(store.isInitialized());
         }
+    }
+
+    // ---- the audit after #121: protocol details, operations, the tests it found missing -------
+
+    /** Opens a raw connection and sends a POST's headers and the first part of its body. */
+    static java.net.Socket startUpload(String url, int contentLength, String firstPart) throws IOException {
+        URI u = URI.create(url);
+        java.net.Socket s = new java.net.Socket("127.0.0.1", u.getPort());
+        var out = s.getOutputStream();
+        out.write(("POST " + u.getPath() + " HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/sparql-query\r\n"
+                + "Content-Length: " + contentLength + "\r\nConnection: close\r\n\r\n" + firstPart)
+                .getBytes(StandardCharsets.US_ASCII));
+        out.flush();
+        return s;
+    }
+
+    /** Sends one GET on a kept-alive raw connection and returns its status line, reading the body by Content-Length. */
+    static String exchange(java.net.Socket s, String pathAndQuery) throws IOException {
+        s.getOutputStream().write(("GET " + pathAndQuery + " HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
+        s.getOutputStream().flush();
+        var in = s.getInputStream();
+        StringBuilder head = new StringBuilder();
+        while (!head.toString().endsWith("\r\n\r\n")) {
+            int c = in.read();
+            if (c < 0) {
+                return head.length() == 0 ? "closed" : head.toString().lines().findFirst().orElse("closed");
+            }
+            head.append((char) c);
+        }
+        int length = head.toString().lines().filter(l -> l.regionMatches(true, 0, "Content-Length:", 0, 15))
+                .map(l -> Integer.parseInt(l.substring(15).trim())).findFirst().orElse(0);
+        in.readNBytes(length);
+        return head.toString().lines().findFirst().orElseThrow();
+    }
+
+    static void awaitSlotsInUse(SparqlProtocolServlet servlet, int n) throws InterruptedException {
+        for (int i = 0; i < 100 && servlet.slotsInUse() != n; i++) {
+            Thread.sleep(50);
+        }
+        assertEquals(n, servlet.slotsInUse(), "slots in use");
+    }
+
+    static String base(Server server) {
+        return "http://127.0.0.1:" + ((ServerConnector) server.getConnectors()[0]).getLocalPort();
+    }
+
+    @Test
+    void anOperationParameterGivenTwiceIs400() throws Exception {
+        // the first one used to win, and a URL parameter beat the form body
+        var twice = HTTP.send(HttpRequest.newBuilder(URI.create(shared.url() + "?query=" + enc("ASK {}")
+                + "&query=SELEKT")).build(), HttpResponse.BodyHandlers.ofString());
+        assertEquals(400, twice.statusCode(), twice.body());
+        assertTrue(twice.body().contains("'query' is given 2 times"), twice.body());
+        var split = post(shared.url() + "?query=" + enc("ASK {}"), "application/x-www-form-urlencoded",
+                "query=" + enc("ASK { ?s ?p ?o }"), null);
+        assertEquals(400, split.statusCode(), split.body());
+        var direct = post(shared.url() + "?query=" + enc("ASK { ?s ?p ?o }"), "application/sparql-query", "ASK {}", null);
+        assertEquals(400, direct.statusCode(), direct.body());
+        var directUpdate = post(shared.url() + "?update=" + enc("CLEAR ALL"), "application/sparql-update",
+                "INSERT DATA { <urn:ex:a> <urn:ex:b> <urn:ex:c> }", null);
+        assertEquals(400, directUpdate.statusCode(), directUpdate.body());
+        // the dataset parameters are lists by design, and stay so
+        var graphs = HTTP.send(HttpRequest.newBuilder(URI.create(shared.url() + "?query=" + enc("SELECT ?s WHERE { ?s <urn:ex:p> ?o }")
+                + "&default-graph-uri=" + enc("urn:ex:g1") + "&default-graph-uri=" + enc("urn:ex:g2")))
+                .header("Accept", "text/csv").build(), HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, graphs.statusCode(), graphs.body());
+        assertTrue(graphs.body().contains("g1s") && graphs.body().contains("g2s"), graphs.body());
+    }
+
+    @Test
+    void bytesThatAreNotTheDeclaredCharsetAre400NotReplaced() throws Exception {
+        try (Endpoint rw = Endpoint.start(EndpointOptions.defaults().withUpdateEnabled(true), 0)) {
+            // "café" with é as the Latin-1 byte E9, in a body declared (by default) UTF-8: it was
+            // stored as "caf�" and answered 204
+            byte[] latin1 = "INSERT DATA { <urn:ex:cafe> <urn:ex:name> \"café\" }".getBytes(StandardCharsets.ISO_8859_1);
+            var r = HTTP.send(HttpRequest.newBuilder(URI.create(rw.url())).header("Content-Type", "application/sparql-update")
+                    .POST(HttpRequest.BodyPublishers.ofByteArray(latin1)).build(), HttpResponse.BodyHandlers.ofString());
+            assertEquals(400, r.statusCode(), r.body());
+            assertTrue(r.body().contains("not valid UTF-8"), r.body());
+            assertFalse(ask(rw.url(), "ASK { <urn:ex:cafe> ?p ?o }"), "the update ran");
+            // declared as what it is, the same bytes are fine
+            var declared = HTTP.send(HttpRequest.newBuilder(URI.create(rw.url()))
+                    .header("Content-Type", "application/sparql-update; charset=ISO-8859-1")
+                    .POST(HttpRequest.BodyPublishers.ofByteArray(latin1)).build(), HttpResponse.BodyHandlers.ofString());
+            assertEquals(204, declared.statusCode(), declared.body());
+            assertTrue(ask(rw.url(), "ASK { <urn:ex:cafe> <urn:ex:name> \"café\" }"));
+            // percent-escapes in a form body and in the query string are held to the same rule
+            var form = post(rw.url(), "application/x-www-form-urlencoded", "query=SELECT+%28%22caf%E9%22+AS+%3Fx%29+WHERE+%7B%7D", null);
+            assertEquals(400, form.statusCode(), form.body());
+            var url = HTTP.send(HttpRequest.newBuilder(URI.create(rw.url() + "?query=ASK%7B%7D%FF")).build(),
+                    HttpResponse.BodyHandlers.ofString());
+            assertEquals(400, url.statusCode(), url.body());
+        }
+    }
+
+    @Test
+    void answersVaryOnAccept() throws Exception {
+        var ok = get(shared.url(), "ASK {}", "text/csv, application/sparql-results+xml");
+        assertEquals(200, ok.statusCode());
+        assertTrue(ok.headers().allValues("Vary").stream().anyMatch(v -> v.contains("Accept")), ok.headers().map().toString());
+        var bad = get(shared.url(), "SELEKT", null);
+        assertEquals(400, bad.statusCode());
+        assertTrue(bad.headers().allValues("Vary").stream().anyMatch(v -> v.contains("Accept")), bad.headers().map().toString());
+        try (Endpoint cors = Endpoint.start(EndpointOptions.defaults().withAllowedOrigins(List.of("https://yasgui.example")), 0)) {
+            var r = HTTP.send(HttpRequest.newBuilder(URI.create(cors.url() + "?query=" + enc("ASK {}")))
+                    .header("Origin", "https://yasgui.example").build(), HttpResponse.BodyHandlers.ofString());
+            String vary = String.join(", ", r.headers().allValues("Vary"));
+            assertTrue(vary.contains("Origin") && vary.contains("Accept"), vary);
+        }
+    }
+
+    @Test
+    void otherMethodsAre405WithAllow() throws Exception {
+        for (String method : List.of("PUT", "DELETE", "PATCH", "TRACE")) {
+            var r = HTTP.send(HttpRequest.newBuilder(URI.create(shared.url()))
+                    .method(method, HttpRequest.BodyPublishers.noBody()).build(), HttpResponse.BodyHandlers.ofString());
+            assertEquals(405, r.statusCode(), method + ": " + r.body());
+            assertEquals(SparqlProtocolServlet.ALLOW, r.headers().firstValue("Allow").orElse(""), method);
+        }
+        var update = HTTP.send(HttpRequest.newBuilder(URI.create(shared.url() + "?update=" + enc("CLEAR ALL"))).build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(405, update.statusCode());
+        assertEquals(SparqlProtocolServlet.ALLOW, update.headers().firstValue("Allow").orElse(""));
+        var options = HTTP.send(HttpRequest.newBuilder(URI.create(shared.url()))
+                .method("OPTIONS", HttpRequest.BodyPublishers.noBody()).build(), HttpResponse.BodyHandlers.ofString());
+        assertEquals(SparqlProtocolServlet.ALLOW, options.headers().firstValue("Allow").orElse(""));
+        var head = HTTP.send(HttpRequest.newBuilder(URI.create(shared.url() + "?query=" + enc("ASK {}")))
+                .method("HEAD", HttpRequest.BodyPublishers.noBody()).build(), HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, head.statusCode());
+    }
+
+    @Test
+    void acceptParametersMayBeQuoted() {
+        var reg = org.eclipse.rdf4j.query.resultio.TupleQueryResultWriterRegistry.getInstance();
+        org.eclipse.rdf4j.query.resultio.QueryResultFormat json = org.eclipse.rdf4j.query.resultio.TupleQueryResultFormat.JSON;
+        var xml = org.eclipse.rdf4j.query.resultio.TupleQueryResultFormat.SPARQL;
+        // split at every comma, the middle of the quoted value became a range of its own, q=1,
+        // matching TSV and beating the XML the client asked for
+        assertEquals(xml, SparqlProtocolServlet.negotiate(
+                "application/sparql-results+xml;q=0.5, text/csv;foo=\"x, text/tab-separated-values, y\"", reg, json)
+                .orElseThrow().format());
+        // a quoted charset is the charset; a quoted-pair is one character
+        assertEquals("text/csv", SparqlProtocolServlet.negotiate("text/csv;charset=\"UTF-8\"", reg, json)
+                .orElseThrow().mediaType());
+        assertEquals(List.of("a", "b=\"c,d\"", " e"), SparqlProtocolServlet.splitOutsideQuotes("a,b=\"c,d\", e", ','));
+        assertEquals("a\"b", SparqlProtocolServlet.unquote("\"a\\\"b\""));
+        assertEquals(List.of("x=\"\\\",\"", "y"), SparqlProtocolServlet.splitOutsideQuotes("x=\"\\\",\",y", ','));
+    }
+
+    @Test
+    void aReadTokenCannotUpdate() throws Exception {
+        String insert = "INSERT DATA { <urn:ex:w> <urn:ex:by> <urn:ex:writer> }";
+        try (Endpoint ep = Endpoint.start(EndpointOptions.defaults().withUpdateEnabled(true)
+                .withAuthToken("reader").withUpdateToken("writer"), 0)) {
+            var read = post(ep.url(), "application/sparql-query", "ASK {}", null, "Authorization", "Bearer reader");
+            assertEquals(200, read.statusCode());
+            var refused = post(ep.url(), "application/sparql-update", insert, null, "Authorization", "Bearer reader");
+            assertEquals(403, refused.statusCode(), refused.body());
+            assertTrue(refused.headers().firstValue("WWW-Authenticate").orElse("").contains("insufficient_scope"));
+            var written = post(ep.url(), "application/sparql-update", insert, null, "Authorization", "Bearer writer");
+            assertEquals(204, written.statusCode(), written.body());
+            assertEquals(200, post(ep.url(), "application/sparql-query", "ASK {}", null, "Authorization", "Bearer writer").statusCode());
+            assertEquals(401, post(ep.url(), "application/sparql-query", "ASK {}", null).statusCode());
+            assertEquals(401, post(ep.url(), "application/sparql-query", "ASK {}", null, "Authorization", "Bearer nope").statusCode());
+        }
+        // an update token alone: reads open, writes behind it
+        try (Endpoint ep = Endpoint.start(EndpointOptions.defaults().withUpdateEnabled(true).withUpdateToken("writer"), 0)) {
+            assertEquals(200, post(ep.url(), "application/sparql-query", "ASK {}", null).statusCode());
+            assertEquals(403, post(ep.url(), "application/sparql-update", insert, null).statusCode());
+            assertEquals(401, post(ep.url(), "application/sparql-update", insert, null, "Authorization", "Bearer nope").statusCode());
+            assertEquals(204, post(ep.url(), "application/sparql-update", insert, null, "Authorization", "Bearer writer").statusCode());
+        }
+        assertThrows(IllegalArgumentException.class,
+                () -> EndpointOptions.defaults().withAuthToken("same").withUpdateToken("same"));
+    }
+
+    @Test
+    void healthAndReadySayWhatIsWrong() throws Exception {
+        CQELSEngine engine = CQELSEngine.builder().id("t-" + System.nanoTime()).withMemoryStore().build();
+        engine.start();
+        Server server = SparqlEndpointLauncher.startServer(engine, "127.0.0.1", 0,
+                EndpointOptions.defaults().withMaxConcurrentQueries(1), 64, false);
+        try {
+            String base = base(server);
+            assertEquals("ready\n", getWithin(base + "/ready", java.time.Duration.ofSeconds(2)).body());
+            assertEquals("ok\n", getWithin(base + "/health", java.time.Duration.ofSeconds(2)).body());
+            SparqlProtocolServlet servlet = servletOf(server);
+            try (java.net.Socket upload = startUpload(base + "/sparql", 100, "AS")) {
+                awaitSlotsInUse(servlet, 1);
+                var full = getWithin(base + "/ready", java.time.Duration.ofSeconds(2));
+                assertEquals(503, full.statusCode());
+                assertTrue(full.body().contains("query slot"), full.body());
+                assertEquals(200, getWithin(base + "/health", java.time.Duration.ofSeconds(2)).statusCode(),
+                        "a busy endpoint is alive: liveness must not fail on it");
+            }
+            awaitSlotsInUse(servlet, 0);   // the closed upload hands its slot back
+            assertEquals(200, getWithin(base + "/ready", java.time.Duration.ofSeconds(2)).statusCode());
+            engine.close();
+            var health = getWithin(base + "/health", java.time.Duration.ofSeconds(2));
+            assertEquals(503, health.statusCode());
+            assertTrue(health.body().contains("not running"), health.body());
+            assertEquals(503, getWithin(base + "/ready", java.time.Duration.ofSeconds(2)).statusCode());
+        } finally {
+            server.stop();
+            engine.close();
+        }
+    }
+
+    @Test
+    void metricsCountAnswersByStatusIncludingRefusals() throws Exception {
+        try (Endpoint ep = Endpoint.start(EndpointOptions.defaults().withAuthToken("t0ken"), 0)) {
+            assertEquals(401, get(ep.url(), "ASK {}", null).statusCode());
+            assertEquals(200, post(ep.url(), "application/sparql-query", "ASK {}", null, "Authorization", "Bearer t0ken").statusCode());
+            assertEquals(400, post(ep.url(), "application/sparql-query", "SELEKT", null, "Authorization", "Bearer t0ken").statusCode());
+            String metricsUrl = base(ep.server()) + "/metrics";
+            String body = "";
+            for (int i = 0; i < 20 && !body.contains("code=\"400\"} 1"); i++) {   // counted as each request completes
+                var m = getWithin(metricsUrl, java.time.Duration.ofSeconds(2));
+                assertEquals(200, m.statusCode(), "/metrics is beside /health, outside the token");
+                body = m.body();
+                Thread.sleep(20);
+            }
+            assertTrue(body.contains("cqels_sparql_requests_total{code=\"401\"} 1"), body);
+            assertTrue(body.contains("cqels_sparql_requests_total{code=\"200\"} 1"), body);
+            assertTrue(body.contains("cqels_sparql_requests_total{code=\"400\"} 1"), body);
+            assertTrue(body.contains("cqels_sparql_slots_limit 16"), body);
+            assertTrue(body.contains("cqels_sparql_slots_in_use 0"), body);
+            assertTrue(body.contains("cqels_sparql_engine_running 1"), body);
+            assertFalse(body.contains("t0ken") || body.contains("ASK"), body);
+        }
+    }
+
+    /** Jetty's stop cut every request in progress off at once; it now lets them finish, refusing new ones. */
+    @Test
+    void stopLetsARequestInProgressFinish() throws Exception {
+        CQELSEngine engine = CQELSEngine.builder().id("t-" + System.nanoTime()).withMemoryStore().build();
+        engine.start();
+        Server server = SparqlEndpointLauncher.startServer(engine, "127.0.0.1", 0,
+                EndpointOptions.defaults().withShutdownSeconds(15), 64, false);
+        String base = base(server);
+        try (java.net.Socket upload = startUpload(base + "/sparql", "ASK {}".length(), "AS");
+             java.net.Socket kept = new java.net.Socket("127.0.0.1", URI.create(base).getPort())) {
+            kept.setSoTimeout(10_000);
+            assertTrue(exchange(kept, "/health").contains(" 200 "));   // a connection a client keeps open
+            awaitSlotsInUse(servletOf(server), 1);
+            var stopping = java.util.concurrent.CompletableFuture.runAsync(() -> {
+                try {
+                    server.stop();
+                } catch (Exception e) {
+                    throw new IllegalStateException(e);
+                }
+            });
+            // a new request is refused while the old one drains: 503, or no connection at all
+            boolean refused = false;
+            for (int i = 0; i < 50 && !refused; i++) {
+                try {
+                    // a client of its own: a pooled connection would not show what a new client meets
+                    var r = HttpClient.newHttpClient().send(HttpRequest.newBuilder(URI.create(base + "/sparql?query=" + enc("ASK {}")))
+                            .timeout(java.time.Duration.ofSeconds(2)).build(), HttpResponse.BodyHandlers.ofString());
+                    refused = r.statusCode() == 503;
+                } catch (IOException e) {
+                    refused = true;
+                }
+                if (!refused) {
+                    Thread.sleep(50);
+                }
+            }
+            assertTrue(refused, "a request arriving during the drain was served");
+            // a new request on a connection opened before the stop is refused too, rather than
+            // served and keeping the connection (and the drain) going
+            String onKept = exchange(kept, "/sparql?query=" + enc("ASK {}"));
+            assertTrue(onKept.contains(" 503 "), "on a kept-alive connection during the drain: " + onKept);
+            assertFalse(stopping.isDone(), "stop did not wait for the request in progress");
+            var out = upload.getOutputStream();
+            out.write("K {}".getBytes(StandardCharsets.US_ASCII));
+            out.flush();
+            upload.setSoTimeout(10_000);
+            String response = new String(upload.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            assertTrue(response.startsWith("HTTP/1.1 200 "), response);
+            assertTrue(response.replace(" ", "").contains("\"boolean\":true"), response);
+            stopping.get(10, java.util.concurrent.TimeUnit.SECONDS);
+        } finally {
+            server.stop();
+            engine.close();
+        }
+    }
+
+    @Test
+    void stopCutsOffWhatOutlivesTheDrain() throws Exception {
+        CQELSEngine engine = CQELSEngine.builder().id("t-" + System.nanoTime()).withMemoryStore().build();
+        engine.start();
+        Server server = SparqlEndpointLauncher.startServer(engine, "127.0.0.1", 0,
+                EndpointOptions.defaults().withShutdownSeconds(1).withMaxUploadSeconds(0), 64, false);
+        try (java.net.Socket upload = startUpload(base(server) + "/sparql", 100, "AS")) {
+            SparqlProtocolServlet servlet = servletOf(server);
+            awaitSlotsInUse(servlet, 1);
+            long t0 = System.nanoTime();
+            server.stop();
+            double took = (System.nanoTime() - t0) / 1e9;
+            assertTrue(took >= 0.9 && took < 6, "stop took " + took + " s for a 1 s drain");
+            upload.setSoTimeout(5_000);
+            byte[] rest = upload.getInputStream().readAllBytes();   // closed, not left hanging
+            assertFalse(new String(rest, StandardCharsets.UTF_8).startsWith("HTTP/1.1 200"));
+            awaitSlotsInUse(servlet, 0);
+        } finally {
+            server.stop();
+            engine.close();
+        }
+    }
+
+    /**
+     * The README's claim, end to end: an update through the endpoint changes what a registered
+     * continuous query joins on its next element, under a lookup cache too. Until the audit after
+     * #121 only the opposite direction (results written back, then queried) was tested.
+     */
+    @Test
+    void anUpdateReachesTheEngineOnItsNextElement() throws Exception {
+        try (Endpoint e = Endpoint.start(EndpointOptions.defaults().withUpdateEnabled(true), 0)) {
+            assertEquals(204, post(e.url(), "application/sparql-update",
+                    "INSERT DATA { GRAPH <urn:ex:static> { <urn:ex:EV-1> <urn:ex:depot> <urn:ex:North> } }", null).statusCode());
+            CQELSEngine engine = e.engine();
+            DataStream telemetry = engine.createStream("Telemetry");
+            var depots = new java.util.concurrent.LinkedBlockingQueue<String>();
+            engine.registerCqelsQuery("""
+                    REGISTER QUERY Depot AS
+                    SELECT ?v ?d FROM STREAM Telemetry [NOW] FROM <urn:ex:static> CACHE 5m
+                    WHERE { STREAM Telemetry { ?v <urn:ex:speed> ?kmh } ?v <urn:ex:depot> ?d }
+                    """, row -> depots.add(String.valueOf(row.get("d"))));
+            telemetry.push(VF.createStatement(iri("EV-1"), iri("speed"), VF.createLiteral(50)));
+            assertEquals("urn:ex:North", depots.poll(10, java.util.concurrent.TimeUnit.SECONDS));
+            assertEquals(204, post(e.url(), "application/sparql-update", """
+                    DELETE DATA { GRAPH <urn:ex:static> { <urn:ex:EV-1> <urn:ex:depot> <urn:ex:North> } } ;
+                    INSERT DATA { GRAPH <urn:ex:static> { <urn:ex:EV-1> <urn:ex:depot> <urn:ex:South> } }
+                    """, null).statusCode());
+            telemetry.push(VF.createStatement(iri("EV-1"), iri("speed"), VF.createLiteral(60)));
+            assertEquals("urn:ex:South", depots.poll(10, java.util.concurrent.TimeUnit.SECONDS),
+                    "the engine joined the cached, stale depot");
+            assertTrue(depots.isEmpty(), "extra rows: " + depots);
+        }
+    }
+
+    /**
+     * Every format each writer registry offers, parsed back in full and compared with the result
+     * evaluated directly on the repository — rather than looked at for a substring, as the protocol
+     * matrix above does.
+     */
+    @Test
+    void everyResultFormatRoundTrips() throws Exception {
+        String select = """
+                SELECT ?v ?d ?lang ?typed ?plain WHERE {
+                  ?v <urn:ex:depot> ?d
+                  BIND("Grüße"@de AS ?lang) BIND(42 AS ?typed) BIND("a,\\"b\\"\\n\\tc" AS ?plain)
+                } ORDER BY ?v""";
+        String construct = """
+                CONSTRUCT { ?v <urn:ex:at> [ <urn:ex:depot> ?d ; <urn:ex:label> "Grüße"@de ; <urn:ex:n> 42 ] }
+                WHERE { ?v <urn:ex:depot> ?d }""";
+        List<org.eclipse.rdf4j.query.BindingSet> rows;
+        org.eclipse.rdf4j.model.Model graph;
+        try (RepositoryConnection c = shared.engine().getRepository().getConnection()) {
+            rows = org.eclipse.rdf4j.query.QueryResults.asList(c.prepareTupleQuery(select).evaluate());
+            graph = org.eclipse.rdf4j.query.QueryResults.asModel(c.prepareGraphQuery(construct).evaluate());
+        }
+        assertEquals(2, rows.size());
+        int formats = 0;
+        for (var f : org.eclipse.rdf4j.query.resultio.TupleQueryResultWriterRegistry.getInstance().getKeys()) {
+            var r = HTTP.send(HttpRequest.newBuilder(URI.create(shared.url() + "?query=" + enc(select)))
+                    .header("Accept", f.getDefaultMIMEType()).build(), HttpResponse.BodyHandlers.ofByteArray());
+            assertEquals(200, r.statusCode(), f.getName());
+            assertTrue(type(r).startsWith(f.getDefaultMIMEType()), f.getName() + ": " + type(r));
+            var parser = org.eclipse.rdf4j.query.resultio.QueryResultIO.createTupleParser(f);
+            var got = new org.eclipse.rdf4j.query.resultio.helpers.QueryResultCollector();
+            parser.setQueryResultHandler(got);
+            parser.parseQueryResult(new java.io.ByteArrayInputStream(r.body()));
+            assertEquals(List.of("v", "d", "lang", "typed", "plain"), got.getBindingNames(), f.getName());
+            if (f.equals(org.eclipse.rdf4j.query.resultio.TupleQueryResultFormat.CSV)) {
+                // CSV carries lexical forms only (SPARQL 1.1 CSV/TSV §3): compare those
+                for (int i = 0; i < rows.size(); i++) {
+                    for (String name : got.getBindingNames()) {
+                        assertEquals(rows.get(i).getValue(name).stringValue(), got.getBindingSets().get(i).getValue(name).stringValue(),
+                                f.getName() + " " + name);
+                    }
+                }
+            } else {
+                assertEquals(rows, got.getBindingSets(), f.getName());
+            }
+            formats++;
+        }
+        assertTrue(formats >= 5, "SELECT formats: " + formats);
+        for (var f : org.eclipse.rdf4j.query.resultio.BooleanQueryResultWriterRegistry.getInstance().getKeys()) {
+            for (boolean expected : new boolean[] {true, false}) {
+                String q = expected ? "ASK { ?v <urn:ex:depot> <urn:ex:North> }" : "ASK { ?v <urn:ex:depot> <urn:ex:Nowhere> }";
+                var r = HTTP.send(HttpRequest.newBuilder(URI.create(shared.url() + "?query=" + enc(q)))
+                        .header("Accept", f.getDefaultMIMEType()).build(), HttpResponse.BodyHandlers.ofByteArray());
+                assertEquals(200, r.statusCode(), f.getName());
+                var parser = org.eclipse.rdf4j.query.resultio.QueryResultIO.createBooleanParser(f);
+                var got = new org.eclipse.rdf4j.query.resultio.helpers.QueryResultCollector();
+                parser.setQueryResultHandler(got);
+                parser.parseQueryResult(new java.io.ByteArrayInputStream(r.body()));
+                assertEquals(expected, got.getBoolean(), f.getName());
+            }
+        }
+        formats = 0;
+        for (var f : org.eclipse.rdf4j.rio.RDFWriterRegistry.getInstance().getKeys()) {
+            var r = HTTP.send(HttpRequest.newBuilder(URI.create(shared.url() + "?query=" + enc(construct)))
+                    .header("Accept", f.getDefaultMIMEType()).build(), HttpResponse.BodyHandlers.ofByteArray());
+            assertEquals(200, r.statusCode(), f.getName());
+            assertTrue(type(r).startsWith(f.getDefaultMIMEType()), f.getName() + ": " + type(r));
+            var parsed = org.eclipse.rdf4j.rio.Rio.parse(new java.io.ByteArrayInputStream(r.body()), shared.url(), f);
+            assertTrue(org.eclipse.rdf4j.model.util.Models.isomorphic(graph, parsed), f.getName() + ": " + parsed);
+            formats++;
+        }
+        assertTrue(formats >= 8, "graph formats: " + formats);
     }
 
     @SuppressWarnings("unused")
