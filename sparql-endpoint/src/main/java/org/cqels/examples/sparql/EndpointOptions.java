@@ -60,7 +60,7 @@ import java.util.List;
  *                             refuses any other {@code Origin} with 403 — the servlet itself does not
  * @param allowedHosts         host names a request's {@code Host} may carry in addition to the
  *                             loopback names and the bind host, or {@code *} for any. Enforced by
- *                             {@link AccessFilters.Hosts} whenever no token is set (or this is
+ *                             {@link AccessFilters.Hosts} whenever no read token is set (or this is
  *                             given explicitly) — the defence against DNS rebinding
  * @param maxRequestBytes      bodies larger than this answer 413 before being parsed
  * @param allowUnauthenticatedRemote  whether {@code SparqlEndpointLauncher.startServer} may bind a

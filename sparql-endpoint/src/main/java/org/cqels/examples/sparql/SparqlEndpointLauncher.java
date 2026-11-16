@@ -44,7 +44,7 @@ import java.util.function.Supplier;
  *   CQELS_SPARQL_AUTH_TOKEN               (none)      bearer token; read-only when an update token is set
  *   CQELS_SPARQL_UPDATE_TOKEN             (none)      the only bearer token that may update
  *   CQELS_SPARQL_ALLOWED_HOSTS            (loopback)  comma-separated Host names, or *; checked when
- *                                                     no token is set (DNS rebinding)
+ *                                                     no read token is set (DNS rebinding)
  *   CQELS_SPARQL_ALLOWED_ORIGINS          (none)      comma-separated browser origins, or *; any
  *                                                     other Origin is refused with 403
  *   CQELS_SPARQL_MAX_REQUEST_BYTES        1048576
@@ -386,8 +386,14 @@ public final class SparqlEndpointLauncher {
             // log's to keep, and the token never appears in any field logged here.
             org.eclipse.jetty.server.Slf4jRequestLogWriter writer = new org.eclipse.jetty.server.Slf4jRequestLogWriter();
             writer.setLoggerName(ACCESS_LOGGER);
-            server.setRequestLog(new org.eclipse.jetty.server.RequestLog.Collection(counting,
-                    new org.eclipse.jetty.server.CustomRequestLog(writer, "%{client}a - %u %t \"%m %U %H\" %s %O %{ms}T")));
+            org.eclipse.jetty.server.CustomRequestLog access = new org.eclipse.jetty.server.CustomRequestLog(writer,
+                    "%{client}a - %u %t \"%m %U %H\" %s %O %{ms}T");
+            // A Collection does not start what it holds, and an unstarted CustomRequestLog has no
+            // logger: every request threw a NullPointerException that Jetty swallowed, and nothing
+            // was logged (found in co-review of #128). Managed as a bean, it starts and stops with
+            // the server, restarts included.
+            server.addBean(access, true);
+            server.setRequestLog(new org.eclipse.jetty.server.RequestLog.Collection(counting, access));
         } else {
             server.setRequestLog(counting);
         }
