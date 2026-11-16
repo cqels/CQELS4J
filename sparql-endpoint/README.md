@@ -86,7 +86,8 @@ docker run --rm -p 8089:8089 -v cqels-data:/data -e CQELS_SPARQL_STORE_PATH=/dat
 
 The container runs as uid 10001, not root. A new named volume takes the image's `/data`
 ownership, so it is writable. A host directory mounted there must be writable by uid 10001.
-`docker stop` sends SIGTERM to the JVM, which stops Jetty, the engine and the store cleanly.
+`docker stop` sends SIGTERM to the JVM, which stops Jetty (letting requests in progress finish;
+see *Operations*), the engine and the store cleanly.
 
 ```bash
 scripts/docker-smoke.sh   # builds the image and checks every claim in this section
@@ -101,7 +102,8 @@ All settings are environment variables, named like the MCP server's `CQELS_MCP_H
 | `CQELS_SPARQL_HOST` | `127.0.0.1` | Bind address. A non-loopback host **without a token refuses to start** (see *Security*). |
 | `CQELS_SPARQL_PORT` | `8089` | `0` picks an ephemeral port, printed in the `listening on` line. |
 | `CQELS_SPARQL_PATH` | `/sparql` | |
-| `CQELS_SPARQL_AUTH_TOKEN` | unset | Bearer token. Missing or wrong → `401` with `WWW-Authenticate: Bearer`. |
+| `CQELS_SPARQL_AUTH_TOKEN` | unset | Bearer token. Missing or wrong → `401` with `WWW-Authenticate: Bearer`. Read-only when `CQELS_SPARQL_UPDATE_TOKEN` is set. |
+| `CQELS_SPARQL_UPDATE_TOKEN` | unset | A second bearer token, the only one that may update; must differ from `AUTH_TOKEN`. An update with the read token (or, if `AUTH_TOKEN` is unset, with no token) → `403`. See *Security*. |
 | `CQELS_SPARQL_ALLOWED_HOSTS` | unset | Comma-separated host names a request's `Host` header may carry **in addition to** `localhost`, `127.0.0.1`, `::1` and the bind host (or `*` for any). Checked whenever no token is set, as the defence against DNS rebinding; behind a proxy or under a DNS name, list the name clients use. |
 | `CQELS_SPARQL_ALLOWED_ORIGINS` | unset | Comma-separated browser origins allowed to call the endpoint (or `*`); they get CORS headers. A request carrying any **other** `Origin` is refused with `403` (see *Security*). Requests without `Origin` — curl, rdflib, Jena — are unaffected. |
 | `CQELS_SPARQL_MAX_REQUEST_BYTES` | `1048576` | Larger bodies → `413`, form bodies and chunked bodies included. |
@@ -117,34 +119,40 @@ All settings are environment variables, named like the MCP server's `CQELS_MCP_H
 | `CQELS_SPARQL_SEED_FLEET` | `false` | Seed the fleet world. |
 | `CQELS_SPARQL_MAX_THREADS` | `200` | Jetty request threads. Must cover the query slots, the connector's own threads and 4 spares, or start-up is refused: with fewer, requests would queue for a thread before reaching a slot, and neither the immediate `503` nor `/health` would hold. Ignored on virtual threads. |
 | `CQELS_SPARQL_VIRTUAL_THREADS` | `false` | Run requests on virtual threads (JDK 21+ runtime; ignored with a warning otherwise). |
+| `CQELS_SPARQL_SHUTDOWN_SECONDS` | `5` | On stop, requests in progress get this long to finish while new ones are refused; then the rest are cut off (an update among them rolls back). `0` = cut off at once. See *Operations*. |
+| `CQELS_SPARQL_ACCESS_LOG` | `true` | One stderr line per request: client, method, path **without the query string**, status, bytes, milliseconds. |
 | `CQELS_SPARQL_ALLOW_UNAUTHENTICATED_REMOTE` | `false` | Override the start-up refusal. |
 
 ## Protocol
 
 | Request | Result |
 |---|---|
-| `GET /sparql?query=…` | query |
+| `GET /sparql?query=…` | query. Jetty refuses a request line over 8 KB with `414`, so send long queries by POST |
 | `POST /sparql` — `application/x-www-form-urlencoded`, `query=` or `update=` | query / update; percent-escapes decode in the declared `charset`, UTF-8 when none |
 | `POST /sparql` — `application/sparql-query` | query, body is the query |
 | `POST /sparql` — `application/sparql-update` | update, body is the update |
-| `default-graph-uri`, `named-graph-uri` | query dataset; overrides `FROM` / `FROM NAMED` in the query |
+| `query`, `update` | exactly once: given twice (in the URL twice, or in the URL and a form body) → `400`, as is either in the URL of a direct POST, whose body is the operation |
+| `default-graph-uri`, `named-graph-uri` | query dataset; overrides `FROM` / `FROM NAMED` in the query. Repeatable |
 | `using-graph-uri`, `using-named-graph-uri` | update dataset; together with `USING`, `USING NAMED` or `WITH` in the update → `400` (§2.2.3) |
 | relative IRIs | resolved against the request URL, the service-defined base of §2.3 |
-| `Accept` | negotiated through RDF4J's writer registries per RFC 9110: `q` values honoured, `q=0` excludes, the most specific range wins, repeated `Accept` fields form one list, parameters count (`text/csv;charset=UTF-8` is more specific than `text/csv`; `charset=ISO-8859-1` matches nothing, since the writers emit UTF-8), and the response is labelled with the media type that matched (`application/json` if that is what was asked for). Defaults: SPARQL JSON for SELECT/ASK, Turtle for CONSTRUCT/DESCRIBE. Also XML, CSV, TSV, binary for results; N-Triples, N-Quads, TriG, RDF/XML, JSON-LD, NDJSON-LD for graphs. JSON-LD and NDJSON-LD are held before they are written, so they are bounded by `CQELS_SPARQL_MAX_BUFFERED_BYTES`; the others stream, Turtle and TriG without pretty-printing (statements are grouped only when consecutive), since RDF4J's pretty-printer buffers. |
-| `GET /health`, `GET /ready` | `200` once the engine has started and Jetty is bound (never behind the token). |
+| bytes | decoded strictly in the declared charset (UTF-8 when none), the query string and percent-escapes included: anything that is not valid in it → `400`, never a silent U+FFFD |
+| `Accept` | negotiated through RDF4J's writer registries per RFC 9110: `q` values honoured, `q=0` excludes, the most specific range wins, repeated `Accept` fields form one list, parameters count (`text/csv;charset=UTF-8` is more specific than `text/csv`; `charset=ISO-8859-1` matches nothing, since the writers emit UTF-8), quoted parameter values may hold `,` and `;`, and the response is labelled with the media type that matched (`application/json` if that is what was asked for) and carries `Vary: Accept`, errors included, so a cache keeps formats apart. Defaults: SPARQL JSON for SELECT/ASK, Turtle for CONSTRUCT/DESCRIBE. Also XML, CSV, TSV, binary for results; N-Triples, N-Quads, TriG, RDF/XML, JSON-LD, NDJSON-LD for graphs. JSON-LD and NDJSON-LD are held before they are written, so they are bounded by `CQELS_SPARQL_MAX_BUFFERED_BYTES`; the others stream, Turtle and TriG without pretty-printing (statements are grouped only when consecutive), since RDF4J's pretty-printer buffers. |
+| `GET /health`, `GET /ready`, `GET /metrics` | probes and counters, never behind the token; see *Operations* |
+| other methods | `405` with `Allow: GET, HEAD, POST, OPTIONS`; `TRACE` included |
 
 | Status | When |
 |---|---|
-| `400` | malformed query or update, graph parameter that is not an absolute IRI, missing `query`, update dataset parameters plus `USING`/`WITH`, malformed percent-encoding, a request nested too deeply to parse (thousands of parentheses) |
+| `400` | malformed query or update, graph parameter that is not an absolute IRI, missing `query`, `query` or `update` given more than once (or in the URL of a direct POST), update dataset parameters plus `USING`/`WITH`, malformed percent-encoding, bytes not valid in the declared charset, a request nested too deeply to parse (thousands of parentheses) |
 | `401` | token set and missing or wrong |
-| `403` | update while `CQELS_SPARQL_UPDATE_ENABLED` is false; `SERVICE` or `LOAD` while `CQELS_SPARQL_FEDERATION_ENABLED` is false, or naming anything but an `http`/`https` IRI while it is true; `Host` not in `CQELS_SPARQL_ALLOWED_HOSTS` (no token set); `Origin` not in `CQELS_SPARQL_ALLOWED_ORIGINS`; a browser request marked `Sec-Fetch-Site: cross-site` or `same-site` with no allowed `Origin` |
-| `405` | update sent via GET |
+| `403` | update while `CQELS_SPARQL_UPDATE_ENABLED` is false; update without the update token when `CQELS_SPARQL_UPDATE_TOKEN` is set (with `WWW-Authenticate: Bearer error="insufficient_scope"`); `SERVICE` or `LOAD` while `CQELS_SPARQL_FEDERATION_ENABLED` is false, or naming anything but an `http`/`https` IRI while it is true; `Host` not in `CQELS_SPARQL_ALLOWED_HOSTS` (no token set); `Origin` not in `CQELS_SPARQL_ALLOWED_ORIGINS`; a browser request marked `Sec-Fetch-Site: cross-site` or `same-site` with no allowed `Origin` |
+| `405` | update sent via GET; any method but GET, HEAD, POST, OPTIONS. Always with `Allow` |
 | `406` | nothing in `Accept` matches a registered writer |
 | `408` | body not received within `CQELS_SPARQL_MAX_UPLOAD_SECONDS` |
 | `413` | body over `CQELS_SPARQL_MAX_REQUEST_BYTES` |
+| `414` | a GET whose request line is over 8 KB (Jetty's limit); POST the query instead |
 | `415` | unknown POST `Content-Type` or charset |
 | `500` | evaluation failed, or the request ran out of heap (see *Memory*) |
-| `503` | execution limit exceeded by a query or an update (as Fuseki answers), every query slot busy (then with `Retry-After: 1`), a JSON-LD / NDJSON-LD result larger than `CQELS_SPARQL_MAX_BUFFERED_BYTES` with no `MAX_ROWS` set (with one, it is truncated instead), or `SERVICE` while the repository's `SERVICE` client lacks the endpoint's limits (an embedding that skipped `limitOutboundRequests`) |
+| `503` | execution limit exceeded by a query or an update (as Fuseki answers), a request arriving while the endpoint stops, every query slot busy (then with `Retry-After: 1`), a JSON-LD / NDJSON-LD result larger than `CQELS_SPARQL_MAX_BUFFERED_BYTES` with no `MAX_ROWS` set (with one, it is truncated instead), or `SERVICE` while the repository's `SERVICE` client lacks the endpoint's limits (an embedding that skipped `limitOutboundRequests`) |
 | `502` | a `LOAD` source failed: an HTTP error, a redirect to anything but `http`/`https`, a body over `CQELS_SPARQL_MAX_BUFFERED_BYTES`, or no parseable RDF (`LOAD SILENT`: `204`, nothing changed) |
 | `504` | a `SERVICE` or `LOAD` target did not answer within `CQELS_SPARQL_MAX_EXECUTION_SECONDS` |
 
@@ -171,6 +179,31 @@ why the fleet seed, written to the MCP server's long-term memory graph, answers 
   clients is not measured yet.
 - The `listening on` line is printed **after** `engine.start()`, so the first request can
   already join against the graph.
+
+## Operations
+
+| Path | Answers |
+|---|---|
+| `/health` | Liveness: `200 ok` while the engine runs, `503` with the reason once it has stopped. Busy is not dead, so a full set of query slots leaves it `200`. |
+| `/ready` | Readiness: `200 ready`, or `503` with the reason when the engine is not running, the repository is not initialized, or every query slot is taken (a query would only be told `503`). |
+| `/metrics` | Prometheus text: `cqels_sparql_requests_total{code="…"}` per status (requests the host, origin and token checks refuse included), `cqels_sparql_aborted_total` (responses cut off after they started), `cqels_sparql_busy_total`, `cqels_sparql_slots_in_use`, `cqels_sparql_slots_limit`, `cqels_sparql_engine_running`. |
+
+None of the three needs a query slot or the token; they carry counts and states only, no query
+text, client address or token. Before the audit after #121, `/health` and `/ready` said `ok`
+and `ready` after the engine had stopped and with every slot stuck, and nothing was counted.
+
+- **Logs.** One access-log line per request on stderr (logger `org.cqels.examples.sparql.access`,
+  `CQELS_SPARQL_ACCESS_LOG=false` turns it off) with the path but never the query string: a query
+  can carry data that is not the log's to keep. A full set of query slots is also logged, at most
+  once a minute.
+- **Stopping.** On SIGTERM (`docker stop`, Ctrl-C) Jetty stops accepting, answers `503` to any
+  request already on an open connection, and gives the requests in progress
+  `CQELS_SPARQL_SHUTDOWN_SECONDS` (5) to finish; then it cuts off the rest, and the engine and the
+  store close. The default leaves room inside Docker's 10 s before it kills the process. A query
+  the execution limit cannot stop (see below) is among the ones cut off.
+- **Not served:** a SPARQL 1.1 Service Description (`GET /sparql` with no query is a `400`) and
+  the SPARQL 1.1 Graph Store Protocol (`PUT`, `DELETE`, … are `405`). Both are features of their
+  own; SPARQL Update covers what the Graph Store Protocol would.
 
 ## The metadata graph
 
@@ -350,7 +383,14 @@ requested upstream as cqels/claude#1387; the Jetty version here is pinned to the
   still answers — until `CQELS_SPARQL_MAX_UPLOAD_SECONDS` gives the slot back.
 - TLS is not terminated here. Front the endpoint with a TLS-terminating proxy, as the MCP
   README says for its own HTTP transport.
-- A bearer token is compared in constant time. `/health` and `/ready` are never behind it.
+- A bearer token is compared in constant time. `/health`, `/ready` and `/metrics` are never
+  behind it.
+- **Readers need not be writers.** With one token, everyone who could query could also
+  `DROP ALL` once update was on. Set `CQELS_SPARQL_UPDATE_TOKEN` as well and `AUTH_TOKEN` becomes
+  read-only: an update with it is a `403`. Set the update token **alone** for open reads with
+  token-protected writes; the start-up refusal above still applies then, since reads are
+  unauthenticated. `LOAD` is an update, so it needs the update token too; `SERVICE` in a query
+  needs only the read token, so enable federation with that in mind.
 
 ## Alternatives
 
@@ -366,8 +406,10 @@ requested upstream as cqels/claude#1387; the Jetty version here is pinned to the
 container. It parses its own parameters and enforces `maxRequestBytes` itself, so the
 container's form limit does not matter. It checks **neither tokens, hosts nor origins**:
 install `AccessFilters.Hosts` (without a token), `AccessFilters.Origins` (always) and
-`AccessFilters.BearerToken` (when exposed) in front of it, as the launcher does, or your
-container's equivalents:
+`AccessFilters.BearerToken` (when exposed; `new BearerToken(readToken, updateToken)` for two) in
+front of it, as the launcher does, or your container's equivalents. To keep a request from
+updating, set the request attribute `AccessFilters.READ_ONLY` to `Boolean.TRUE` before it reaches
+the servlet, which is what `BearerToken` does for the read token:
 
 ```java
 EndpointOptions options = EndpointOptions.defaults().withMaxRows(10_000);

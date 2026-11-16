@@ -6,7 +6,7 @@
 # fleet (the same fleet:assignedDriver fact mcp-server/scripts/smoke.sh queries first), SELECT
 # as JSON, CONSTRUCT as Turtle, direct-POST query, an Update (must be 403: read-only by
 # default), a malformed query (400), an unmatchable Accept (406), the metadata graph (enabled
-# here: the engine reports itself running), and /health. Then stops it.
+# here: the engine reports itself running), /health, /ready and /metrics. Then stops it.
 #
 # Usage: scripts/smoke.sh   (builds target/cqels-sparql-endpoint.jar if missing)
 
@@ -45,9 +45,15 @@ check() { # desc, expected-status, actual-status, body, needle
     echo "FAIL: $desc (status $got, wanted $want${needle:+, needle '$needle'})"; fail=1
   fi
 }
-req() { # method, url, [curl args...] -> sets STATUS and BODY
-  local tmp; tmp=$(mktemp)
-  STATUS=$(curl -s -o "$tmp" -w '%{http_code}' "$@")
+# A transport failure must fail the check, not just leave a status behind: curl prints the
+# status it saw even when the transfer then broke, and a truncated body can already hold the
+# needle (found in the audit after #121; docker-smoke.sh already did this). So a non-zero curl
+# exit replaces the status with "curl-exit-N", which no check accepts, and --max-time keeps a
+# stalled endpoint from hanging the job.
+req() { # [curl args...] -> sets STATUS and BODY
+  local tmp rc; tmp=$(mktemp)
+  STATUS=$(curl -s -o "$tmp" -w '%{http_code}' --connect-timeout 10 --max-time 60 "$@"); rc=$?
+  [ $rc -eq 0 ] || STATUS="curl-exit-$rc"
   BODY=$(cat "$tmp"); rm -f "$tmp"
 }
 
@@ -66,5 +72,7 @@ req -G "$URL" --data-urlencode 'query=SELEKT';                                  
 req -G "$URL" -H 'Accept: application/vnd.nothing' --data-urlencode "query=$Q_SELECT"; check "unmatchable Accept"            406 "$STATUS" "$BODY"
 req -G "$URL" --data-urlencode "query=$Q_META";                                     check "metadata graph: engine running"    200 "$STATUS" "$BODY" '"boolean" : true'
 req "${URL%/sparql}/health";                                                        check "/health"                           200 "$STATUS" "$BODY" 'ok'
+req "${URL%/sparql}/ready";                                                         check "/ready"                            200 "$STATUS" "$BODY" 'ready'
+req "${URL%/sparql}/metrics";                                                       check "/metrics counts the requests"      200 "$STATUS" "$BODY" 'cqels_sparql_requests_total{code="200"}'
 
 [ $fail -eq 0 ] && echo "smoke: all checks passed" || { echo "smoke: FAILED"; exit 1; }

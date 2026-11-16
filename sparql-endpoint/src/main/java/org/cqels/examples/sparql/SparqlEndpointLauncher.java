@@ -41,7 +41,8 @@ import java.util.function.Supplier;
  *   CQELS_SPARQL_HOST                     127.0.0.1   bind address; see the refusal below
  *   CQELS_SPARQL_PORT                     8089        0 = ephemeral, printed on stdout
  *   CQELS_SPARQL_PATH                     /sparql
- *   CQELS_SPARQL_AUTH_TOKEN               (none)      bearer token
+ *   CQELS_SPARQL_AUTH_TOKEN               (none)      bearer token; read-only when an update token is set
+ *   CQELS_SPARQL_UPDATE_TOKEN             (none)      the only bearer token that may update
  *   CQELS_SPARQL_ALLOWED_HOSTS            (loopback)  comma-separated Host names, or *; checked when
  *                                                     no token is set (DNS rebinding)
  *   CQELS_SPARQL_ALLOWED_ORIGINS          (none)      comma-separated browser origins, or *; any
@@ -62,10 +63,13 @@ import java.util.function.Supplier;
  *   CQELS_SPARQL_MAX_THREADS              200         Jetty request threads; must exceed the query
  *                                                     slots plus the connector's threads plus spares
  *   CQELS_SPARQL_VIRTUAL_THREADS          false       JDK 21+ runtime only; ignored otherwise
+ *   CQELS_SPARQL_SHUTDOWN_SECONDS         5           on stop, requests in progress get this long to finish
+ *   CQELS_SPARQL_ACCESS_LOG               true        one stderr line per request; never the query text
  *   CQELS_SPARQL_ALLOW_UNAUTHENTICATED_REMOTE  false  see below
  * </pre>
  *
- * <p><strong>The one refusal.</strong> Binding a non-loopback host with no token is refused at
+ * <p><strong>The one refusal.</strong> Binding a non-loopback host with no read token
+ * ({@code CQELS_SPARQL_AUTH_TOKEN}; an update token alone leaves reads open) is refused at
  * start-up unless {@code CQELS_SPARQL_ALLOW_UNAUTHENTICATED_REMOTE=true} — by {@link #startServer}
  * itself, so a program embedding the endpoint through it gets the same refusal. The graph the engine
  * joins its streams against is not something to expose by accident; with update enabled it is
@@ -103,12 +107,19 @@ public final class SparqlEndpointLauncher {
                 .withUpdateEnabled(Boolean.parseBoolean(env("CQELS_SPARQL_UPDATE_ENABLED", "false")))
                 .withFederationEnabled(Boolean.parseBoolean(env("CQELS_SPARQL_FEDERATION_ENABLED", "false")))
                 .withMetadataEnabled(Boolean.parseBoolean(env("CQELS_SPARQL_METADATA_ENABLED", "false")))
-                .withAllowUnauthenticatedRemote(Boolean.parseBoolean(env("CQELS_SPARQL_ALLOW_UNAUTHENTICATED_REMOTE", "false")));
+                .withAllowUnauthenticatedRemote(Boolean.parseBoolean(env("CQELS_SPARQL_ALLOW_UNAUTHENTICATED_REMOTE", "false")))
+                .withUpdateToken(env("CQELS_SPARQL_UPDATE_TOKEN", null))
+                .withShutdownSeconds(Integer.parseInt(env("CQELS_SPARQL_SHUTDOWN_SECONDS",
+                        Integer.toString(EndpointOptions.DEFAULT_SHUTDOWN_SECONDS))))
+                .withAccessLog(Boolean.parseBoolean(env("CQELS_SPARQL_ACCESS_LOG", "true")));
         String storePath = env("CQELS_SPARQL_STORE_PATH", null);
         boolean seedFleet = Boolean.parseBoolean(env("CQELS_SPARQL_SEED_FLEET", "false"));
         int maxThreads = Integer.parseInt(env("CQELS_SPARQL_MAX_THREADS", "200"));
         boolean virtualThreads = Boolean.parseBoolean(env("CQELS_SPARQL_VIRTUAL_THREADS", "false"));
 
+        if (options.updateToken() != null && !options.updateEnabled()) {
+            log.warn("CQELS_SPARQL_UPDATE_TOKEN is set but CQELS_SPARQL_UPDATE_ENABLED is not: every update is refused");
+        }
         // Checked here too, not only in startServer, so the refusal exits 2 before an engine
         // (and a NativeStore lock) exists.
         try {
@@ -127,7 +138,8 @@ public final class SparqlEndpointLauncher {
         AtomicReference<Server> serverRef = new AtomicReference<>();
         // Registered before anything can fail, and every failure below exits through
         // System.exit, so the hook also runs when Jetty cannot bind: Jetty first (no new
-        // requests), then the engine, then the store it was reading.
+        // requests; those in progress get CQELS_SPARQL_SHUTDOWN_SECONDS to finish), then the
+        // engine, then the store it was reading.
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             Server s = serverRef.get();
             if (s != null) {
@@ -164,7 +176,8 @@ public final class SparqlEndpointLauncher {
         log.info("SPARQL endpoint ready: update {}, federation {}, metadata graph {}, token {}, execution limit {} s, {} query slots, max rows {}, upload limit {} s, store {}",
                 options.updateEnabled() ? "enabled" : "disabled", options.federationEnabled() ? "enabled" : "disabled",
                 options.metadataEnabled() ? "enabled" : "disabled",
-                options.authToken() == null ? "none" : "set",
+                options.authToken() == null ? (options.updateToken() == null ? "none" : "update only")
+                        : options.updateToken() == null ? "set" : "read and update",
                 options.maxExecutionSeconds(), options.maxConcurrentQueries(),
                 options.maxRows() == 0 ? "unlimited" : options.maxRows() + " / " + options.maxBufferedBytes() + " bytes",
                 options.maxUploadSeconds(), storePath == null ? "memory" : storePath);
@@ -182,7 +195,7 @@ public final class SparqlEndpointLauncher {
         AutoCloseable outbound = options.federationEnabled()
                 ? limitOutboundRequests(engine.getRepository(), options.maxExecutionSeconds()) : () -> { };
         Server server = startServer(engine::getRepository, options.metadataEnabled() ? EngineMetadata.of(engine) : null,
-                host, port, options, maxThreads, virtualThreads);
+                engine::isRunning, host, port, options, maxThreads, virtualThreads);
         // Let the SERVICE client's connections go when Jetty stops; it stays installed and
         // reopens if used again (a restart, or the engine's own SERVICE).
         server.addEventListener(new org.eclipse.jetty.util.component.LifeCycle.Listener() {
@@ -283,6 +296,13 @@ public final class SparqlEndpointLauncher {
     static Server startServer(Supplier<Repository> repository, Supplier<? extends Collection<Statement>> metadata,
                               String host, int port, EndpointOptions options,
                               int maxThreads, boolean virtualThreads) throws Exception {
+        return startServer(repository, metadata, () -> true, host, port, options, maxThreads, virtualThreads);
+    }
+
+    /** @param running whether the engine runs, for {@code /health}, {@code /ready} and {@code /metrics} */
+    static Server startServer(Supplier<Repository> repository, Supplier<? extends Collection<Statement>> metadata,
+                              java.util.function.BooleanSupplier running, String host, int port, EndpointOptions options,
+                              int maxThreads, boolean virtualThreads) throws Exception {
         requireTokenForRemoteBind(host, options.authToken(), options.allowUnauthenticatedRemote());
         QueuedThreadPool pool = new QueuedThreadPool(Math.max(maxThreads, 8));
         pool.setName("sparql-endpoint");
@@ -307,6 +327,9 @@ public final class SparqlEndpointLauncher {
 
         ServletContextHandler context = new ServletContextHandler();
         context.setContextPath("/");
+        // Counted before any other filter, so a request one of them refuses is counted too.
+        EndpointMetrics metrics = new EndpointMetrics();
+        context.addFilter(new FilterHolder(metrics.filter()), options.path(), EnumSet.of(DispatcherType.REQUEST));
         // Host check first: a rebound page is same-origin to the browser, so only Host betrays it.
         List<String> hosts = allowedHosts(host, options);
         if (!hosts.isEmpty()) {
@@ -317,14 +340,31 @@ public final class SparqlEndpointLauncher {
         // form POST, which a browser sends without a preflight (see AccessFilters.Origins).
         context.addFilter(new FilterHolder(new AccessFilters.Origins(options.allowedOrigins())),
                 options.path(), EnumSet.of(DispatcherType.REQUEST));
-        if (options.authToken() != null) {
-            context.addFilter(new FilterHolder(new AccessFilters.BearerToken(options.authToken())),
+        if (options.anyToken()) {
+            context.addFilter(new FilterHolder(new AccessFilters.BearerToken(options.authToken(), options.updateToken())),
                     options.path(), EnumSet.of(DispatcherType.REQUEST));
         }
-        context.addServlet(new ServletHolder(new SparqlProtocolServlet(repository, options, metadata)), options.path());
-        context.addServlet(new ServletHolder(new TextServlet("ok")), "/health");
-        context.addServlet(new ServletHolder(new TextServlet("ready")), "/ready");
-        server.setHandler(context);
+        SparqlProtocolServlet sparql = new SparqlProtocolServlet(repository, options, metadata);
+        context.addServlet(new ServletHolder(sparql), options.path());
+        context.addServlet(new ServletHolder(new ProbeServlet(() -> running.getAsBoolean() ? null
+                : "the engine is not running")), "/health");
+        context.addServlet(new ServletHolder(new ProbeServlet(() -> notReady(running, repository, sparql))), "/ready");
+        context.addServlet(new ServletHolder(new MetricsServlet(metrics, sparql, running)), "/metrics");
+        // Requests in progress when Jetty stops get options.shutdownSeconds() to finish, and new
+        // ones are refused meanwhile (503, then connection refused). Before the audit after #121
+        // nothing tracked them, so a stop cut every one off at once.
+        org.eclipse.jetty.server.handler.GracefulHandler graceful = new org.eclipse.jetty.server.handler.GracefulHandler();
+        graceful.setHandler(context);
+        server.setHandler(graceful);
+        server.setStopTimeout(options.shutdownSeconds() * 1000L);
+        if (options.accessLog()) {
+            // %U is the path without the query string: a query can carry data that is not the
+            // log's to keep, and the token never appears in any field logged here.
+            org.eclipse.jetty.server.Slf4jRequestLogWriter writer = new org.eclipse.jetty.server.Slf4jRequestLogWriter();
+            writer.setLoggerName(ACCESS_LOGGER);
+            server.setRequestLog(new org.eclipse.jetty.server.CustomRequestLog(writer,
+                    "%{client}a - %u %t \"%m %U %H\" %s %O %{ms}T"));
+        }
         server.start();
 
         // The slots only bound anything if a request reaches them. With fewer request threads
@@ -424,18 +464,76 @@ public final class SparqlEndpointLauncher {
         return s.isBlank() ? List.of() : Arrays.stream(s.split(",")).map(String::strip).filter(x -> !x.isEmpty()).toList();
     }
 
-    /** {@code /health} and {@code /ready}: both answer once Jetty is up, which is after the engine started. */
-    static final class TextServlet extends HttpServlet {
-        private final String body;
+    /** The SLF4J logger the access log writes to. */
+    public static final String ACCESS_LOGGER = "org.cqels.examples.sparql.access";
 
-        TextServlet(String body) {
-            this.body = body;
+    /**
+     * Why the endpoint should not be sent queries now, or {@code null} when it may: the engine
+     * stopped, the repository shut down, or every query slot taken (a request would only be told
+     * 503). Before the audit after #121 {@code /ready} said "ready" through all three.
+     */
+    static String notReady(java.util.function.BooleanSupplier running, Supplier<Repository> repository,
+                           SparqlProtocolServlet sparql) {
+        if (!running.getAsBoolean()) {
+            return "the engine is not running";
+        }
+        try {
+            Repository repo = repository.get();
+            if (repo == null || !repo.isInitialized()) {
+                return "the repository is not initialized";
+            }
+        } catch (RuntimeException e) {
+            return "the repository is unavailable: " + e.getMessage();
+        }
+        if (sparql.availableSlots() == 0) {
+            return "every query slot (" + sparql.slotLimit() + ") is taken";
+        }
+        return null;
+    }
+
+    /**
+     * {@code /health} (liveness: the engine runs) and {@code /ready} (readiness: see
+     * {@link #notReady}): {@code 200} with {@code ok} / {@code ready}, or {@code 503} with the
+     * reason. Neither needs a query slot, so both answer while every slot is held.
+     */
+    static final class ProbeServlet extends HttpServlet {
+        private final Supplier<String> problem;
+
+        ProbeServlet(Supplier<String> problem) {
+            this.problem = problem;
         }
 
         @Override
         protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+            String why = problem.get();
             resp.setContentType("text/plain; charset=UTF-8");
-            resp.getWriter().write(body + "\n");
+            resp.setHeader("Cache-Control", "no-store");
+            if (why != null) {
+                resp.setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
+                resp.getWriter().write(why + "\n");
+                return;
+            }
+            resp.getWriter().write((req.getServletPath().equals("/ready") ? "ready" : "ok") + "\n");
+        }
+    }
+
+    /** {@code /metrics}: {@link EndpointMetrics} in the Prometheus text format. */
+    static final class MetricsServlet extends HttpServlet {
+        private final transient EndpointMetrics metrics;
+        private final transient SparqlProtocolServlet sparql;
+        private final transient java.util.function.BooleanSupplier running;
+
+        MetricsServlet(EndpointMetrics metrics, SparqlProtocolServlet sparql, java.util.function.BooleanSupplier running) {
+            this.metrics = metrics;
+            this.sparql = sparql;
+            this.running = running;
+        }
+
+        @Override
+        protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+            resp.setContentType("text/plain; version=0.0.4; charset=UTF-8");
+            resp.setHeader("Cache-Control", "no-store");
+            resp.getWriter().write(metrics.render(sparql, running.getAsBoolean()));
         }
     }
 }
