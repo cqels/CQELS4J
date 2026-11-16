@@ -1759,11 +1759,16 @@ class SparqlProtocolServletTest {
 
     /** Opens a raw connection and sends a POST's headers and the first part of its body. */
     static java.net.Socket startUpload(String url, int contentLength, String firstPart) throws IOException {
+        return startUpload(url, contentLength, firstPart, "");
+    }
+
+    /** @param headers further header lines, each ending in CRLF */
+    static java.net.Socket startUpload(String url, int contentLength, String firstPart, String headers) throws IOException {
         URI u = URI.create(url);
         java.net.Socket s = new java.net.Socket("127.0.0.1", u.getPort());
         var out = s.getOutputStream();
         out.write(("POST " + u.getPath() + " HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/sparql-query\r\n"
-                + "Content-Length: " + contentLength + "\r\nConnection: close\r\n\r\n" + firstPart)
+                + headers + "Content-Length: " + contentLength + "\r\nConnection: close\r\n\r\n" + firstPart)
                 .getBytes(StandardCharsets.US_ASCII));
         out.flush();
         return s;
@@ -1788,6 +1793,22 @@ class SparqlProtocolServletTest {
         return head.toString().lines().findFirst().orElseThrow();
     }
 
+    /**
+     * Stops a server whose drain will run out. Jetty may then throw a TimeoutException and leave
+     * the server FAILED (it does when the request is stuck past its body), having stopped its
+     * connectors and handlers all the same.
+     */
+    static void stopPastTheDrain(Server server) throws Exception {
+        try {
+            server.stop();
+        } catch (java.util.concurrent.TimeoutException ranOut) {
+            // the drain ran out; the stop went on
+        }
+        assertTrue(server.getConnectors()[0].isStopped(), "the connector still runs");
+        assertTrue(server.getDescendant(org.eclipse.jetty.ee10.servlet.ServletContextHandler.class).isStopped(),
+                "the context still runs");
+    }
+
     static void awaitSlotsInUse(SparqlProtocolServlet servlet, int n) throws InterruptedException {
         for (int i = 0; i < 100 && servlet.slotsInUse() != n; i++) {
             Thread.sleep(50);
@@ -1806,6 +1827,9 @@ class SparqlProtocolServletTest {
                 + "&query=SELEKT")).build(), HttpResponse.BodyHandlers.ofString());
         assertEquals(400, twice.statusCode(), twice.body());
         assertTrue(twice.body().contains("'query' is given 2 times"), twice.body());
+        var updateTwice = HTTP.send(HttpRequest.newBuilder(URI.create(shared.url() + "?update=" + enc("CLEAR ALL")
+                + "&update=" + enc("DROP ALL"))).build(), HttpResponse.BodyHandlers.ofString());
+        assertEquals(400, updateTwice.statusCode(), "repeated, even where a single one would be a 405: " + updateTwice.body());
         var split = post(shared.url() + "?query=" + enc("ASK {}"), "application/x-www-form-urlencoded",
                 "query=" + enc("ASK { ?s ?p ?o }"), null);
         assertEquals(400, split.statusCode(), split.body());
@@ -1842,9 +1866,11 @@ class SparqlProtocolServletTest {
             // percent-escapes in a form body and in the query string are held to the same rule
             var form = post(rw.url(), "application/x-www-form-urlencoded", "query=SELECT+%28%22caf%E9%22+AS+%3Fx%29+WHERE+%7B%7D", null);
             assertEquals(400, form.statusCode(), form.body());
-            var url = HTTP.send(HttpRequest.newBuilder(URI.create(rw.url() + "?query=ASK%7B%7D%FF")).build(),
-                    HttpResponse.BodyHandlers.ofString());
+            // inside a literal of a valid query, so a lenient decode (U+FFFD) would answer 200
+            var url = HTTP.send(HttpRequest.newBuilder(URI.create(rw.url()
+                    + "?query=SELECT+%28%22caf%FF%22+AS+%3Fx%29+WHERE+%7B%7D")).build(), HttpResponse.BodyHandlers.ofString());
             assertEquals(400, url.statusCode(), url.body());
+            assertTrue(url.body().contains("not valid UTF-8"), url.body());
         }
     }
 
@@ -1861,6 +1887,13 @@ class SparqlProtocolServletTest {
                     .header("Origin", "https://yasgui.example").build(), HttpResponse.BodyHandlers.ofString());
             String vary = String.join(", ", r.headers().allValues("Vary"));
             assertTrue(vary.contains("Origin") && vary.contains("Accept"), vary);
+            assertEquals(1, vary.split("Accept", -1).length - 1, "named once: " + vary);
+        }
+        // the access filters' own refusals vary too: they come before the servlet
+        try (Endpoint locked = Endpoint.start(EndpointOptions.defaults().withAuthToken("t"), 0)) {
+            var r = get(locked.url(), "ASK {}", null);
+            assertEquals(401, r.statusCode());
+            assertTrue(r.headers().allValues("Vary").stream().anyMatch(v -> v.contains("Accept")), r.headers().map().toString());
         }
     }
 
@@ -1927,6 +1960,8 @@ class SparqlProtocolServletTest {
         }
         assertThrows(IllegalArgumentException.class,
                 () -> EndpointOptions.defaults().withAuthToken("same").withUpdateToken("same"));
+        // the filter itself, as an embedding builds it, holds to the same rule
+        assertThrows(IllegalArgumentException.class, () -> new AccessFilters.BearerToken("same", "same"));
     }
 
     @Test
@@ -1982,6 +2017,14 @@ class SparqlProtocolServletTest {
             assertTrue(body.contains("cqels_sparql_slots_in_use 0"), body);
             assertTrue(body.contains("cqels_sparql_engine_running 1"), body);
             assertFalse(body.contains("t0ken") || body.contains("ASK"), body);
+            assertTrue(body.contains("cqels_sparql_aborted_total 0"), body);
+            // a client that gives up mid-upload broke nothing that had been sent: not an abort
+            SparqlProtocolServlet servlet = servletOf(ep.server());
+            try (java.net.Socket gone = startUpload(ep.url(), 100, "AS", "Authorization: Bearer t0ken\r\n")) {
+                awaitSlotsInUse(servlet, 1);
+            }
+            awaitSlotsInUse(servlet, 0);
+            assertTrue(getWithin(metricsUrl, java.time.Duration.ofSeconds(2)).body().contains("cqels_sparql_aborted_total 0"));
         }
     }
 
@@ -2050,7 +2093,7 @@ class SparqlProtocolServletTest {
             SparqlProtocolServlet servlet = servletOf(server);
             awaitSlotsInUse(servlet, 1);
             long t0 = System.nanoTime();
-            server.stop();
+            stopPastTheDrain(server);
             double took = (System.nanoTime() - t0) / 1e9;
             assertTrue(took >= 0.9 && took < 6, "stop took " + took + " s for a 1 s drain");
             upload.setSoTimeout(5_000);
@@ -2058,6 +2101,38 @@ class SparqlProtocolServletTest {
             assertFalse(new String(rest, StandardCharsets.UTF_8).startsWith("HTTP/1.1 200"));
             awaitSlotsInUse(servlet, 0);
         } finally {
+            server.stop();
+            engine.close();
+        }
+    }
+
+    /**
+     * An update still held up when the drain ends is cut off from its client; it used to commit
+     * anyway once it got going again. It is now rolled back.
+     */
+    @Test
+    void anUpdateCutOffByTheStopIsRolledBack() throws Exception {
+        CQELSEngine engine = CQELSEngine.builder().id("t-" + System.nanoTime()).withMemoryStore().build();
+        engine.start();
+        SlotHolder holder = new SlotHolder(engine, 1);
+        Server server = SparqlEndpointLauncher.startServer(holder, null, "127.0.0.1", 0,
+                EndpointOptions.defaults().withUpdateEnabled(true).withShutdownSeconds(1), 64, false);
+        try {
+            SparqlProtocolServlet servlet = servletOf(server);
+            var update = HTTP.sendAsync(HttpRequest.newBuilder(URI.create(base(server) + "/sparql"))
+                    .header("Content-Type", "application/sparql-update")
+                    .POST(HttpRequest.BodyPublishers.ofString("INSERT DATA { <urn:ex:late> <urn:ex:p> <urn:ex:o> }")).build(),
+                    HttpResponse.BodyHandlers.ofString());
+            assertTrue(holder.entered.await(10, java.util.concurrent.TimeUnit.SECONDS));
+            stopPastTheDrain(server);
+            holder.release.countDown();
+            awaitSlotsInUse(servlet, 0);
+            try (RepositoryConnection c = engine.getRepository().getConnection()) {
+                assertFalse(c.hasStatement(iri("late"), null, null, false), "the cut-off update committed");
+            }
+            assertThrows(Exception.class, () -> update.get(5, java.util.concurrent.TimeUnit.SECONDS));
+        } finally {
+            holder.release.countDown();
             server.stop();
             engine.close();
         }

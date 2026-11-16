@@ -79,8 +79,10 @@ import java.util.List;
  * @param shutdownSeconds      how long {@code SparqlEndpointLauncher.startServer}'s Jetty lets
  *                             requests in progress finish when it is stopped, while refusing new
  *                             ones; {@code 0} = not at all. A request still running after that is
- *                             cut off (an update in it rolls back). Before the audit after #121
- *                             every request in progress was cut off at once
+ *                             cut off; an update in it that has not committed by the time the
+ *                             servlet is destroyed is rolled back (see the README's
+ *                             <em>Operations</em> for the one window left). Before the audit after
+ *                             #121 every request in progress was cut off at once
  * @param accessLog            whether {@code startServer} logs one line per request through SLF4J,
  *                             logger {@code org.cqels.examples.sparql.access}: client address,
  *                             method, path <em>without</em> the query string, status, bytes and

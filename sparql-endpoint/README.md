@@ -119,7 +119,7 @@ All settings are environment variables, named like the MCP server's `CQELS_MCP_H
 | `CQELS_SPARQL_SEED_FLEET` | `false` | Seed the fleet world. |
 | `CQELS_SPARQL_MAX_THREADS` | `200` | Jetty request threads. Must cover the query slots, the connector's own threads and 4 spares, or start-up is refused: with fewer, requests would queue for a thread before reaching a slot, and neither the immediate `503` nor `/health` would hold. Ignored on virtual threads. |
 | `CQELS_SPARQL_VIRTUAL_THREADS` | `false` | Run requests on virtual threads (JDK 21+ runtime; ignored with a warning otherwise). |
-| `CQELS_SPARQL_SHUTDOWN_SECONDS` | `5` | On stop, requests in progress get this long to finish while new ones are refused; then the rest are cut off (an update among them rolls back). `0` = cut off at once. See *Operations*. |
+| `CQELS_SPARQL_SHUTDOWN_SECONDS` | `5` | On stop, requests in progress get this long to finish while new ones are refused; then the rest are cut off, and an update among them that has not committed by the time the endpoint has stopped is rolled back. `0` = cut off at once. See *Operations*. |
 | `CQELS_SPARQL_ACCESS_LOG` | `true` | One stderr line per request: client, method, path **without the query string**, status, bytes, milliseconds. |
 | `CQELS_SPARQL_ALLOW_UNAUTHENTICATED_REMOTE` | `false` | Override the start-up refusal. |
 
@@ -136,7 +136,7 @@ All settings are environment variables, named like the MCP server's `CQELS_MCP_H
 | `using-graph-uri`, `using-named-graph-uri` | update dataset; together with `USING`, `USING NAMED` or `WITH` in the update → `400` (§2.2.3) |
 | relative IRIs | resolved against the request URL, the service-defined base of §2.3 |
 | bytes | decoded strictly in the declared charset (UTF-8 when none), the query string and percent-escapes included: anything that is not valid in it → `400`, never a silent U+FFFD |
-| `Accept` | negotiated through RDF4J's writer registries per RFC 9110: `q` values honoured, `q=0` excludes, the most specific range wins, repeated `Accept` fields form one list, parameters count (`text/csv;charset=UTF-8` is more specific than `text/csv`; `charset=ISO-8859-1` matches nothing, since the writers emit UTF-8), quoted parameter values may hold `,` and `;`, and the response is labelled with the media type that matched (`application/json` if that is what was asked for) and carries `Vary: Accept`, errors included, so a cache keeps formats apart. Defaults: SPARQL JSON for SELECT/ASK, Turtle for CONSTRUCT/DESCRIBE. Also XML, CSV, TSV, binary for results; N-Triples, N-Quads, TriG, RDF/XML, JSON-LD, NDJSON-LD for graphs. JSON-LD and NDJSON-LD are held before they are written, so they are bounded by `CQELS_SPARQL_MAX_BUFFERED_BYTES`; the others stream, Turtle and TriG without pretty-printing (statements are grouped only when consecutive), since RDF4J's pretty-printer buffers. |
+| `Accept` | negotiated through RDF4J's writer registries per RFC 9110: `q` values honoured, `q=0` excludes, the most specific range wins, repeated `Accept` fields form one list, parameters count (`text/csv;charset=UTF-8` is more specific than `text/csv`; `charset=ISO-8859-1` matches nothing, since the writers emit UTF-8), quoted parameter values may hold `,` and `;`, and the response is labelled with the media type that matched (`application/json` if that is what was asked for) and carries `Vary: Accept` — errors included, the token, host and origin refusals too — so a cache keeps formats apart (the `503` Jetty itself sends while stopping does not carry it). Defaults: SPARQL JSON for SELECT/ASK, Turtle for CONSTRUCT/DESCRIBE. Also XML, CSV, TSV, binary for results; N-Triples, N-Quads, TriG, RDF/XML, JSON-LD, NDJSON-LD for graphs. JSON-LD and NDJSON-LD are held before they are written, so they are bounded by `CQELS_SPARQL_MAX_BUFFERED_BYTES`; the others stream, Turtle and TriG without pretty-printing (statements are grouped only when consecutive), since RDF4J's pretty-printer buffers. |
 | `GET /health`, `GET /ready`, `GET /metrics` | probes and counters, never behind the token; see *Operations* |
 | other methods | `405` with `Allow: GET, HEAD, POST, OPTIONS`; `TRACE` included |
 
@@ -186,7 +186,7 @@ why the fleet seed, written to the MCP server's long-term memory graph, answers 
 |---|---|
 | `/health` | Liveness: `200 ok` while the engine runs, `503` with the reason once it has stopped. Busy is not dead, so a full set of query slots leaves it `200`. |
 | `/ready` | Readiness: `200 ready`, or `503` with the reason when the engine is not running, the repository is not initialized, or every query slot is taken (a query would only be told `503`). |
-| `/metrics` | Prometheus text: `cqels_sparql_requests_total{code="…"}` per status (requests the host, origin and token checks refuse included), `cqels_sparql_aborted_total` (responses cut off after they started), `cqels_sparql_busy_total`, `cqels_sparql_slots_in_use`, `cqels_sparql_slots_limit`, `cqels_sparql_engine_running`. |
+| `/metrics` | Prometheus text: `cqels_sparql_requests_total{code="…"}` per status Jetty sent on the SPARQL path, whatever answered (the host, origin and token refusals, Jetty's own errors and the `503`s of a stop included), `cqels_sparql_aborted_total` (responses cut off after they started; each is also counted under the status it started with), `cqels_sparql_busy_total`, `cqels_sparql_slots_in_use`, `cqels_sparql_slots_limit`, `cqels_sparql_engine_running`. |
 
 None of the three needs a query slot or the token; they carry counts and states only, no query
 text, client address or token. Before the audit after #121, `/health` and `/ready` said `ok`
@@ -200,7 +200,12 @@ and `ready` after the engine had stopped and with every slot stuck, and nothing 
   request already on an open connection, and gives the requests in progress
   `CQELS_SPARQL_SHUTDOWN_SECONDS` (5) to finish; then it cuts off the rest, and the engine and the
   store close. The default leaves room inside Docker's 10 s before it kills the process. A query
-  the execution limit cannot stop (see below) is among the ones cut off.
+  the execution limit cannot stop (see below) is among the ones cut off. Cutting a request off
+  closes its connection but cannot stop its thread, so an update still running then would commit
+  later for a client already told it failed; the endpoint refuses that commit once it has stopped
+  and rolls the update back. The one window left is an update that commits in the instant between
+  its connection closing and the endpoint finishing its stop: it takes effect, and its client
+  cannot tell.
 - **Not served:** a SPARQL 1.1 Service Description (`GET /sparql` with no query is a `400`) and
   the SPARQL 1.1 Graph Store Protocol (`PUT`, `DELETE`, … are `405`). Both are features of their
   own; SPARQL Update covers what the Graph Store Protocol would.
