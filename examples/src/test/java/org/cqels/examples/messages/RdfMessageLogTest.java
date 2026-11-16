@@ -342,4 +342,59 @@ class RdfMessageLogTest {
         assertEquals(iri("http://e/x..MESSAGE"), back.get(0).get(0).getSubject());
         assertEquals(iri("http://e/x...MESSAGE"), back.get(1).get(0).getSubject());
     }
+
+    // ------------------------------------------------------ co-review round 2: dots after tokens
+
+    @Test
+    void aTerminatingDotRightAfterATokenIsStillATerminator() throws Exception {
+        String prologue = "PREFIX ex: <http://e/>\nPREFIX : <http://e/empty#>\n";
+        for (String object : List.of("true", "\"x\"@en", ":", "ex:", "\"x\"^^ex:", "1.e2", "-1.e-2", "\"x\"@en--ltr")) {
+            for (String delimiter : List.of("@message .", "MESSAGE")) {
+                String first = "ex:s ex:p " + object + ".";
+                String log = V + prologue + first + delimiter + "\nex:s ex:p 2 .\n";
+                List<List<Statement>> messages = ttl(log);
+                assertEquals(List.of(1, 1), sizes(messages), log);
+                sameAsRio(prologue, first + "\n", messages.get(0));
+            }
+        }
+    }
+
+    @Test
+    void aPrefixRightAfterATokenIsCarriedForward() {
+        for (String object : List.of("\"x\"@en", "ex:", "1.e2", "true")) {
+            String log = V + "PREFIX ex: <http://e/>\nex:s ex:p " + object + ".PREFIX ex: <http://changed/>\n"
+                    + "MESSAGE\nex:t ex:p 2 .\n";
+            List<List<Statement>> messages = ttl(log);
+            assertEquals(iri("http://changed/t"), messages.get(1).get(0).getSubject(), object);
+        }
+    }
+
+    @Test
+    void nonAsciiPrefixesAndNamesAreNames() throws Exception {
+        for (String prefix : List.of("١", "१", "１", "١a", "١e2")) {
+            String prologue = "PREFIX " + prefix + ": <http://unicode/>\n";
+            String fragment = prefix + ":s " + prefix + ":p 1 .\n";
+            List<List<Statement>> messages = ttl(V + prologue + fragment + "MESSAGE\n" + fragment);
+            assertEquals(List.of(1, 1), sizes(messages), prefix);
+            sameAsRio(prologue, fragment, messages.get(1));
+        }
+    }
+
+    @Test
+    void malformedVersionLabelsAreRejected() {
+        String a = "<http://e/s> <http://e/p> 1 .\nMESSAGE\n<http://e/s> <http://e/p> 2 .\n";
+        for (String label : List.of("\"1.2\\-messages\"", "\"1.2\\u+02Dmessages\"", "\"1.2\\U+000002Dmessages\"",
+                "\"1.2\\uD800-messages\"", "\"\"\"1.2-messages\"\"\"")) {
+            assertThrows(IllegalArgumentException.class, () -> ttl("VERSION " + label + "\n" + a), label);
+        }
+        assertEquals(List.of(1, 1), sizes(ttl("VERSION '1.2-messages'\n" + a)));
+    }
+
+    @Test
+    void rdfStarQuotedTriplesPassThrough() throws Exception {
+        String prologue = "PREFIX ex: <http://e/>\n";
+        String fragment = "<< ex:a ex:b \"x>y\" >> ex:p << ex:c ex:d ex:e >> .\n";
+        List<List<Statement>> messages = ttl(V + prologue + fragment + "MESSAGE\n" + fragment);
+        assertEquals(List.of(1, 1), sizes(messages));
+    }
 }

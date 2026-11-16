@@ -75,14 +75,18 @@ log cannot simply be handed to RDF4J.
   comment-only line; and when the last message is empty the writer adds one more delimiter so it
   survives re-reading. The probe below says when each can go.
 - **Turtle and TriG** are tokenised here and each message is parsed by RDF4J's ordinary parser:
-  - strings (including long strings spanning lines), IRIs, numbers and names are read as whole
-    tokens, so `MESSAGE` inside any of them is not a delimiter: `ex:MESSAGE`, `ex:x..MESSAGE`,
-    `MESSAGE.foo:s`, escaped names such as `ex:x\.MESSAGE`; `1.MESSAGE`, on the other hand, is the
-    integer 1, a terminator and a delimiter, as Turtle's grammar reads it;
+  - strings (including long strings spanning lines), IRIs, numbers, language tags and names are
+    read by Turtle's own token rules, so `MESSAGE` inside any of them is not a delimiter
+    (`ex:MESSAGE`, `ex:x..MESSAGE`, `MESSAGE.foo:s`, escaped names such as `ex:x\.MESSAGE`), and a
+    dot right after a token still ends the statement (`1.MESSAGE`, `1.e2.MESSAGE`, `true.MESSAGE`,
+    `"x"@en.@message .`, `ex:.MESSAGE` all cut, and a `PREFIX` glued to such a dot is carried);
+  - name characters include non-ASCII ones, and only ASCII digits start a number, so a prefix
+    such as `١:` is a prefix;
   - a delimiter counts only where a statement may start, not inside `[ ]`, `( )` or a graph block;
   - comments may stand wherever whitespace may, including inside directives;
-  - `VERSION` / `@version` is removed before parsing; its label is decoded (`"1.2\u002Dmessages"`
-    is `1.2-messages`) and applies from where it stands;
+  - `VERSION` / `@version` is removed before parsing; its label must be a short quoted string
+    with valid escapes (Turtle's VersionSpecifier), is decoded (a hyphen written as `\u002D` is a
+    hyphen) and applies from where it stands;
   - `PREFIX` / `BASE` (and the `@` forms) are carried into later messages, with a redefinition
     applying from that point on;
   - each message is parsed separately, so blank nodes are scoped to it;
@@ -94,14 +98,17 @@ log cannot simply be handed to RDF4J.
   named graphs, so a statement with a graph name is refused (use the N-Quads writer, which keeps it).
 
 Tested by [`RdfMessageLogTest`](examples/src/test/java/org/cqels/examples/messages/RdfMessageLogTest.java)
-(24 tests: the draft's §2.1.2 and §2.1.3 examples in N-Triples, Turtle and TriG, the old-style
-directives, blank-node scoping, names and numbers that contain `MESSAGE` or dots checked against
-RDF4J's own parse, comments inside directives, version labels in order, unterminated tokens, TriG
-graph blocks, the N-Triples comment forms, and writer round-trips with empty messages first, last
-and in between).
+(29 tests: the draft's §2.1.2 and §2.1.3 examples in N-Triples, Turtle and TriG, the old-style
+directives, blank-node scoping, names, numbers and tags next to `MESSAGE` or dots checked against
+RDF4J's own parse, prefix carry after such tokens, non-ASCII prefixes, comments inside directives,
+version labels in order and malformed ones, unterminated tokens, TriG graph blocks, RDF-star
+quoted triples, the N-Triples comment forms, and writer round-trips with empty messages first,
+last and in between).
 
-Not handled: RDF 1.2 triple terms, because RDF4J 4.3.8 does not parse them (a `1.2-messages`
-label is accepted, triple terms are not); NDJSON-LD, YAML-LD and the RDF/XML wrapper.
+Not handled: RDF 1.2 triple terms (`<<( s p o )>>`), because RDF4J 4.3.8 does not parse them (a
+`1.2-messages` label is accepted, triple terms are not); RDF-star quoted triples (`<< s p o >>`)
+pass through, since RDF4J 4.3.8 reads those. NDJSON-LD, YAML-LD and the RDF/XML wrapper are not
+handled.
 
 ## 5. The worked example
 

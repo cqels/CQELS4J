@@ -31,7 +31,7 @@ import java.util.List;
  * RDF-Messages document with {@link RdfMessageCodec#writeNQuads}, prints it, then parses it back with
  * {@link RdfMessageCodec#parseNQuads} — a full round-trip — before ingesting.
  *
- * <p>For Turtle and TriG message logs, which the codec does not read, and for the codec's two known
+ * <p>For Turtle and TriG message logs, which the codec does not read, and for the codec's known
  * gaps (<a href="https://github.com/cqels/CQELS4J/issues/126">#126</a>), see
  * {@code org.cqels.examples.messages.MessageLogReplay} and {@code RDF_MESSAGES_MAPPING.md}.
  *

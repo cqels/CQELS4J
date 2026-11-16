@@ -61,12 +61,14 @@ import org.eclipse.rdf4j.rio.Rio;
  *   <li>Strict about the version label: a delimiter is accepted only while the version label most
  *       recently announced ends in {@code -messages}; a delimiter with no such label in force is
  *       rejected. (The engine's N-Quads codec accepts one; see #126.) A label is decoded, so
- *       {@code "1.2-messages"} is {@code 1.2-messages}.</li>
+ *       a hyphen written as the escape backslash-u002D counts as a hyphen; it must be a short
+ *       quoted string with valid escapes (Turtle's VersionSpecifier).</li>
  *   <li>{@code MESSAGE}, {@code VERSION}, {@code PREFIX} and {@code BASE} are matched
  *       case-insensitively, as Turtle matches its SPARQL-style directives; the {@code @} forms are
  *       lower-case only.</li>
- *   <li>Not handled: RDF 1.2 triple terms and quoted triples ({@code <<…>>}), which RDF4J 4.3.8's
- *       Turtle and TriG parsers do not read either.</li>
+ *   <li>RDF-star quoted triples ({@code << s p o >>}) pass through to RDF4J 4.3.8, which reads
+ *       them; RDF 1.2 triple terms ({@code <<( s p o )>>}) do not parse, because RDF4J 4.3.8 does
+ *       not read them.</li>
  * </ul>
  */
 public final class RdfMessageLog {
@@ -206,12 +208,9 @@ public final class RdfMessageLog {
      * starts.
      */
     private static final class Splitter {
-        /** Characters that end a name token (besides whitespace). */
-        private static final String DELIMITERS = "<>\"'{}[](),;#";
-
         private final String s;
         private int i;
-        private int depth;                 // nesting of {}, [] and ()
+        private int depth;                 // nesting of {}, [], () and << >>
         private boolean statementStart = true;
         private String versionLabel;       // most recent VERSION label, decoded
         private final StringBuilder header = new StringBuilder();
@@ -230,7 +229,17 @@ public final class RdfMessageLog {
                     break;
                 }
                 char c = s.charAt(i);
-                if (c == '<') {
+                if (c == '<' && i + 1 < s.length() && s.charAt(i + 1) == '<') {
+                    depth++;                       // an RDF-star quoted triple, << s p o >>
+                    body.append("<<");
+                    i += 2;
+                    statementStart = false;
+                } else if (c == '>' && i + 1 < s.length() && s.charAt(i + 1) == '>') {
+                    depth = Math.max(0, depth - 1);
+                    body.append(">>");
+                    i += 2;
+                    statementStart = false;
+                } else if (c == '<') {
                     body.append(readIri());
                     statementStart = false;
                 } else if (c == '"' || c == '\'') {
@@ -251,7 +260,7 @@ public final class RdfMessageLog {
                     body.append(c);
                     i++;
                     statementStart = false;
-                } else if (c == '.' && !(i + 1 < s.length() && Character.isDigit(s.charAt(i + 1)))) {
+                } else if (c == '.' && !digitAt(i + 1)) {
                     body.append(c);                // a statement terminator
                     i++;
                     statementStart = true;
@@ -289,86 +298,191 @@ public final class RdfMessageLog {
         }
 
         /**
-         * A name-like token: a prefixed name, a keyword, a number, a blank-node label, a language
-         * tag or a datatype marker. It runs to whitespace or a delimiter character; a backslash
-         * escapes the next character (escaped local names such as {@code ex:a\.b}); trailing dots
-         * are not part of it, because a name cannot end in '.', so they are left to end the
-         * statement.
+         * A token that is not a string, IRI or punctuation, read by the Turtle grammar's own rules
+         * so that a following '.' or delimiter is never swallowed:
+         * <ul>
+         *   <li>a language tag or {@code @}-directive: {@code @[a-zA-Z]+(-[a-zA-Z0-9]+)*}, with an
+         *       optional RDF 1.2 direction {@code --ltr} / {@code --rtl};</li>
+         *   <li>the datatype marker {@code ^^};</li>
+         *   <li>a number ({@link #readNumber});</li>
+         *   <li>otherwise a name: a prefixed name, a blank-node label or a keyword
+         *       ({@link #readName}).</li>
+         * </ul>
          */
         private String readWord() {
+            char c = s.charAt(i);
+            if (c == '@') {
+                return readAtWord();
+            }
+            if (c == '^' && i + 1 < s.length() && s.charAt(i + 1) == '^') {
+                i += 2;
+                return "^^";
+            }
             if (startsNumber()) {
                 return readNumber();
             }
-            int start = i;
-            while (i < s.length()) {
-                char c = s.charAt(i);
-                if (c == '\\') {
-                    i = Math.min(s.length(), i + 2);
-                } else if (Character.isWhitespace(c) || DELIMITERS.indexOf(c) >= 0) {
-                    break;
-                } else {
+            return readName();
+        }
+
+        private String readAtWord() {
+            int start = i++;
+            while (i < s.length() && isAsciiLetter(s.charAt(i))) {
+                i++;
+            }
+            while (i + 1 < s.length() && s.charAt(i) == '-' && isAsciiLetterOrDigit(s.charAt(i + 1))) {
+                i++;
+                while (i < s.length() && isAsciiLetterOrDigit(s.charAt(i))) {
                     i++;
                 }
             }
-            int end = i;
-            while (end > start + 1 && s.charAt(end - 1) == '.' && s.charAt(end - 2) != '\\') {
-                end--;
+            if (i + 2 < s.length() && s.startsWith("--", i) && isAsciiLetter(s.charAt(i + 2))) {
+                i += 2;
+                while (i < s.length() && isAsciiLetter(s.charAt(i))) {
+                    i++;
+                }
             }
-            if (end == start) {                 // a lone character no other branch took
-                end = Math.min(s.length(), start + 1);
-            }
-            i = end;
-            return s.substring(start, end);
+            return s.substring(start, i);
         }
 
-        /** A digit, or a sign or '.' directly followed by one. */
-        private boolean startsNumber() {
-            char c = s.charAt(i);
-            if (Character.isDigit(c)) {
-                return true;
+        /**
+         * A prefixed name, blank-node label or keyword. Name characters are ASCII letters and
+         * digits, {@code _ - :}, any non-ASCII character that is not whitespace (Turtle's
+         * PN_CHARS_BASE is mostly non-ASCII), {@code %xx} and a backslash escape. A '.' belongs to
+         * the name only if a name character follows the run of dots and the dot does not open a
+         * local name, and only in a name that has a ':' (a keyword or directive has no dots): so
+         * {@code ex:x..MESSAGE}, {@code MESSAGE.foo:s} and {@code _:b.1} are one token, while in
+         * {@code true.MESSAGE}, {@code true.@message}, {@code ex:.MESSAGE} and {@code "x"^^ex:.}
+         * the dot ends the statement.
+         */
+        private String readName() {
+            int start = i;
+            while (i < s.length()) {
+                char c = s.charAt(i);
+                if (c == '\\' && i + 1 < s.length()) {
+                    i += 2;
+                } else if (c == '%') {
+                    i = Math.min(s.length(), i + 3);
+                } else if (isNameChar(c)) {
+                    i++;
+                } else if (c == '.' && i > start && s.charAt(i - 1) != ':') {
+                    int k = i;
+                    while (k < s.length() && s.charAt(k) == '.') {
+                        k++;
+                    }
+                    boolean nameFollows = k < s.length()
+                            && (isNameChar(s.charAt(k)) || s.charAt(k) == '\\' || s.charAt(k) == '%');
+                    // A name without ':' is a keyword (a, true, false) or directive, which has no
+                    // dots; a dot before the ':' belongs to a prefix such as MESSAGE.foo:
+                    boolean prefixed = s.substring(start, i).indexOf(':') >= 0 || colonAhead(k);
+                    if (nameFollows && prefixed) {
+                        i = k;
+                    } else {
+                        break;
+                    }
+                } else {
+                    break;
+                }
             }
+            if (i == start) {                       // a character no rule takes: pass it through
+                i++;
+            }
+            return s.substring(start, i);
+        }
+
+        /** Whether a ':' comes before the run of name characters and dots from {@code k} ends. */
+        private boolean colonAhead(int k) {
+            while (k < s.length() && (isNameChar(s.charAt(k)) || s.charAt(k) == '.')) {
+                if (s.charAt(k) == ':') {
+                    return true;
+                }
+                k++;
+            }
+            return false;
+        }
+
+        private static boolean isNameChar(char c) {
+            return isAsciiLetterOrDigit(c) || c == '_' || c == '-' || c == ':'
+                    || (c > 0x7F && !Character.isWhitespace(c));
+        }
+
+        private static boolean isAsciiDigit(char c) {
+            return c >= '0' && c <= '9';
+        }
+
+        private static boolean isAsciiLetter(char c) {
+            return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+        }
+
+        private static boolean isAsciiLetterOrDigit(char c) {
+            return isAsciiLetter(c) || isAsciiDigit(c);
+        }
+
+        private boolean digitAt(int k) {
+            return k < s.length() && isAsciiDigit(s.charAt(k));
+        }
+
+        /** An ASCII digit, or a sign and/or '.' directly followed by one. */
+        private boolean startsNumber() {
             int k = i;
-            if (c == '+' || c == '-') {
+            if (s.charAt(k) == '+' || s.charAt(k) == '-') {
                 k++;
             }
             if (k < s.length() && s.charAt(k) == '.') {
                 k++;
             }
-            return k > i && k < s.length() && Character.isDigit(s.charAt(k));
+            return digitAt(k);
         }
 
         /**
-         * A Turtle number, by its grammar: {@code [+-]? [0-9]* ('.' [0-9]+)? ([eE] [+-]? [0-9]+)?}.
-         * A '.' not followed by a digit is not part of it, so {@code 1.MESSAGE} is the integer 1,
-         * a statement terminator, and a delimiter.
+         * A Turtle number by its grammar: INTEGER {@code [+-]?[0-9]+}, DECIMAL
+         * {@code [+-]?[0-9]*'.'[0-9]+}, DOUBLE {@code [+-]?([0-9]+'.'[0-9]*EXP | '.'?[0-9]+EXP)}.
+         * A '.' is part of it only when a digit, or (after digits) an exponent, follows; so
+         * {@code 1.MESSAGE} is the integer 1, a terminator and a delimiter, and {@code 1.e2} is one
+         * DOUBLE.
          */
         private String readNumber() {
             int start = i;
             if (s.charAt(i) == '+' || s.charAt(i) == '-') {
                 i++;
             }
-            while (i < s.length() && Character.isDigit(s.charAt(i))) {
+            int digits = 0;
+            while (digitAt(i)) {
                 i++;
+                digits++;
             }
-            if (i + 1 < s.length() && s.charAt(i) == '.' && Character.isDigit(s.charAt(i + 1))) {
-                i++;
-                while (i < s.length() && Character.isDigit(s.charAt(i))) {
+            if (i < s.length() && s.charAt(i) == '.') {
+                if (digitAt(i + 1)) {
                     i++;
-                }
-            }
-            if (i < s.length() && (s.charAt(i) == 'e' || s.charAt(i) == 'E')) {
-                int k = i + 1;
-                if (k < s.length() && (s.charAt(k) == '+' || s.charAt(k) == '-')) {
-                    k++;
-                }
-                if (k < s.length() && Character.isDigit(s.charAt(k))) {
-                    i = k;
-                    while (i < s.length() && Character.isDigit(s.charAt(i))) {
+                    while (digitAt(i)) {
                         i++;
                     }
+                } else if (digits > 0 && exponentAt(i + 1) > 0) {
+                    i++;                            // 1.e2
                 }
             }
+            int exp = exponentAt(i);
+            if (exp > 0) {
+                i += exp;
+            }
             return s.substring(start, i);
+        }
+
+        /** The length of an exponent {@code [eE][+-]?[0-9]+} starting at {@code k}, or 0. */
+        private int exponentAt(int k) {
+            if (k >= s.length() || (s.charAt(k) != 'e' && s.charAt(k) != 'E')) {
+                return 0;
+            }
+            int j = k + 1;
+            if (j < s.length() && (s.charAt(j) == '+' || s.charAt(j) == '-')) {
+                j++;
+            }
+            if (!digitAt(j)) {
+                return 0;
+            }
+            while (digitAt(j)) {
+                j++;
+            }
+            return j - k;
         }
 
         private String readIri() {
@@ -487,7 +601,8 @@ public final class RdfMessageLog {
 
         /** A PREFIX/BASE directive: into this message's text and the header carried forward. */
         private void keep(String directive) {
-            body.append(directive).append('\n');
+            // on a line of its own: RDF4J does not read a directive glued to the previous '.'
+            body.append('\n').append(directive).append('\n');
             header.append(directive).append('\n');
         }
 
@@ -503,16 +618,27 @@ public final class RdfMessageLog {
             body = new StringBuilder();
         }
 
-        /** The value of a quoted Turtle string: quotes removed, escapes decoded. */
+        /**
+         * The value of a version label, which Turtle's grammar (VersionSpecifier) allows only as a
+         * short single- or double-quoted string: quotes removed, escapes decoded. An escape outside
+         * ECHAR (backslash followed by one of {@code t b n r f " ' \\}) or UCHAR (backslash-u with
+         * exactly 4, backslash-U with exactly 8 hexadecimal digits, naming a Unicode scalar value) is
+         * an error.
+         */
         private static String decode(String quoted) {
-            int q = quoted.length() >= 6 && (quoted.startsWith("\"\"\"") || quoted.startsWith("'''")) ? 3 : 1;
-            String inner = quoted.substring(q, quoted.length() - q);
+            if (quoted.startsWith("\"\"\"") || quoted.startsWith("'''")) {
+                throw new IllegalArgumentException("a version label must be a short quoted string: " + quoted);
+            }
+            String inner = quoted.substring(1, quoted.length() - 1);
             StringBuilder out = new StringBuilder();
             for (int k = 0; k < inner.length(); k++) {
                 char c = inner.charAt(k);
-                if (c != '\\' || k + 1 >= inner.length()) {
+                if (c != '\\') {
                     out.append(c);
                     continue;
+                }
+                if (k + 1 >= inner.length()) {
+                    throw new IllegalArgumentException("dangling backslash in version label " + quoted);
                 }
                 char e = inner.charAt(++k);
                 switch (e) {
@@ -521,15 +647,25 @@ public final class RdfMessageLog {
                     case 'n' -> out.append('\n');
                     case 'r' -> out.append('\r');
                     case 'f' -> out.append('\f');
+                    case '"', '\'', '\\' -> out.append(e);
                     case 'u', 'U' -> {
                         int len = e == 'u' ? 4 : 8;
                         if (k + len >= inner.length()) {
                             throw new IllegalArgumentException("truncated \\" + e + " escape in " + quoted);
                         }
-                        out.appendCodePoint(Integer.parseInt(inner.substring(k + 1, k + 1 + len), 16));
+                        String hex = inner.substring(k + 1, k + 1 + len);
+                        if (!hex.chars().allMatch(h -> (h >= '0' && h <= '9') || (h >= 'a' && h <= 'f')
+                                || (h >= 'A' && h <= 'F'))) {
+                            throw new IllegalArgumentException("bad \\" + e + " escape in " + quoted);
+                        }
+                        int cp = Integer.parseInt(hex, 16);
+                        if (cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF)) {
+                            throw new IllegalArgumentException("\\" + e + hex + " is not a Unicode scalar value");
+                        }
+                        out.appendCodePoint(cp);
                         k += len;
                     }
-                    default -> out.append(e);          // \" \' \\
+                    default -> throw new IllegalArgumentException("invalid escape \\" + e + " in version label " + quoted);
                 }
             }
             return out.toString();
