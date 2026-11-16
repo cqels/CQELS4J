@@ -53,6 +53,8 @@ public final class AccessFilters {
 
         /** @param readToken may be {@code null} when {@code updateToken} is set; not both */
         public BearerToken(String readToken, String updateToken) {
+            readToken = readToken == null || readToken.isBlank() ? null : readToken.strip();
+            updateToken = updateToken == null || updateToken.isBlank() ? null : updateToken.strip();
             if (readToken == null && updateToken == null) {
                 throw new IllegalArgumentException("a bearer-token filter needs a token");
             }
@@ -64,6 +66,8 @@ public final class AccessFilters {
             }
             this.read = readToken == null ? null : readToken.getBytes(StandardCharsets.UTF_8);
             this.update = updateToken == null ? null : updateToken.getBytes(StandardCharsets.UTF_8);
+            // compared as presented tokens are: stripped. "shared " passed as different from
+            // "shared", and then matched as the update token (found in co-review of #128)
         }
 
         @Override
@@ -73,7 +77,7 @@ public final class AccessFilters {
             HttpServletResponse resp = (HttpServletResponse) response;
             String header = req.getHeader("Authorization");
             byte[] presented = header != null && header.regionMatches(true, 0, "Bearer ", 0, 7)
-                    ? header.substring(7).trim().getBytes(StandardCharsets.UTF_8) : null;
+                    ? header.substring(7).strip().getBytes(StandardCharsets.UTF_8) : null;
             if (presented != null) {
                 // both compared, whichever matches, so the time taken does not say which one did
                 boolean isUpdate = update != null && MessageDigest.isEqual(update, presented);
