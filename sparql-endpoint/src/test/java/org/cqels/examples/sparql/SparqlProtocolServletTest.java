@@ -2154,6 +2154,42 @@ class SparqlProtocolServletTest {
         }
     }
 
+    static String metricsOf(Endpoint ep, String needle) throws Exception {
+        String body = "";
+        for (int i = 0; i < 100 && !body.contains(needle); i++) {   // counted as each request completes
+            body = getWithin(base(ep.server()) + "/metrics", java.time.Duration.ofSeconds(2)).body();
+            Thread.sleep(50);
+        }
+        return body;
+    }
+
+    /**
+     * A response that fails after it started counts as aborted, whichever way it fails: the
+     * execution limit tripping mid-stream (the servlet aborts it), or the client going away (a
+     * write fails, which can happen after any servlet filter has returned).
+     */
+    @Test
+    void responsesThatFailAfterTheyStartedAreCountedAsAborted() throws Exception {
+        String cross = "SELECT * WHERE { ?a ?b ?c . ?d ?e ?f . ?g ?h ?i . ?j ?k ?l }";
+        try (Endpoint slow = Endpoint.start(EndpointOptions.defaults().withMaxExecutionSeconds(1), 300)) {
+            var req = HttpRequest.newBuilder(URI.create(slow.url() + "?query=" + enc(cross))).header("Accept", "text/csv").build();
+            assertThrows(IOException.class, () -> HTTP.send(req, HttpResponse.BodyHandlers.discarding()));
+            String body = metricsOf(slow, "cqels_sparql_aborted_total 1");
+            assertTrue(body.contains("cqels_sparql_aborted_total 1"), body);
+        }
+        try (Endpoint big = Endpoint.start(EndpointOptions.defaults().withMaxExecutionSeconds(20), 300)) {
+            try (java.net.Socket client = new java.net.Socket("127.0.0.1", URI.create(big.url()).getPort())) {
+                client.getOutputStream().write(("GET /sparql?query=" + enc(cross) + " HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+                        + "Accept: text/csv\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
+                client.getInputStream().readNBytes(64 * 1024);   // the answer has started
+                client.setSoLinger(true, 0);                     // then the client is gone, abruptly
+            }
+            String body = metricsOf(big, "cqels_sparql_aborted_total 1");
+            assertTrue(body.contains("cqels_sparql_aborted_total 1"), body);
+            assertTrue(body.contains("cqels_sparql_requests_total{code=\"200\"} 1"), "and under the status it started with: " + body);
+        }
+    }
+
     /** The access log writes a line per request — with the path, never the query — and keeps doing so after a restart. */
     @Test
     void theAccessLogWritesAndLeavesTheQueryOut() throws Exception {
