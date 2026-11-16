@@ -1974,6 +1974,10 @@ class SparqlProtocolServletTest {
                 () -> EndpointOptions.defaults().withAuthToken("same").withUpdateToken("same"));
         // the filter itself, as an embedding builds it, holds to the same rule
         assertThrows(IllegalArgumentException.class, () -> new AccessFilters.BearerToken("same", "same"));
+        // the same once stripped, as a presented token is
+        assertThrows(IllegalArgumentException.class, () -> new AccessFilters.BearerToken("same ", "same"));
+        assertThrows(IllegalArgumentException.class,
+                () -> EndpointOptions.defaults().withAuthToken(" same").withUpdateToken("same"));
     }
 
     @Test
@@ -2154,10 +2158,11 @@ class SparqlProtocolServletTest {
         }
     }
 
-    static String metricsOf(Endpoint ep, String needle) throws Exception {
+    /** /metrics once every needle is in one snapshot: the counters move as each request completes, not all at once. */
+    static String metricsOf(String base, String... needles) throws Exception {
         String body = "";
-        for (int i = 0; i < 100 && !body.contains(needle); i++) {   // counted as each request completes
-            body = getWithin(base(ep.server()) + "/metrics", java.time.Duration.ofSeconds(2)).body();
+        for (int i = 0; i < 100 && !java.util.Arrays.stream(needles).allMatch(body::contains); i++) {
+            body = getWithin(base + "/metrics", java.time.Duration.ofSeconds(2)).body();
             Thread.sleep(50);
         }
         return body;
@@ -2174,19 +2179,34 @@ class SparqlProtocolServletTest {
         try (Endpoint slow = Endpoint.start(EndpointOptions.defaults().withMaxExecutionSeconds(1), 300)) {
             var req = HttpRequest.newBuilder(URI.create(slow.url() + "?query=" + enc(cross))).header("Accept", "text/csv").build();
             assertThrows(IOException.class, () -> HTTP.send(req, HttpResponse.BodyHandlers.discarding()));
-            String body = metricsOf(slow, "cqels_sparql_aborted_total 1");
+            String body = metricsOf(base(slow.server()), "cqels_sparql_aborted_total 1");
             assertTrue(body.contains("cqels_sparql_aborted_total 1"), body);
         }
-        try (Endpoint big = Endpoint.start(EndpointOptions.defaults().withMaxExecutionSeconds(20), 300)) {
-            try (java.net.Socket client = new java.net.Socket("127.0.0.1", URI.create(big.url()).getPort())) {
-                client.getOutputStream().write(("GET /sparql?query=" + enc(cross) + " HTTP/1.1\r\nHost: 127.0.0.1\r\n"
-                        + "Accept: text/csv\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
-                client.getInputStream().readNBytes(64 * 1024);   // the answer has started
-                client.setSoLinger(true, 0);                     // then the client is gone, abruptly
+        // The client resets the connection while the servlet is held; the servlet then answers 406
+        // and returns normally. That answer is only buffered (RDF4J's result writers flush the
+        // stream themselves, so a 200 would fail inside the servlet, where a filter could see it):
+        // Jetty's completion, after every filter has returned, is what tries to send it, and fails.
+        CQELSEngine engine = CQELSEngine.builder().id("t-" + System.nanoTime()).withMemoryStore().build();
+        engine.start();
+        SlotHolder holder = new SlotHolder(engine, 1);
+        Server server = SparqlEndpointLauncher.startServer(holder, null, "127.0.0.1", 0, EndpointOptions.defaults(), 64, false);
+        try {
+            try (java.net.Socket client = new java.net.Socket("127.0.0.1", URI.create(base(server)).getPort())) {
+                client.getOutputStream().write(("GET /sparql?query=" + enc("ASK {}") + " HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+                        + "Accept: image/png\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
+                assertTrue(holder.entered.await(10, java.util.concurrent.TimeUnit.SECONDS));
+                client.setSoLinger(true, 0);   // closed with a reset: the server's next write fails
             }
-            String body = metricsOf(big, "cqels_sparql_aborted_total 1");
+            Thread.sleep(200);
+            holder.release.countDown();
+            awaitSlotsInUse(servletOf(server), 0);
+            String body = metricsOf(base(server), "cqels_sparql_aborted_total 1", "cqels_sparql_requests_total{code=\"406\"} 1");
             assertTrue(body.contains("cqels_sparql_aborted_total 1"), body);
-            assertTrue(body.contains("cqels_sparql_requests_total{code=\"200\"} 1"), "and under the status it started with: " + body);
+            assertTrue(body.contains("cqels_sparql_requests_total{code=\"406\"} 1"), "and under the status it started with: " + body);
+        } finally {
+            holder.release.countDown();
+            server.stop();
+            engine.close();
         }
     }
 

@@ -127,8 +127,10 @@ public record EndpointOptions(
         }
         allowedOrigins = allowedOrigins == null ? List.of() : List.copyOf(allowedOrigins);
         allowedHosts = allowedHosts == null ? List.of() : List.copyOf(allowedHosts);
-        authToken = authToken == null || authToken.isBlank() ? null : authToken;
-        updateToken = updateToken == null || updateToken.isBlank() ? null : updateToken;
+        // stripped, as a presented token is (see AccessFilters.BearerToken): "shared " and
+        // "shared" are one token, which must not count as two (found in co-review of #128)
+        authToken = authToken == null || authToken.isBlank() ? null : authToken.strip();
+        updateToken = updateToken == null || updateToken.isBlank() ? null : updateToken.strip();
         if (updateToken != null && updateToken.equals(authToken)) {
             // the read token would then update too, which is what the second token is there to stop
             throw new IllegalArgumentException("the update token must differ from the read token");
