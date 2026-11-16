@@ -56,6 +56,12 @@ public final class AccessFilters {
             if (readToken == null && updateToken == null) {
                 throw new IllegalArgumentException("a bearer-token filter needs a token");
             }
+            if (readToken != null && readToken.equals(updateToken)) {
+                // the read token would match as the update token and write: checked here, not only
+                // in EndpointOptions, since an embedding builds this filter directly (found in
+                // co-review of #128)
+                throw new IllegalArgumentException("the update token must differ from the read token");
+            }
             this.read = readToken == null ? null : readToken.getBytes(StandardCharsets.UTF_8);
             this.update = updateToken == null ? null : updateToken.getBytes(StandardCharsets.UTF_8);
         }

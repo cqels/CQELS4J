@@ -124,7 +124,8 @@ import java.util.function.Supplier;
  * answer in time. A failure after the response is committed — the execution limit tripping
  * mid-stream — aborts the response instead.
  *
- * <p>Every answer to GET and POST carries {@code Vary: Accept}.
+ * <p>Every answer to GET and POST carries {@code Vary: Accept}; the launcher adds it in front of
+ * the access filters too, for their refusals.
  *
  * <p>A request takes its query slot before its body is read, so a slow upload is bounded by
  * the slots like a slow query, not by the container's request threads.
@@ -172,6 +173,15 @@ public final class SparqlProtocolServlet extends HttpServlet {
     private transient volatile java.util.concurrent.ScheduledExecutorService uploadWatch;
     /** Fetches LOAD sources; built on first use. See {@link #executeLoad}. */
     private transient volatile java.net.http.HttpClient loadClient;
+    /**
+     * Set by {@link #destroy()}, under {@link #commitGate}'s write lock: no update commits after
+     * it. Jetty cuts off a request still running when its drain ends but does not stop its thread,
+     * so an update held up until then committed afterwards, for a client long since told the
+     * connection was gone (found in co-review of #128). Cleared by {@link #init()} on a restart.
+     */
+    private transient volatile boolean stopped;
+    private final transient java.util.concurrent.locks.ReadWriteLock commitGate =
+            new java.util.concurrent.locks.ReentrantReadWriteLock();
     private final transient Supplier<? extends Collection<Statement>> metadata;
     /** Requests turned away because every slot was taken; for {@code /metrics}. */
     private final java.util.concurrent.atomic.LongAdder busyRejections = new java.util.concurrent.atomic.LongAdder();
@@ -202,6 +212,7 @@ public final class SparqlProtocolServlet extends HttpServlet {
 
     @Override
     public void init() {
+        stopped = false;
         var watch = new java.util.concurrent.ScheduledThreadPoolExecutor(1, r -> {
             Thread t = new Thread(r, "sparql-upload-deadline");
             t.setDaemon(true);
@@ -222,6 +233,12 @@ public final class SparqlProtocolServlet extends HttpServlet {
 
     @Override
     public void destroy() {
+        commitGate.writeLock().lock();   // waits for a commit in progress, then admits none
+        try {
+            stopped = true;
+        } finally {
+            commitGate.writeLock().unlock();
+        }
         java.util.concurrent.ScheduledExecutorService watch = uploadWatch;
         uploadWatch = null;
         if (watch != null) {
@@ -316,13 +333,16 @@ public final class SparqlProtocolServlet extends HttpServlet {
         String query;
         try {
             params = Params.parse(req.getQueryString());
-            if (!params.all("update").isEmpty()) {
+            // counted first: a repeated parameter is a 400 whatever else is wrong (found in
+            // co-review of #128: ?update=…&update=… was a 405)
+            String update = single(params, "update");
+            query = single(params, "query");
+            if (update != null) {
                 // §2.2: update requests are POST only. Refusing here rather than ignoring the
                 // parameter keeps a misconfigured client from believing its update ran.
                 methodNotAllowed(resp, "SPARQL Update is not accepted via GET; POST it");
                 return;
             }
-            query = single(params, "query");
         } catch (IllegalArgumentException e) {
             fail(resp, HttpServletResponse.SC_BAD_REQUEST, e.getMessage());
             return;
@@ -341,6 +361,14 @@ public final class SparqlProtocolServlet extends HttpServlet {
      * after #121). Added first, so every answer carries it, errors included ({@link #fail} keeps it).
      */
     private static void varyOnAccept(HttpServletResponse resp) {
+        // the launcher's first filter may have added it already, for the filters' own refusals
+        for (String v : resp.getHeaders("Vary")) {
+            for (String field : v.split(",")) {
+                if (field.trim().equalsIgnoreCase("Accept")) {
+                    return;
+                }
+            }
+        }
         resp.addHeader("Vary", "Accept");
     }
 
@@ -871,9 +899,10 @@ public final class SparqlProtocolServlet extends HttpServlet {
     /**
      * Runs {@code work} in one transaction and commits it, unless it left a triple in
      * {@link #METADATA_GRAPH}: then it is rolled back and answered 403. Returns whether it
-     * committed. Rolled back on every other way out too.
+     * committed. Rolled back on every other way out too — and when the servlet has been
+     * destroyed meanwhile (503): see {@link #stopped}.
      */
-    private static boolean commitUnlessReserved(HttpServletResponse resp, RepositoryConnection conn, Runnable work)
+    private boolean commitUnlessReserved(HttpServletResponse resp, RepositoryConnection conn, Runnable work)
             throws IOException {
         conn.begin();
         try {
@@ -886,8 +915,19 @@ public final class SparqlProtocolServlet extends HttpServlet {
             }
             // The engine sees the change on its next element: it listens to its own Sail for
             // lookup-cache invalidation (measured on 2.0.0-alpha.22, even under FROM <g> CACHE 5m).
-            conn.commit();
-            return true;
+            commitGate.readLock().lock();
+            try {
+                if (stopped) {
+                    conn.rollback();
+                    fail(resp, HttpServletResponse.SC_SERVICE_UNAVAILABLE,
+                            "the endpoint stopped before the update could commit; nothing was changed");
+                    return false;
+                }
+                conn.commit();
+                return true;
+            } finally {
+                commitGate.readLock().unlock();
+            }
         } finally {
             if (conn.isActive()) {
                 conn.rollback();

@@ -145,6 +145,10 @@ public final class SparqlEndpointLauncher {
             if (s != null) {
                 try {
                     s.stop();
+                } catch (java.util.concurrent.TimeoutException e) {
+                    // the drain ran out: Jetty has stopped all the same, cutting off what remained
+                    log.warn("requests still in progress after {} s were cut off (CQELS_SPARQL_SHUTDOWN_SECONDS)",
+                            options.shutdownSeconds());
                 } catch (Exception e) {
                     log.warn("Jetty did not stop cleanly: {}", e.toString());
                 }
@@ -201,6 +205,19 @@ public final class SparqlEndpointLauncher {
         server.addEventListener(new org.eclipse.jetty.util.component.LifeCycle.Listener() {
             @Override
             public void lifeCycleStopped(org.eclipse.jetty.util.component.LifeCycle event) {
+                release();
+            }
+
+            /**
+             * A stop whose drain runs out ends FAILED, not STOPPED, though everything stopped (found
+             * in co-review of #128); a start that fails ends here too.
+             */
+            @Override
+            public void lifeCycleFailure(org.eclipse.jetty.util.component.LifeCycle event, Throwable cause) {
+                release();
+            }
+
+            private void release() {
                 try {
                     outbound.close();
                 } catch (Exception e) {
@@ -327,9 +344,15 @@ public final class SparqlEndpointLauncher {
 
         ServletContextHandler context = new ServletContextHandler();
         context.setContextPath("/");
-        // Counted before any other filter, so a request one of them refuses is counted too.
+        // Statuses are counted by the request log below; this filter counts aborted responses.
         EndpointMetrics metrics = new EndpointMetrics();
         context.addFilter(new FilterHolder(metrics.filter()), options.path(), EnumSet.of(DispatcherType.REQUEST));
+        // Before the access filters, so that their 401 / 403 carry it as well (found in co-review
+        // of #128); the servlet adds it itself when mounted without this.
+        context.addFilter(new FilterHolder((jakarta.servlet.Filter) (request, response, chain) -> {
+            ((HttpServletResponse) response).addHeader("Vary", "Accept");
+            chain.doFilter(request, response);
+        }), options.path(), EnumSet.of(DispatcherType.REQUEST));
         // Host check first: a rebound page is same-origin to the browser, so only Host betrays it.
         List<String> hosts = allowedHosts(host, options);
         if (!hosts.isEmpty()) {
@@ -357,13 +380,16 @@ public final class SparqlEndpointLauncher {
         graceful.setHandler(context);
         server.setHandler(graceful);
         server.setStopTimeout(options.shutdownSeconds() * 1000L);
+        org.eclipse.jetty.server.RequestLog counting = metrics.requestLog(options.path());
         if (options.accessLog()) {
             // %U is the path without the query string: a query can carry data that is not the
             // log's to keep, and the token never appears in any field logged here.
             org.eclipse.jetty.server.Slf4jRequestLogWriter writer = new org.eclipse.jetty.server.Slf4jRequestLogWriter();
             writer.setLoggerName(ACCESS_LOGGER);
-            server.setRequestLog(new org.eclipse.jetty.server.CustomRequestLog(writer,
-                    "%{client}a - %u %t \"%m %U %H\" %s %O %{ms}T"));
+            server.setRequestLog(new org.eclipse.jetty.server.RequestLog.Collection(counting,
+                    new org.eclipse.jetty.server.CustomRequestLog(writer, "%{client}a - %u %t \"%m %U %H\" %s %O %{ms}T")));
+        } else {
+            server.setRequestLog(counting);
         }
         server.start();
 

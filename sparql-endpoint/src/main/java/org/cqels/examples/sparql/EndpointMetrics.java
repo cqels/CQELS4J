@@ -5,7 +5,6 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.ServletRequest;
 import jakarta.servlet.ServletResponse;
-import jakarta.servlet.http.HttpServletResponse;
 
 import java.io.IOException;
 import java.util.Map;
@@ -18,16 +17,37 @@ import java.util.concurrent.atomic.LongAdder;
  * slots from a quiet afternoon.
  *
  * <p>Counts only — no query text, no client address, no token — which is why {@code /metrics}
- * sits beside {@code /health} outside the token, as a scraper expects. {@link #filter()} is
- * installed in front of every other filter on the servlet's path, so a request the host, origin
- * or token filter refuses is counted with its status too.
+ * sits beside {@code /health} outside the token, as a scraper expects.
+ *
+ * <p>Statuses are counted by {@link #requestLog}, at the end of each request as Jetty sent it, so
+ * a request the host, origin or token filter refuses, Jetty's own error answers and the
+ * {@code 503}s of a stop in progress are all counted. A filter in front of the chain saw none of
+ * the last two, and could not tell a response aborted after it had started from an exception
+ * before it (found in co-review of #128); {@link #filter()} now only counts the former.
  */
 public final class EndpointMetrics {
 
     private final Map<Integer, LongAdder> byStatus = new ConcurrentHashMap<>();
     private final LongAdder aborted = new LongAdder();
 
-    /** Counts each request on the path it is installed on, by the status it was answered with. */
+    /**
+     * Counts each request to {@code path} by the status Jetty sent, whatever answered it. An
+     * aborted response is counted under the status it had started with, and in {@link #aborted()}.
+     */
+    public org.eclipse.jetty.server.RequestLog requestLog(String path) {
+        return (request, response) -> {
+            if (path.equals(request.getHttpURI().getDecodedPath())) {
+                byStatus.computeIfAbsent(response.getStatus(), k -> new LongAdder()).increment();
+            }
+        };
+    }
+
+    /**
+     * Counts responses aborted after they had started: the servlet throws to abort a committed
+     * response (see its {@code fail()}), and the status line already sent is not what the client
+     * got. An exception before anything was sent is not an abort; Jetty answers it, and
+     * {@link #requestLog} counts that answer.
+     */
     public Filter filter() {
         return new Filter() {
             @Override
@@ -36,12 +56,11 @@ public final class EndpointMetrics {
                 try {
                     chain.doFilter(request, response);
                 } catch (IOException | ServletException | RuntimeException | Error e) {
-                    // the servlet throws to abort a committed response (see its fail()); the
-                    // status line already sent says 200, which is not what the client got
-                    aborted.increment();
+                    if (response.isCommitted()) {
+                        aborted.increment();
+                    }
                     throw e;
                 }
-                byStatus.computeIfAbsent(((HttpServletResponse) response).getStatus(), k -> new LongAdder()).increment();
             }
         };
     }
@@ -63,7 +82,7 @@ public final class EndpointMetrics {
      */
     String render(SparqlProtocolServlet servlet, boolean engineRunning) {
         StringBuilder out = new StringBuilder();
-        out.append("# HELP cqels_sparql_requests_total Requests to the SPARQL path, by response status.\n")
+        out.append("# HELP cqels_sparql_requests_total Requests to the SPARQL path, by the status sent.\n")
                 .append("# TYPE cqels_sparql_requests_total counter\n");
         byStatus.entrySet().stream().sorted(Map.Entry.comparingByKey()).forEach(e ->
                 out.append("cqels_sparql_requests_total{code=\"").append(e.getKey()).append("\"} ")
