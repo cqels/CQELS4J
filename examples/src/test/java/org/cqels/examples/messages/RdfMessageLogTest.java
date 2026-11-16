@@ -259,7 +259,9 @@ class RdfMessageLogTest {
                 "ex:a ex:p ex:x\\.MESSAGE .\n",
                 "MESSAGE.foo:s ex:p 1 .\n",
                 "ex:a ex:p ex:x\\#MESSAGE .\n",
-                "ex:a ex:p ex:x\\(MESSAGE .\n")) {
+                "ex:a ex:p ex:x\\(MESSAGE .\n",
+                "ex:a ex:p ex:x:.MESSAGE .\n",
+                "ex:a ex:p ex:x:y..MESSAGE .\n")) {
             List<List<Statement>> messages = ttl(V + prologue + fragment);
             assertEquals(List.of(1), sizes(messages), fragment);
             sameAsRio(prologue, fragment, messages.get(0));
@@ -336,9 +338,11 @@ class RdfMessageLogTest {
     void turtleWriterOutputWithMessageLikeNamesRereads() {
         List<List<Statement>> messages = List.of(
                 List.of(VF.createStatement(iri("http://e/x..MESSAGE"), iri("http://e/p"), VF.createLiteral(1))),
-                List.of(VF.createStatement(iri("http://e/x...MESSAGE"), iri("http://e/p"), VF.createLiteral(2))));
+                List.of(VF.createStatement(iri("http://e/x...MESSAGE"), iri("http://e/p"), VF.createLiteral(2))),
+                List.of(VF.createStatement(iri("http://e/x:.MESSAGE"), iri("http://e/p"), VF.createLiteral(3))));
         List<List<Statement>> back = ttl(RdfMessageLog.writeTurtle(messages, Map.of("e", "http://e/")));
-        assertEquals(List.of(1, 1), sizes(back));
+        assertEquals(List.of(1, 1, 1), sizes(back));
+        assertEquals(iri("http://e/x:.MESSAGE"), back.get(2).get(0).getSubject());
         assertEquals(iri("http://e/x..MESSAGE"), back.get(0).get(0).getSubject());
         assertEquals(iri("http://e/x...MESSAGE"), back.get(1).get(0).getSubject());
     }

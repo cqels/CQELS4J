@@ -364,7 +364,9 @@ public final class RdfMessageLog {
                     i = Math.min(s.length(), i + 3);
                 } else if (isNameChar(c)) {
                     i++;
-                } else if (c == '.' && i > start && s.charAt(i - 1) != ':') {
+                } else if (c == '.' && i > start && i - 1 != start + s.substring(start, i).indexOf(':')) {
+                    // (a dot may not open the local name, i.e. follow the prefix's ':' directly; a
+                    // later ':' inside the local name, as in ex:x:.y, does not count)
                     int k = i;
                     while (k < s.length() && s.charAt(k) == '.') {
                         k++;
