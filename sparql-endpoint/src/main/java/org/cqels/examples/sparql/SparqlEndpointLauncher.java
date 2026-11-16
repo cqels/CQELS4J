@@ -344,9 +344,8 @@ public final class SparqlEndpointLauncher {
 
         ServletContextHandler context = new ServletContextHandler();
         context.setContextPath("/");
-        // Statuses are counted by the request log below; this filter counts aborted responses.
+        // Statuses are counted by the request log below, aborts by a handler around the context.
         EndpointMetrics metrics = new EndpointMetrics();
-        context.addFilter(new FilterHolder(metrics.filter()), options.path(), EnumSet.of(DispatcherType.REQUEST));
         // Before the access filters, so that their 401 / 403 carry it as well (found in co-review
         // of #128); the servlet adds it itself when mounted without this.
         context.addFilter(new FilterHolder((jakarta.servlet.Filter) (request, response, chain) -> {
@@ -377,7 +376,9 @@ public final class SparqlEndpointLauncher {
         // ones are refused meanwhile (503, then connection refused). Before the audit after #121
         // nothing tracked them, so a stop cut every one off at once.
         org.eclipse.jetty.server.handler.GracefulHandler graceful = new org.eclipse.jetty.server.handler.GracefulHandler();
-        graceful.setHandler(context);
+        org.eclipse.jetty.server.Handler.Wrapper aborts = metrics.handler(options.path());
+        aborts.setHandler(context);
+        graceful.setHandler(aborts);
         server.setHandler(graceful);
         server.setStopTimeout(options.shutdownSeconds() * 1000L);
         org.eclipse.jetty.server.RequestLog counting = metrics.requestLog(options.path());

@@ -1,12 +1,5 @@
 package org.cqels.examples.sparql;
 
-import jakarta.servlet.Filter;
-import jakarta.servlet.FilterChain;
-import jakarta.servlet.ServletException;
-import jakarta.servlet.ServletRequest;
-import jakarta.servlet.ServletResponse;
-
-import java.io.IOException;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.LongAdder;
@@ -21,9 +14,11 @@ import java.util.concurrent.atomic.LongAdder;
  *
  * <p>Statuses are counted by {@link #requestLog}, at the end of each request as Jetty sent it, so
  * a request the host, origin or token filter refuses, Jetty's own error answers and the
- * {@code 503}s of a stop in progress are all counted. A filter in front of the chain saw none of
- * the last two, and could not tell a response aborted after it had started from an exception
- * before it (found in co-review of #128); {@link #filter()} now only counts the former.
+ * {@code 503}s of a stop in progress are all counted. Aborts are counted by {@link #handler},
+ * from the request's completion. A servlet filter did both at first and missed the stop's
+ * {@code 503}s, counted an exception before anything was sent as an abort, and never saw a
+ * response that failed in its final write, after the filter had returned (all found in
+ * co-review of #128).
  */
 public final class EndpointMetrics {
 
@@ -43,24 +38,39 @@ public final class EndpointMetrics {
     }
 
     /**
-     * Counts responses aborted after they had started: the servlet throws to abort a committed
-     * response (see its {@code fail()}), and the status line already sent is not what the client
-     * got. An exception before anything was sent is not an abort; Jetty answers it, and
-     * {@link #requestLog} counts that answer.
+     * Counts responses to {@code path} that failed after they had started: the servlet throws to
+     * abort a committed response (see its {@code fail()}), or the client went away mid-body, its
+     * final write included. Either way the status line already sent is not what the client got.
+     * A failure before anything was sent is not an abort; Jetty answers it, and
+     * {@link #requestLog} counts that answer. Wraps the handler that serves the path.
      */
-    public Filter filter() {
-        return new Filter() {
+    public org.eclipse.jetty.server.Handler.Wrapper handler(String path) {
+        return new org.eclipse.jetty.server.Handler.Wrapper() {
             @Override
-            public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain)
-                    throws IOException, ServletException {
-                try {
-                    chain.doFilter(request, response);
-                } catch (IOException | ServletException | RuntimeException | Error e) {
-                    if (response.isCommitted()) {
-                        aborted.increment();
-                    }
-                    throw e;
+            public boolean handle(org.eclipse.jetty.server.Request request, org.eclipse.jetty.server.Response response,
+                                  org.eclipse.jetty.util.Callback callback) throws Exception {
+                if (!path.equals(request.getHttpURI().getDecodedPath())) {
+                    return super.handle(request, response, callback);
                 }
+                return super.handle(request, response, new org.eclipse.jetty.util.Callback() {
+                    @Override
+                    public void succeeded() {
+                        callback.succeeded();
+                    }
+
+                    @Override
+                    public void failed(Throwable cause) {
+                        if (response.isCommitted()) {
+                            aborted.increment();
+                        }
+                        callback.failed(cause);
+                    }
+
+                    @Override
+                    public InvocationType getInvocationType() {
+                        return callback.getInvocationType();
+                    }
+                });
             }
         };
     }
