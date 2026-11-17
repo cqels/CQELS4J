@@ -2982,7 +2982,7 @@ class SparqlProtocolServletTest {
         try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true), 0)) {
             var r = getCsv(fed.url(), "SELECT * WHERE { SERVICE <http://127.0.0.1:" + remote.getAddress().getPort() + "/far> { ?s ?p ?o } }");
             assertEquals(502, r.statusCode(), r.body());
-            assertTrue(r.body().contains("port is out of range"), r.body());
+            assertTrue(r.body().contains("port is not a port"), r.body());   // caught by the explicit-port check first
         } finally {
             remote.stop(0);
         }
@@ -3260,6 +3260,45 @@ class SparqlProtocolServletTest {
         for (String bad : List.of("a", "x", "en-a", "en-US-US", "en-x", "1en", "en--GB", "abcdefghi", "en-", "en-GB-a-x-b",
                 "en-abc-def-ghi-jkl", "e1")) {
             assertFalse(TimedServiceClient.languageTag(bad), bad);
+        }
+    }
+
+    // ---- co-review round 11 of #129 ---------------------------------------------------------------
+
+    /** JSON may be UTF-16 or UTF-32 (RFC 4627 §3): a valid UTF-16LE answer was a 502. Each is decoded strictly. */
+    @Test
+    void jsonInUtf16And32IsDecodedStrictly() {
+        String json = "application/sparql-results+json";
+        String answer = row("{\"type\":\"literal\",\"value\":\"café\"}");
+        for (String cs : List.of("UTF-16LE", "UTF-16BE", "UTF-32LE", "UTF-32BE", "UTF-8")) {
+            var checked = TimedServiceClient.check(json, answer.getBytes(java.nio.charset.Charset.forName(cs)), true);
+            assertEquals(null, checked.why(), cs);
+            assertEquals(answer, new String(checked.body(), StandardCharsets.UTF_8), cs + " carried on as UTF-8");
+        }
+        byte[] broken = answer.getBytes(StandardCharsets.UTF_16LE);
+        broken[broken.length - 1] = (byte) 0xD8;   // the last code unit becomes half a surrogate pair
+        broken[broken.length - 2] = 0x00;
+        assertTrue(TimedServiceClient.check(json, broken, true).why() != null, "malformed UTF-16");
+    }
+
+    /** An explicit port must be a port: Apache read ":-2" as none and went to port 80. */
+    @Test
+    void anExplicitPortMustBeAPort() throws Exception {
+        assertTrue(TimedServiceClient.explicitPortValid(URI.create("http://h:8080/")));
+        assertTrue(TimedServiceClient.explicitPortValid(URI.create("http://h/")));
+        assertTrue(TimedServiceClient.explicitPortValid(URI.create("http://h:/")));
+        assertTrue(TimedServiceClient.explicitPortValid(URI.create("http://[::1]:443/")));
+        assertFalse(TimedServiceClient.explicitPortValid(URI.create("http://h:-2/")));
+        assertFalse(TimedServiceClient.explicitPortValid(URI.create("http://h:0/")));
+        assertFalse(TimedServiceClient.explicitPortValid(URI.create("http://h:65536/")));
+        assertFalse(TimedServiceClient.explicitPortValid(URI.create("http://h:123456/")));
+        var remote = serve(java.util.Map.of("/neg", respond(302, "text/plain", "", 0, "Location", "http://127.0.0.1:-2/a")));
+        try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true), 0)) {
+            var r = getCsv(fed.url(), "SELECT * WHERE { SERVICE <http://127.0.0.1:" + remote.getAddress().getPort() + "/neg> { ?s ?p ?o } }");
+            assertEquals(502, r.statusCode(), r.body());
+            assertTrue(r.body().contains("port is not a port"), r.body());
+        } finally {
+            remote.stop(0);
         }
     }
 
