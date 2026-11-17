@@ -3220,6 +3220,49 @@ class SparqlProtocolServletTest {
                 .getBytes(StandardCharsets.UTF_8), null) != null);
     }
 
+    // ---- co-review round 10 of #129 ---------------------------------------------------------------
+
+    /** Strict UTF-8, whatever the member order: the overlong C0 AF passed, as two U+FFFD or as "/". */
+    @Test
+    void malformedUtf8IsRefusedInEitherOrder() throws Exception {
+        String json = "application/sparql-results+json";
+        for (boolean headFirst : new boolean[] {true, false}) {
+            var out = new java.io.ByteArrayOutputStream();
+            String head = "\"head\":{\"vars\":[\"x\"]}";
+            out.write(("{" + (headFirst ? head + "," : "") + "\"results\":{\"bindings\":[{\"x\":{\"type\":\"literal\",\"value\":\"a")
+                    .getBytes(StandardCharsets.US_ASCII));
+            out.write(new byte[] {(byte) 0xC0, (byte) 0xAF});
+            out.write(("\"}}]}" + (headFirst ? "" : "," + head) + "}").getBytes(StandardCharsets.US_ASCII));
+            assertTrue(TimedServiceClient.invalidResult(json, out.toByteArray(), null) != null, "head first: " + headFirst);
+        }
+    }
+
+    /** An escaped lone surrogate is refused: RDF4J held a literal no UTF-8 can carry. */
+    @Test
+    void anUnpairedSurrogateIsRefused() {
+        String json = "application/sparql-results+json";
+        assertTrue(TimedServiceClient.invalidResult(json, row("{\"type\":\"literal\",\"value\":\"\\ud800\"}")
+                .getBytes(StandardCharsets.UTF_8), null) != null);
+        assertTrue(TimedServiceClient.invalidResult(json, row("{\"type\":\"literal\",\"value\":\"a\\udc00b\"}")
+                .getBytes(StandardCharsets.UTF_8), null) != null);
+        assertEquals(null, TimedServiceClient.invalidResult(json, row("{\"type\":\"literal\",\"value\":\"\\ud83d\\ude97\"}")
+                .getBytes(StandardCharsets.UTF_8), null));   // a whole pair: a car
+        assertTrue(TimedServiceClient.paired("ok \ud83d\ude97") && !TimedServiceClient.paired("\ud83d") && !TimedServiceClient.paired("\ude97x"));
+    }
+
+    /** BCP 47 by its grammar (RFC 5646 §2.1): characters and lengths alone took "a", "en-a" and "en-US-US". */
+    @Test
+    void languageTagsFollowBcp47() {
+        for (String ok : List.of("en", "en-GB", "zh-Hant-TW", "de-1996", "sl-rozaj-biske", "en-a-bbb-x-a", "x-a", "i-klingon",
+                "zh-yue-HK", "es-419", "en-US-x-twain", "abcd", "abcdefgh")) {
+            assertTrue(TimedServiceClient.languageTag(ok), ok);
+        }
+        for (String bad : List.of("a", "x", "en-a", "en-US-US", "en-x", "1en", "en--GB", "abcdefghi", "en-", "en-GB-a-x-b",
+                "en-abc-def-ghi-jkl", "e1")) {
+            assertFalse(TimedServiceClient.languageTag(bad), bad);
+        }
+    }
+
     @SuppressWarnings("unused")
     private static void silence(IOException ignored) { }
 }

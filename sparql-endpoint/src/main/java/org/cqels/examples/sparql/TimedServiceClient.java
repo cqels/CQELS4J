@@ -649,6 +649,13 @@ final class TimedServiceClient extends CloseableHttpClient {
      */
     static Checked check(String mediaType, byte[] body, Boolean expectTuple) {
         try {
+            // Strict UTF-8 before anything reads it: the overlong "C0 AF" passed, and became two
+            // U+FFFD in RDF4J's parse or "/" in the head-first rewrite, depending on member order
+            // (found in co-review of #129).
+            java.nio.charset.StandardCharsets.UTF_8.newDecoder()
+                    .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
+                    .decode(java.nio.ByteBuffer.wrap(body));
             if (mediaType.equals("text/boolean")) {
                 if (Boolean.TRUE.equals(expectTuple)) {
                     throw new IOException("a boolean answer to a SELECT");
@@ -832,9 +839,14 @@ final class TimedServiceClient extends CloseableHttpClient {
                     expect(v == com.fasterxml.jackson.core.JsonToken.VALUE_STRING, "a term's 'value' is not a string");
                     value = true;
                     text = p.getText();
+                    // a JSON escape can name half a surrogate pair, which strict byte decoding
+                    // never sees; RDF4J then held a string no UTF-8 can carry (found in
+                    // co-review of #129)
+                    expect(paired(text), "a term's 'value' holds an unpaired surrogate");
                 }
                 case "xml:lang", "datatype" -> {
-                    expect(v == com.fasterxml.jackson.core.JsonToken.VALUE_STRING, "a term's '" + field + "' is not a string");
+                    expect(v == com.fasterxml.jackson.core.JsonToken.VALUE_STRING && paired(p.getText()),
+                            "a term's '" + field + "' is not a well-formed string");
                     if (field.equals("datatype")) {
                         datatype = p.getText();
                     } else {
@@ -1097,25 +1109,112 @@ final class TimedServiceClient extends CloseableHttpClient {
         return c >= '0' && c <= '9';
     }
 
-    /**
-     * A BCP 47 shape, checked in one pass: subtags of 1 to 8 letters or digits, the first letters
-     * only. Not a regex: its repeated group recursed per subtag, and a tag of 10,000 subtags
-     * overflowed the stack (found in co-review of #129).
-     */
-    static boolean languageTag(String tag) {
-        int length = 0;
-        boolean first = true;
-        for (int i = 0; i <= tag.length(); i++) {
-            char c = i < tag.length() ? tag.charAt(i) : '-';
-            if (c == '-') {
-                if (length == 0) {
+    /** Whether every surrogate in {@code s} is half of a pair, in order. */
+    static boolean paired(String s) {
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (Character.isHighSurrogate(c)) {
+                if (i + 1 >= s.length() || !Character.isLowSurrogate(s.charAt(i + 1))) {
                     return false;
                 }
-                length = 0;
-                first = false;
-            } else if (c < 128 && (Character.isLetter(c) || (!first && Character.isDigit(c))) && ++length <= 8) {
-                continue;
-            } else {
+                i++;
+            } else if (Character.isLowSurrogate(c)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** RFC 5646's grandfathered tags, irregular and regular, compared case-insensitively. */
+    private static final java.util.Set<String> GRANDFATHERED = java.util.Set.of(
+            "en-gb-oed", "i-ami", "i-bnn", "i-default", "i-enochian", "i-hak", "i-klingon", "i-lux", "i-mingo",
+            "i-navajo", "i-pwn", "i-tao", "i-tay", "i-tsu", "sgn-be-fr", "sgn-be-nl", "sgn-ch-de",
+            "art-lojban", "cel-gaulish", "no-bok", "no-nyn", "zh-guoyu", "zh-hakka", "zh-min", "zh-min-nan", "zh-xiang");
+
+    /**
+     * A well-formed BCP 47 language tag (RFC 5646 §2.1), read subtag by subtag: language (2–3
+     * letters with up to three 3-letter extlangs, or 4–8 letters), then script (4 letters), region
+     * (2 letters or 3 digits), variants (5–8 alphanumerics, or a digit and 3 alphanumerics),
+     * extensions (a singleton other than x, then subtags of 2–8), and private use (x, then subtags
+     * of 1–8) — or a private-use tag alone, or a grandfathered one. A check of characters and
+     * lengths took "a", "en-a" and "en-US-US" (found in co-review of #129), and its regex
+     * predecessor recursed per subtag until the stack overflowed.
+     */
+    static boolean languageTag(String tag) {
+        if (tag.isEmpty() || GRANDFATHERED.contains(tag.toLowerCase(java.util.Locale.ROOT))) {
+            return !tag.isEmpty();
+        }
+        String[] t = tag.split("-", -1);
+        for (String sub : t) {
+            if (sub.isEmpty() || sub.length() > 8 || !alnum(sub)) {
+                return false;
+            }
+        }
+        int i = 0;
+        if (t[0].equalsIgnoreCase("x")) {
+            return privateUse(t, 0);
+        }
+        // language
+        if (!alpha(t[0]) || t[0].length() < 2) {
+            return false;
+        }
+        i = 1;
+        if (t[0].length() <= 3) {
+            for (int ext = 0; ext < 3 && i < t.length && t[i].length() == 3 && alpha(t[i]); ext++) {
+                i++;   // extlang
+            }
+        }
+        if (i < t.length && t[i].length() == 4 && alpha(t[i])) {
+            i++;   // script
+        }
+        if (i < t.length && ((t[i].length() == 2 && alpha(t[i])) || (t[i].length() == 3 && digits(t[i])))) {
+            i++;   // region
+        }
+        while (i < t.length && (t[i].length() >= 5 || (t[i].length() == 4 && isDigit(t[i].charAt(0))))) {
+            i++;   // variant: 5–8 alphanumerics, or a digit and three alphanumerics
+        }
+        while (i < t.length && t[i].length() == 1 && !t[i].equalsIgnoreCase("x")) {
+            int start = ++i;   // extension: its singleton, then at least one subtag of 2–8
+            while (i < t.length && t[i].length() >= 2) {
+                i++;
+            }
+            if (i == start) {
+                return false;
+            }
+        }
+        if (i < t.length && t[i].equalsIgnoreCase("x")) {
+            return privateUse(t, i);
+        }
+        return i == t.length;
+    }
+
+    /** "x" at {@code at}, then at least one subtag (1–8 alphanumerics, checked already), to the end. */
+    private static boolean privateUse(String[] t, int at) {
+        return at + 1 < t.length;
+    }
+
+    private static boolean alnum(String s) {
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (!isAlpha(c) && !isDigit(c)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean alpha(String s) {
+        for (int i = 0; i < s.length(); i++) {
+            if (!isAlpha(s.charAt(i))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean digits(String s) {
+        for (int i = 0; i < s.length(); i++) {
+            if (!isDigit(s.charAt(i))) {
                 return false;
             }
         }
