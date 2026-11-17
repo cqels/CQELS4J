@@ -23,6 +23,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -3329,6 +3330,206 @@ class SparqlProtocolServletTest {
             assertTrue(r.body().contains("port is not a port"), r.body());
         } finally {
             remote.stop(0);
+        }
+    }
+
+    /** What a recording remote saw of one request. */
+    record Seen(String method, String rawQuery, String contentType, String body) { }
+
+    /**
+     * Records each request, then answers as {@link #rowEcho} does: one row binding {@code ?x} per
+     * row of a bound join's {@code VALUES} block, or one row when there is none.
+     */
+    static com.sun.net.httpserver.HttpHandler recording(java.util.Queue<Seen> seen) {
+        return ex -> {
+            String body = new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+            seen.add(new Seen(ex.getRequestMethod(), ex.getRequestURI().getRawQuery(),
+                    ex.getRequestHeaders().getFirst("Content-Type"), body));
+            var m = java.util.regex.Pattern.compile("\\(\"(\\d+)\"")
+                    .matcher(java.net.URLDecoder.decode(body, StandardCharsets.UTF_8));
+            StringBuilder rows = new StringBuilder();
+            while (m.find()) {
+                rows.append(rows.length() == 0 ? "" : ",").append("{\"x\":{\"type\":\"literal\",\"value\":\"r\"},"
+                        + "\"__rowIdx\":{\"type\":\"literal\",\"value\":\"").append(m.group(1)).append("\"}}");
+            }
+            if (rows.length() == 0) {
+                rows.append("{\"x\":{\"type\":\"literal\",\"value\":\"r\"}}");
+            }
+            respond(200, "application/sparql-results+json",
+                    "{\"head\":{\"vars\":[\"x\",\"__rowIdx\"]},\"results\":{\"bindings\":[" + rows + "]}}", 0)
+                    .handle(ex);
+        };
+    }
+
+    /**
+     * A SERVICE query, and the bindings it joins on, travel in a form body, not the URL: RDF4J
+     * sent them as a GET while the URL stayed under about 4 KB, where the remote's and every
+     * proxy's access log kept them. The SERVICE IRI's own parameters stay in its URL.
+     */
+    @Test
+    void serviceQueriesTravelInTheBodyNotTheUrl() throws Exception {
+        var seen = new java.util.concurrent.ConcurrentLinkedQueue<Seen>();
+        var remote = serve(java.util.Map.of("/s", recording(seen)));
+        try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true), 0)) {
+            var r = getCsv(fed.url(), "SELECT * WHERE { VALUES ?v { <urn:ex:secret-k0> <urn:ex:secret-k1> } SERVICE <"
+                    + base(remote) + "/s?key=a%26b> { ?v <urn:ex:q> ?x } }");
+            assertEquals(200, r.statusCode(), r.body());
+            assertEquals(3, r.body().strip().split("\r?\n").length, "two rows joined: " + r.body());
+            assertFalse(seen.isEmpty());
+            for (Seen s : seen) {
+                assertEquals("POST", s.method(), s.toString());
+                assertTrue(s.contentType().startsWith("application/x-www-form-urlencoded"), s.toString());
+                var url = org.apache.http.client.utils.URLEncodedUtils.parse(s.rawQuery(), StandardCharsets.UTF_8);
+                assertEquals(1, url.size(), "only the IRI's own parameter stays in the URL: " + s);
+                assertEquals("key", url.get(0).getName());
+                assertEquals("a&b", url.get(0).getValue());
+                var form = org.apache.http.client.utils.URLEncodedUtils.parse(s.body(), StandardCharsets.UTF_8);
+                assertEquals("query", form.get(0).getName(), s.toString());
+                assertTrue(form.get(0).getValue().contains("urn:ex:secret-k0"), "the bindings go in the body: " + s);
+            }
+        } finally {
+            remote.stop(0);
+        }
+    }
+
+    /** RDF4J's parameters move to the body from {@code query} on; anything that is not such a GET is left alone. */
+    @Test
+    void onlyAGetCarryingAQueryIsTurnedIntoAPost() throws Exception {
+        var get = new org.apache.http.client.methods.HttpGet(
+                "http://h:8/s?key=a%26b&query=SELECT%20*%20%7B%7D&default-graph-uri=urn%3Ag");
+        get.addHeader("Accept", "application/sparql-results+json");
+        var post = TimedServiceClient.asPost(get);
+        assertEquals("POST", post.getRequestLine().getMethod());
+        assertEquals("http://h:8/s?key=a%26b", post.getRequestLine().getUri());
+        assertEquals("application/sparql-results+json", post.getFirstHeader("Accept").getValue());
+        var entity = ((org.apache.http.HttpEntityEnclosingRequest) post).getEntity();
+        assertEquals("query=SELECT%20*%20%7B%7D&default-graph-uri=urn%3Ag", org.apache.http.util.EntityUtils.toString(entity));
+        assertTrue(entity.getContentType().getValue().startsWith("application/x-www-form-urlencoded"));
+        assertTrue(entity.isRepeatable(), "a redirect sends it again");
+
+        var bare = TimedServiceClient.asPost(new org.apache.http.client.methods.HttpGet("http://h/s?query=ASK%7B%7D"));
+        assertEquals("http://h/s", bare.getRequestLine().getUri());
+        var noQuery = new org.apache.http.client.methods.HttpGet("http://h/s?key=1");
+        assertSame(noQuery, TimedServiceClient.asPost(noQuery));
+        var already = new org.apache.http.client.methods.HttpPost("http://h/s");
+        assertSame(already, TimedServiceClient.asPost(already));
+    }
+
+    /**
+     * A POST is redirected with its body: 301, 302, 307 and 308 send it again to the new place,
+     * so the query arrives; a 303 is a GET of what it names, without the body. Before, only a GET
+     * was followed, and a POST's redirect was a 502.
+     */
+    @Test
+    void aRedirectedServicePostKeepsItsQuery() throws Exception {
+        var seen = new java.util.concurrent.ConcurrentLinkedQueue<Seen>();
+        var other = new java.util.concurrent.ConcurrentLinkedQueue<Seen>();
+        var remote = serve(java.util.Map.of(
+                "/s", recording(seen),
+                "/answer", recording(other),
+                "/moved", respond(301, "text/plain", "", 0, "Location", "/s"),
+                "/found", respond(302, "text/plain", "", 0, "Location", "/s"),
+                "/temporary", respond(307, "text/plain", "", 0, "Location", "/s"),
+                "/permanent", respond(308, "text/plain", "", 0, "Location", "/s"),
+                "/see-other", respond(303, "text/plain", "", 0, "Location", "/answer")));
+        try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true), 0)) {
+            for (String path : java.util.List.of("/moved", "/found", "/temporary", "/permanent")) {
+                seen.clear();
+                var r = getCsv(fed.url(), "SELECT * WHERE { SERVICE <" + base(remote) + path + "> { ?s <urn:ex:q> ?x } }");
+                assertEquals(200, r.statusCode(), path + ": " + r.body());
+                assertEquals(1, seen.size(), path);
+                Seen s = seen.peek();
+                assertEquals("POST", s.method(), path);
+                assertTrue(s.body().startsWith("query="), path + ": " + s);
+            }
+            var r = getCsv(fed.url(), "SELECT * WHERE { SERVICE <" + base(remote) + "/see-other> { ?s <urn:ex:q> ?x } }");
+            assertEquals(200, r.statusCode(), r.body());
+            assertEquals(1, other.size());
+            assertEquals("GET", other.peek().method());
+            assertEquals("", other.peek().body(), "a 303 is followed without the body");
+        } finally {
+            remote.stop(0);
+        }
+    }
+
+    /** A GET of the endpoint itself, no query string. */
+    static HttpResponse<String> bare(String url, String accept, String... headers) throws Exception {
+        HttpRequest.Builder b = HttpRequest.newBuilder(URI.create(url));
+        if (accept != null) {
+            b.header("Accept", accept);
+        }
+        for (int i = 0; i + 1 < headers.length; i += 2) {
+            b.header(headers[i], headers[i + 1]);
+        }
+        return HTTP.send(b.build(), HttpResponse.BodyHandlers.ofString());
+    }
+
+    static org.eclipse.rdf4j.model.Model description(HttpResponse<String> r, org.eclipse.rdf4j.rio.RDFFormat f)
+            throws Exception {
+        return org.eclipse.rdf4j.rio.Rio.parse(new java.io.StringReader(r.body()), "", f);
+    }
+
+    static IRI sd(String local) {
+        return VF.createIRI(SparqlProtocolServlet.SD, local);
+    }
+
+    /**
+     * A GET of the endpoint with no query string answers its SPARQL 1.1 Service Description: what
+     * it accepts and answers in, and nothing about the data. It was a 400.
+     */
+    @Test
+    void theBareEndpointDescribesItsService() throws Exception {
+        var r = bare(shared.url(), null);
+        assertEquals(200, r.statusCode(), r.body());
+        assertTrue(r.headers().firstValue("Content-Type").orElse("").startsWith("text/turtle"), r.headers().toString());
+        assertTrue(r.headers().allValues("Vary").stream().anyMatch(v -> v.contains("Accept")));
+        var m = description(r, org.eclipse.rdf4j.rio.RDFFormat.TURTLE);
+        var services = m.filter(null, org.eclipse.rdf4j.model.vocabulary.RDF.TYPE, sd("Service")).subjects();
+        assertEquals(1, services.size(), r.body());
+        var service = services.iterator().next();
+        assertTrue(m.contains(service, sd("endpoint"), VF.createIRI(shared.url())), r.body());
+        assertTrue(m.contains(service, sd("supportedLanguage"), sd("SPARQL11Query")));
+        assertFalse(m.contains(service, sd("supportedLanguage"), sd("SPARQL11Update")), "updates are off by default");
+        assertTrue(m.contains(service, sd("feature"), sd("UnionDefaultGraph")));
+        assertFalse(m.contains(service, sd("feature"), sd("BasicFederatedQuery")), "federation is off by default");
+        for (String f : List.of("SPARQL_Results_JSON", "SPARQL_Results_XML", "SPARQL_Results_CSV", "SPARQL_Results_TSV",
+                "Turtle", "N-Triples", "RDF_XML", "JSON-LD")) {
+            assertTrue(m.contains(service, sd("resultFormat"), VF.createIRI("http://www.w3.org/ns/formats/" + f)), f);
+        }
+        assertFalse(m.contains(null, sd("availableGraphs"), null), "no metadata graph is served here");
+        assertFalse(r.body().contains("EV-7Q2") || r.body().contains("urn:ex:g1"), "nothing of the data: " + r.body());
+
+        var jsonLd = bare(shared.url(), "application/ld+json");
+        assertEquals(200, jsonLd.statusCode(), jsonLd.body());
+        assertEquals(1, description(jsonLd, org.eclipse.rdf4j.rio.RDFFormat.JSONLD)
+                .filter(null, org.eclipse.rdf4j.model.vocabulary.RDF.TYPE, sd("Service")).size());
+        assertEquals(406, bare(shared.url(), "application/sparql-results+json").statusCode(), "not an RDF format");
+        var head = HTTP.send(HttpRequest.newBuilder(URI.create(shared.url())).method("HEAD", HttpRequest.BodyPublishers.noBody())
+                .build(), HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, head.statusCode());
+        assertEquals("", head.body());
+        // parameters but no query are still a 400: the description is for the bare endpoint only
+        var noQuery = HTTP.send(HttpRequest.newBuilder(URI.create(shared.url() + "?default-graph-uri=" + enc(EX + "g1")))
+                .build(), HttpResponse.BodyHandlers.ofString());
+        assertEquals(400, noQuery.statusCode(), noQuery.body());
+    }
+
+    /** What the description says follows the endpoint's options, and the access filters guard it as they guard a query. */
+    @Test
+    void theServiceDescriptionFollowsTheOptions() throws Exception {
+        try (Endpoint all = Endpoint.start(EndpointOptions.defaults().withUpdateEnabled(true).withFederationEnabled(true)
+                .withMetadataEnabled(true), 0)) {
+            var r = bare(all.url(), "text/turtle");
+            assertEquals(200, r.statusCode(), r.body());
+            var m = description(r, org.eclipse.rdf4j.rio.RDFFormat.TURTLE);
+            var service = m.filter(null, org.eclipse.rdf4j.model.vocabulary.RDF.TYPE, sd("Service")).subjects().iterator().next();
+            assertTrue(m.contains(service, sd("supportedLanguage"), sd("SPARQL11Update")), r.body());
+            assertTrue(m.contains(service, sd("feature"), sd("BasicFederatedQuery")), r.body());
+            assertTrue(m.contains(null, sd("name"), SparqlProtocolServlet.METADATA_GRAPH), r.body());
+        }
+        try (Endpoint locked = Endpoint.start(EndpointOptions.defaults().withAuthToken("s3cret"), 0)) {
+            assertEquals(401, bare(locked.url(), null).statusCode(), "the description is behind the token too");
+            assertEquals(200, bare(locked.url(), null, "Authorization", "Bearer s3cret").statusCode());
         }
     }
 
