@@ -594,8 +594,9 @@ final class TimedServiceClient extends CloseableHttpClient {
     private static final java.util.Set<Integer> REDIRECTS = java.util.Set.of(301, 302, 303, 307, 308);
 
     /**
-     * Whether the port {@code uri}'s authority spells out, if it spells one out, is 1 to 5 ASCII
-     * digits naming 1–65535 (an empty one, "host:", means the default, as RFC 3986 allows). Read
+     * Whether the port {@code uri}'s authority spells out, if it spells one out, is ASCII digits
+     * naming 1–65535, leading zeros allowed (an empty one, "host:", means the default, as RFC 3986
+     * allows). Read
      * from the raw authority: parsed, a negative or malformed port became "none".
      */
     static boolean explicitPortValid(java.net.URI uri) {
@@ -624,16 +625,15 @@ final class TimedServiceClient extends CloseableHttpClient {
         if (port.isEmpty()) {
             return true;
         }
-        if (port.length() > 5) {
-            return false;
-        }
         for (int i = 0; i < port.length(); i++) {
             if (!isDigit(port.charAt(i))) {
                 return false;
             }
         }
-        int n = Integer.parseInt(port);
-        return n >= 1 && n <= 65535;
+        // leading zeros are allowed (RFC 3986 §3.2.3: ":000443" is 443; a length limit refused it,
+        // found in co-review of #129); what is left must fit 1–65535 without overflowing
+        String digits = port.replaceFirst("^0+", "");
+        return !digits.isEmpty() && digits.length() <= 5 && Integer.parseInt(digits) <= 65535;
     }
 
     private static void abort(HttpRequest request) {
@@ -706,6 +706,9 @@ final class TimedServiceClient extends CloseableHttpClient {
             // is carried on as UTF-8.
             java.nio.charset.Charset encoding = mediaType.equals("text/boolean")
                     ? java.nio.charset.StandardCharsets.UTF_8 : jsonEncoding(body);
+            if (encoding.name().startsWith("UTF-32")) {
+                utf32Scalars(body, encoding.name().endsWith("BE"));
+            }
             String decoded = encoding.newDecoder()
                     .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
                     .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
@@ -1190,6 +1193,26 @@ final class TimedServiceClient extends CloseableHttpClient {
             }
         }
         return java.nio.charset.StandardCharsets.UTF_8;
+    }
+
+    /**
+     * Every 4-byte unit a Unicode scalar value: not a surrogate, not above U+10FFFF. Java's UTF-32
+     * decoder took surrogate code points despite REPORT, and the UTF-8 conversion then turned one
+     * into '?', or two into one supplementary character (found in co-review of #129).
+     */
+    static void utf32Scalars(byte[] b, boolean bigEndian) throws IOException {
+        if (b.length % 4 != 0) {
+            throw new IOException("UTF-32 that is not a whole number of code units");
+        }
+        for (int i = 0; i < b.length; i += 4) {
+            int cp = bigEndian
+                    ? ((b[i] & 0xFF) << 24) | ((b[i + 1] & 0xFF) << 16) | ((b[i + 2] & 0xFF) << 8) | (b[i + 3] & 0xFF)
+                    : ((b[i + 3] & 0xFF) << 24) | ((b[i + 2] & 0xFF) << 16) | ((b[i + 1] & 0xFF) << 8) | (b[i] & 0xFF);
+            if (cp < 0 || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF)) {
+                throw new IOException("UTF-32 holding U+" + Integer.toHexString(cp).toUpperCase(java.util.Locale.ROOT)
+                        + ", which is not a Unicode scalar value");
+            }
+        }
     }
 
     /** Whether every surrogate in {@code s} is half of a pair, in order. */
