@@ -2929,6 +2929,57 @@ class SparqlProtocolServletTest {
         }
     }
 
+    // ---- co-review round 3 of #129 ----------------------------------------------------------------
+
+    /** The form is read in one pass: a regex recursed per PREFIX, and 2,000 of them overflowed the stack. */
+    @Test
+    void theQueryFormIsReadWithoutRecursion() {
+        String prologue = "PREFIX p0: <urn:p0>\n".repeat(2000);
+        assertEquals(Boolean.TRUE, TimedServiceClient.formOf(prologue + "SELECT * WHERE {}"));
+        assertEquals(Boolean.FALSE, TimedServiceClient.formOf("BASE <http://b/>\n# a comment\nask { ?s ?p ?o }"));
+        assertEquals(null, TimedServiceClient.formOf("CONSTRUCT WHERE {}"));
+        assertEquals(null, TimedServiceClient.formOf("SELECTED"));
+        assertEquals(null, TimedServiceClient.formOf("PREFIX p: <unclosed"));
+    }
+
+    /** RDF-star triple terms are refused: RDF4J read one with a string value as an unbound variable. */
+    @Test
+    void tripleTermsAreRefused() {
+        String triple = "{\"head\":{\"vars\":[\"x\"]},\"results\":{\"bindings\":[{\"x\":{\"type\":\"triple\",\"value\":\"a\"}}]}}";
+        assertTrue(TimedServiceClient.invalidResult("application/sparql-results+json", triple.getBytes(StandardCharsets.UTF_8), null) != null);
+    }
+
+    /** A boolean answer reaches RDF4J as the answer alone: RDF4J reads 16 characters, and "                false" read as no answer. */
+    @Test
+    void aBooleanAnswerIsPassedOnCanonical() throws Exception {
+        var remote = serve(java.util.Map.of("/bool", respond(200, "text/boolean", " ".repeat(16) + "false\n", 0)));
+        TimedServiceClient client = new TimedServiceClient(5000);
+        try {
+            var r = client.execute(new org.apache.http.client.methods.HttpGet("http://127.0.0.1:" + remote.getAddress().getPort()
+                    + "/bool?query=" + enc("ASK { ?s ?p ?o }")));
+            byte[] body = org.apache.http.util.EntityUtils.toByteArray(r.getEntity());
+            assertEquals("false", new String(body, StandardCharsets.US_ASCII));
+            assertFalse(org.eclipse.rdf4j.query.resultio.QueryResultIO.parseBoolean(new java.io.ByteArrayInputStream(body),
+                    org.eclipse.rdf4j.query.resultio.BooleanQueryResultFormat.TEXT));
+        } finally {
+            client.close();
+            remote.stop(0);
+        }
+    }
+
+    /** A redirect to a port out of range is the remote's failure: it came back as the caller's 400. */
+    @Test
+    void aRedirectToAnImpossiblePortIsA502() throws Exception {
+        var remote = serve(java.util.Map.of("/far", respond(302, "text/plain", "", 0, "Location", "http://127.0.0.1:65536/result")));
+        try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true), 0)) {
+            var r = getCsv(fed.url(), "SELECT * WHERE { SERVICE <http://127.0.0.1:" + remote.getAddress().getPort() + "/far> { ?s ?p ?o } }");
+            assertEquals(502, r.statusCode(), r.body());
+            assertTrue(r.body().contains("port is out of range"), r.body());
+        } finally {
+            remote.stop(0);
+        }
+    }
+
     @SuppressWarnings("unused")
     private static void silence(IOException ignored) { }
 }
