@@ -227,11 +227,13 @@ curl http://127.0.0.1:8089/sparql
 | `sd:endpoint` | always: the URL the request was sent to |
 | `sd:supportedLanguage sd:SPARQL11Query` | always |
 | `sd:supportedLanguage sd:SPARQL11Update` | `CQELS_SPARQL_UPDATE_ENABLED=true` (a read token still cannot update) |
-| `sd:feature sd:UnionDefaultGraph` | always: RDF4J's default graph is the union of the store's graphs |
 | `sd:feature sd:BasicFederatedQuery` | `CQELS_SPARQL_FEDERATION_ENABLED=true` and `SERVICE` would run, not be refused with `503` (see *Embedding the servlet*) |
 | `sd:resultFormat` | every format the endpoint can answer in that has a W3C format IRI |
 | `sd:availableGraphs` naming `cqels://endpoint/metadata` | the metadata graph is served |
 
+- **No `sd:UnionDefaultGraph`.** That feature means the default graph is the union of the named
+  graphs; RDF4J's also holds the triples stored in no named graph, so a client relying on the
+  feature's meaning would get different answers.
 - **Nothing about the data.** No graph names from the store and no counts: listing them would
   scan the store on every request, and tell a reader what the token guards.
 - **The same filters as a query.** The token, the `Host` and `Origin` checks run before it; it

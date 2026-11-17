@@ -392,8 +392,7 @@ public final class SparqlProtocolServlet extends HttpServlet {
     /**
      * What {@link #describeService} serves for the endpoint at {@code endpoint}: the languages
      * (SPARQL 1.1 Update only while updates are enabled), the result formats the writers here can
-     * produce (those with a W3C format IRI), {@code sd:UnionDefaultGraph} (RDF4J's default graph is
-     * the union of the store's graphs), {@code sd:BasicFederatedQuery} only while federation is
+     * produce (those with a W3C format IRI), {@code sd:BasicFederatedQuery} only while federation is
      * enabled (and the repository's client has the endpoint's limits, without which SERVICE is a
      * 503), and the metadata graph among the available graphs only when this servlet serves it.
      */
@@ -408,7 +407,8 @@ public final class SparqlProtocolServlet extends HttpServlet {
         if (options.updateEnabled()) {
             m.add(service, VF.createIRI(SD, "supportedLanguage"), VF.createIRI(SD, "SPARQL11Update"));
         }
-        m.add(service, VF.createIRI(SD, "feature"), VF.createIRI(SD, "UnionDefaultGraph"));
+        // Not sd:UnionDefaultGraph: it means the union of the named graphs, and RDF4J's default
+        // graph also holds the triples in no named graph (found in co-review of #130)
         if (options.federationEnabled() && serviceRuns()) {
             m.add(service, VF.createIRI(SD, "feature"), VF.createIRI(SD, "BasicFederatedQuery"));
         }

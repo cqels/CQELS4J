@@ -419,6 +419,12 @@ final class TimedServiceClient extends CloseableHttpClient {
         current.set(hop);
         hop.setHeader("Accept", Boolean.TRUE.equals(expectTuple) ? ACCEPT_TUPLE : ACCEPT);
         try {
+            // A timer that fired while the POST was built aborted RDF4J's GET, not the POST; sent,
+            // the POST would run unbounded (found in co-review of #130). Checked after publishing,
+            // as between redirects, so one of the two always sees the other.
+            if (fired.get()) {
+                throw timedOut(new IOException("deadline reached before the request was sent"), timeoutUsed, budget);
+            }
             for (int redirects = 0; ; redirects++) {
                 CloseableHttpResponse response;
                 try {
@@ -632,9 +638,16 @@ final class TimedServiceClient extends CloseableHttpClient {
             return request;
         }
         String uri = request.getRequestLine().getUri();
+        int hash = uri.indexOf('#');
+        if (hash >= 0) {
+            // RDF4J keeps a SERVICE IRI's fragment at the end of the URL it builds; skipping such
+            // a URL sent its bindings as a GET after all (found in co-review of #130). A fragment
+            // never goes over the wire, so it is dropped here.
+            uri = uri.substring(0, hash);
+        }
         int mark = uri.indexOf('?');
-        if (mark < 0 || uri.indexOf('#') >= 0) {
-            return request;   // no parameters, or a form RDF4J does not build: sent as it is
+        if (mark < 0) {
+            return request;   // no parameters: sent as it is
         }
         String[] pairs = uri.substring(mark + 1).split("&", -1);
         int at = -1;
