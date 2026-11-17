@@ -3199,6 +3199,27 @@ class SparqlProtocolServletTest {
         assertFalse(TimedServiceClient.absoluteIri("http://example.org/a￾b"));
     }
 
+    // ---- co-review round 9 of #129 ----------------------------------------------------------------
+
+    /** IPv6 by its grammar, ASCII hex only, and plane 14 from U+E1000. */
+    @Test
+    void iriDetailsFollowTheGrammar() {
+        for (String ok : List.of("http://[::ffff:192.0.2.1]/r", "http://[::1]/", "http://[2001:db8::]/", "http://[1:2:3:4:5:6:7:8]/",
+                "http://[::]/", "http://[1:2:3:4:5:6:192.0.2.1]/", "urn:x\udb44\udc00")) {   // U+E1000
+            assertTrue(TimedServiceClient.absoluteIri(ok), ok);
+        }
+        for (String bad : List.of("http://[::192.000.2.1]/r", "http://[1:2:3:4:5:6:7:8:9]/", "http://[1::2::3]/", "http://[12345::]/",
+                "http://[1:2:3:4:5:6:7]/", "http://[::256.0.0.1]/", "http://example.org/%４１", "http://[v１.a]/",
+                "urn:x󠀁")) {   // U+E0001
+            assertFalse(TimedServiceClient.absoluteIri(bad), bad);
+        }
+        String json = "application/sparql-results+json";
+        assertTrue(TimedServiceClient.invalidResult(json, row("{\"type\":\"uri\",\"value\":\"urn:x󠀁\"}")
+                .getBytes(StandardCharsets.UTF_8), null) != null);
+        assertTrue(TimedServiceClient.invalidResult(json, row("{\"type\":\"literal\",\"value\":\"1\",\"datatype\":\"urn:x󠀁\"}")
+                .getBytes(StandardCharsets.UTF_8), null) != null);
+    }
+
     @SuppressWarnings("unused")
     private static void silence(IOException ignored) { }
 }
