@@ -2561,21 +2561,235 @@ class SparqlProtocolServletTest {
         }
     }
 
-    /** A redirect from https may not drop to plain http (the LOAD rule); checked on the strategy itself, without a TLS server. */
+    /** A redirect from https may not drop to plain http (the LOAD rule); checked on the rule itself, without a TLS server. */
     @Test
-    void anHttpsServiceIsNotRedirectedToHttp() throws Exception {
-        var strategy = TimedServiceClient.HTTP_ONLY_REDIRECTS;
-        var context = org.apache.http.client.protocol.HttpClientContext.create();
-        context.setAttribute(org.apache.http.protocol.HttpCoreContext.HTTP_TARGET_HOST,
-                new org.apache.http.HttpHost("remote.example", 443, "https"));
-        var request = new org.apache.http.client.methods.HttpGet("https://remote.example/sparql");
-        var down = new org.apache.http.message.BasicHttpResponse(org.apache.http.HttpVersion.HTTP_1_1, 302, "Found");
-        down.addHeader("Location", "http://remote.example/sparql");
-        var e = assertThrows(org.apache.http.ProtocolException.class, () -> strategy.getLocationURI(request, down, context));
-        assertTrue(e.getMessage().contains("may not drop to plain http"), e.getMessage());
-        var across = new org.apache.http.message.BasicHttpResponse(org.apache.http.HttpVersion.HTTP_1_1, 302, "Found");
-        across.addHeader("Location", "https://mirror.example/sparql");
-        assertEquals("https://mirror.example/sparql", strategy.getLocationURI(request, across, context).toString());
+    void anHttpsServiceIsNotRedirectedToHttp() {
+        URI from = URI.create("https://remote.example/sparql?query=x");
+        String down = TimedServiceClient.refusedRedirect(from, URI.create("http://remote.example/sparql"));
+        assertTrue(down != null && down.contains("may not drop to plain http"), String.valueOf(down));
+        assertEquals(null, TimedServiceClient.refusedRedirect(from, URI.create("https://mirror.example/sparql")));
+        assertEquals(null, TimedServiceClient.refusedRedirect(URI.create("http://a.example/"), URI.create("https://b.example/")));
+        assertTrue(TimedServiceClient.refusedRedirect(from, URI.create("ftp://remote.example/x")).contains("only http and https"));
+    }
+
+    // ---- co-review of #129 ------------------------------------------------------------------------
+
+    /**
+     * deflate answers gave no connection back: the decoder stops at the end of the compressed data,
+     * short of the end of the body, so Apache never took the connection back, and with the route's
+     * five connections leased the sixth request waited for one. (Java's gzip decoder reads its
+     * trailer to the end, which is why gzip did not show it.)
+     */
+    @Test
+    void compressedServiceAnswersGiveTheirConnectionBack() throws Exception {
+        var hits = new java.util.concurrent.atomic.AtomicInteger();
+        var plain = rowEcho(0, hits);
+        var remote = serve(java.util.Map.of("/gz", ex -> {
+            // rowEcho's answer, deflated
+            var capture = new java.io.ByteArrayOutputStream();
+            com.sun.net.httpserver.HttpExchange wrapped = new com.sun.net.httpserver.HttpExchange() {
+                final com.sun.net.httpserver.Headers out = new com.sun.net.httpserver.Headers();
+                public com.sun.net.httpserver.Headers getRequestHeaders() { return ex.getRequestHeaders(); }
+                public com.sun.net.httpserver.Headers getResponseHeaders() { return out; }
+                public URI getRequestURI() { return ex.getRequestURI(); }
+                public String getRequestMethod() { return ex.getRequestMethod(); }
+                public com.sun.net.httpserver.HttpContext getHttpContext() { return ex.getHttpContext(); }
+                public void close() { }
+                public java.io.InputStream getRequestBody() { return ex.getRequestBody(); }
+                public java.io.OutputStream getResponseBody() { return capture; }
+                public void sendResponseHeaders(int code, long length) { }
+                public java.net.InetSocketAddress getRemoteAddress() { return ex.getRemoteAddress(); }
+                public int getResponseCode() { return 200; }
+                public java.net.InetSocketAddress getLocalAddress() { return ex.getLocalAddress(); }
+                public String getProtocol() { return ex.getProtocol(); }
+                public Object getAttribute(String name) { return null; }
+                public void setAttribute(String name, Object value) { }
+                public void setStreams(java.io.InputStream i, java.io.OutputStream o) { }
+                public com.sun.net.httpserver.HttpPrincipal getPrincipal() { return null; }
+            };
+            plain.handle(wrapped);
+            var deflated = new java.io.ByteArrayOutputStream();
+            try (var z = new java.util.zip.DeflaterOutputStream(deflated)) {
+                z.write(capture.toByteArray());
+            }
+            ex.getResponseHeaders().add("Content-Type", "application/sparql-results+json");
+            ex.getResponseHeaders().add("Content-Encoding", "deflate");
+            ex.sendResponseHeaders(200, deflated.size());
+            ex.getResponseBody().write(deflated.toByteArray());
+            ex.close();
+        }));
+        try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true).withMaxExecutionSeconds(10), 0)) {
+            long t0 = System.nanoTime();
+            var r = getCsv(fed.url(), "SELECT * WHERE { " + values(150) + " SERVICE <http://127.0.0.1:"
+                    + remote.getAddress().getPort() + "/gz> { ?v <urn:ex:q> ?x } }");
+            assertEquals(200, r.statusCode(), r.body());
+            assertEquals(150, r.body().lines().count() - 1);
+            assertEquals(10, hits.get());
+            assertTrue((System.nanoTime() - t0) / 1e9 < 5, "a request waited for a connection");
+        } finally {
+            remote.stop(0);
+        }
+    }
+
+    /**
+     * Redirects are followed by the client itself, each counted against the query's requests, and
+     * a redirect's body is dropped, not read: Apache followed one past a budget of a single
+     * request, and drained its body with no cap. Off-http redirects are refused under SILENT too.
+     */
+    @Test
+    void redirectsCountAgainstTheBudgetAndAreNotDrained() throws Exception {
+        var hits = new java.util.concurrent.atomic.AtomicInteger();
+        var refusedHits = new java.util.concurrent.atomic.AtomicInteger();
+        var remote = serve(java.util.Map.of(
+                "/to-ftp-counted", ex -> {
+                    refusedHits.incrementAndGet();
+                    respond(302, "text/plain", "", 0, "Location", "ftp://127.0.0.1/x").handle(ex);
+                },
+                "/hop", ex -> {
+                    ex.getResponseHeaders().add("Location", "/rows");
+                    ex.sendResponseHeaders(302, 0);
+                    try (var out = ex.getResponseBody()) {
+                        byte[] junk = new byte[1 << 20];
+                        for (int i = 0; i < 4096; i++) {
+                            out.write(junk);   // 4 GB of redirect body nobody should read
+                        }
+                    } catch (IOException gone) {
+                        // dropped, as it should be
+                    }
+                },
+                "/rows", rowEcho(0, hits),
+                "/to-ftp", respond(302, "text/plain", "", 0, "Location", "ftp://127.0.0.1/x")));
+        String base = "http://127.0.0.1:" + remote.getAddress().getPort();
+        try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true), 0);
+             Endpoint one = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true).withMaxServiceRequests(1), 0)) {
+            long t0 = System.nanoTime();
+            var followed = getCsv(fed.url(), "SELECT * WHERE { SERVICE <" + base + "/hop> { ?s ?p ?x } }");
+            assertEquals(200, followed.statusCode(), followed.body());
+            assertTrue((System.nanoTime() - t0) / 1e9 < 5, "the redirect's body was read");
+            assertEquals(1, hits.get());
+            var counted = getCsv(one.url(), "SELECT * WHERE { SERVICE <" + base + "/hop> { ?s ?p ?x } }");
+            assertEquals(503, counted.statusCode(), "the redirect is a second request: " + counted.body());
+            var silent = getCsv(fed.url(), "SELECT * WHERE { ?v <urn:ex:depot> ?d SERVICE SILENT <" + base + "/to-ftp> { ?s ?p ?o } }");
+            assertEquals(502, silent.statusCode(), "a refused redirect under SILENT: " + silent.body());
+            // and once refused, the query asks nothing more: 3 batches, 1 request
+            var batches = getCsv(fed.url(), "SELECT * WHERE { " + values(45) + " SERVICE SILENT <" + base
+                    + "/to-ftp-counted> { ?v <urn:ex:q> ?x } }");
+            assertEquals(502, batches.statusCode(), batches.body());
+            assertEquals(1, refusedHits.get(), "requests after the refusal");
+        } finally {
+            remote.stop(0);
+        }
+    }
+
+    /**
+     * Bytes count as they are read, failed and error answers included, and across all of a
+     * query's answers; once the budget is spent no further request is made, SILENT or not.
+     */
+    @Test
+    void serviceBytesAreCountedAcrossAnswersAndFailures() throws Exception {
+        var hits = new java.util.concurrent.atomic.AtomicInteger();
+        var errors = new java.util.concurrent.atomic.AtomicInteger();
+        var remote = serve(java.util.Map.of("/rows", rowEcho(0, hits), "/error", ex -> {
+            errors.incrementAndGet();
+            byte[] body = "x".repeat(1024).getBytes(StandardCharsets.UTF_8);
+            ex.getResponseHeaders().add("Content-Type", "text/plain");
+            ex.sendResponseHeaders(500, body.length);
+            ex.getResponseBody().write(body);
+            ex.close();
+        }));
+        String base = "http://127.0.0.1:" + remote.getAddress().getPort();
+        // one batch of 15 rows answers about 1.3 KB: each answer fits in 4 KB, ten of them do not
+        try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true).withMaxServiceBytes(4096), 0)) {
+            var many = getCsv(fed.url(), "SELECT * WHERE { " + values(150) + " SERVICE <" + base + "/rows> { ?v <urn:ex:q> ?x } }");
+            assertEquals(502, many.statusCode(), many.body());
+            assertTrue(hits.get() < 10, "requests went on after the bytes were spent: " + hits.get());
+            var silent = getCsv(fed.url(), "SELECT * WHERE { " + values(150) + " SERVICE SILENT <" + base + "/error> { ?v <urn:ex:q> ?x } }");
+            assertEquals(502, silent.statusCode(), "error answers spend the budget too: " + silent.body());
+            assertTrue(errors.get() < 10, "requests made: " + errors.get());
+        } finally {
+            remote.stop(0);
+        }
+    }
+
+    /** A timeout counts as one whichever deadline wins: the name lookup's own one vanished under SILENT. */
+    @Test
+    void aNameLookupTimeoutTripsTheBudget() {
+        try (var budget = TimedServiceClient.Budget.open(30, 100, 1 << 20)) {
+            var lookup = new java.net.UnknownHostException("stalled.example: name lookup did not finish within 1000 ms");
+            lookup.initCause(new java.net.SocketTimeoutException("name lookup deadline"));
+            IOException reported = TimedServiceClient.failure(lookup, new java.util.concurrent.atomic.AtomicBoolean(false), 1000,
+                    budget, new org.apache.http.HttpHost("stalled.example", 80), "could not be reached");
+            assertTrue(reported instanceof java.net.SocketTimeoutException, reported.toString());
+            assertEquals(504, budget.tripped().status);
+        }
+    }
+
+    /** RDF4J's parser alone accepted answers that are not SPARQL results, and read them as no rows. */
+    @Test
+    void onlyWellFormedSparqlJsonIsAccepted() throws Exception {
+        String json = "application/sparql-results+json";
+        for (String bad : List.of("{}", "{\"head\":{\"vars\":[\"x\"]}}", "{\"head\":{},\"results\":{\"bindings\":[]}} trailing",
+                "{\"head\":{},\"boolean\":42}", "{\"head\":{},\"results\":{}}", "[]",
+                "{\"head\":{},\"results\":{\"bindings\":[]},\"boolean\":true}")) {
+            assertTrue(TimedServiceClient.invalidResult(json, bad.getBytes(StandardCharsets.UTF_8)) != null, bad);
+        }
+        for (String good : List.of("{\"head\":{\"vars\":[\"x\"]},\"results\":{\"bindings\":[]}}", "{\"head\":{},\"boolean\":true}",
+                "{\"head\":{\"vars\":[\"x\"]},\"results\":{\"bindings\":[{\"x\":{\"type\":\"literal\",\"value\":\"a\"}}]}}")) {
+            assertEquals(null, TimedServiceClient.invalidResult(json, good.getBytes(StandardCharsets.UTF_8)), good);
+        }
+        assertEquals(null, TimedServiceClient.invalidResult("text/boolean", "true".getBytes(StandardCharsets.UTF_8)));
+        assertTrue(TimedServiceClient.invalidResult("text/tab-separated-values", "?x\ntrue\n".getBytes(StandardCharsets.UTF_8)) != null);
+        // end to end: a head-only answer under SILENT keeps the rows
+        var remote = serve(java.util.Map.of("/head", respond(200, json, "{\"head\":{\"vars\":[\"x\"]}}", 0),
+                "/tsv", respond(200, "text/tab-separated-values", "?x\n\"a\"\n", 0)));
+        try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true), 0)) {
+            String base = "http://127.0.0.1:" + remote.getAddress().getPort();
+            var r = getCsv(fed.url(), "SELECT ?v WHERE { ?v <urn:ex:depot> ?d SERVICE SILENT <" + base + "/head> { ?y <urn:ex:q> ?x } }");
+            assertEquals(3, r.body().lines().count(), r.body());
+            var tsv = getCsv(fed.url(), "SELECT * WHERE { SERVICE <" + base + "/tsv> { ?s ?p ?x } }");
+            assertEquals(502, tsv.statusCode(), tsv.body());
+            assertTrue(tsv.body().contains("answered Content-Type 'text/tab-separated-values'"), tsv.body());
+        } finally {
+            remote.stop(0);
+        }
+    }
+
+    /** An answer that breaks off at the HTTP level is the remote's failure: 502, not 500. */
+    @Test
+    void anAnswerThatBreaksOffIsA502() throws Exception {
+        var remote = serve(java.util.Map.of("/short", ex -> {
+            ex.getResponseHeaders().add("Content-Type", "application/sparql-results+json");
+            ex.sendResponseHeaders(200, 1000);   // promises 1,000 bytes
+            ex.getResponseBody().write("{\"head\":{\"vars\":[]}".getBytes(StandardCharsets.UTF_8));
+            ex.getResponseBody().flush();
+            ex.getHttpContext().getServer().stop(0);   // and closes after 19
+        }));
+        try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true), 0)) {
+            var r = getCsv(fed.url(), "SELECT * WHERE { SERVICE <http://127.0.0.1:" + remote.getAddress().getPort() + "/short> { ?s ?p ?o } }");
+            assertEquals(502, r.statusCode(), r.body());
+        }
+    }
+
+    /** No credentials leave: a user:pass@ in the URL was sent once the remote asked (Basic, on the second request). */
+    @Test
+    void noCredentialsAreSentEvenWhenARemoteAsks() throws Exception {
+        var seen = new java.util.concurrent.CopyOnWriteArrayList<String>();
+        var remote = serve(java.util.Map.of("/auth", ex -> {
+            seen.add(String.valueOf(ex.getRequestHeaders().getFirst("Authorization")));
+            ex.getResponseHeaders().add("WWW-Authenticate", "Basic realm=\"r\"");
+            ex.getResponseHeaders().add("Content-Type", "text/plain");
+            ex.sendResponseHeaders(401, -1);
+            ex.close();
+        }));
+        try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true), 0)) {
+            var r = getCsv(fed.url(), "SELECT * WHERE { SERVICE <http://user:secret@127.0.0.1:" + remote.getAddress().getPort()
+                    + "/auth> { ?s ?p ?o } }");
+            assertEquals(502, r.statusCode(), r.body());
+            assertTrue(r.body().contains("answered HTTP 401"), r.body());
+            assertEquals(List.of("null"), seen, "Authorization sent: " + seen);
+        } finally {
+            remote.stop(0);
+        }
     }
 
     @SuppressWarnings("unused")
