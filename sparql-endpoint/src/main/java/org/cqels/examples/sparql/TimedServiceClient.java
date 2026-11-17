@@ -55,6 +55,13 @@ final class TimedServiceClient extends CloseableHttpClient {
         DEADLINES.setRemoveOnCancelPolicy(true);
     }
 
+    /**
+     * Called with RDF4J's request after its POST is built and before that POST is published to
+     * the deadline timer; for tests, which pause here to put the deadline in that window. Always
+     * {@code null} outside them.
+     */
+    static volatile java.util.function.Consumer<HttpRequest> beforePublish;
+
     /** Deadlines armed and not yet fired or cancelled; for tests. */
     static int armedDeadlines() {
         return DEADLINES.getQueue().size();
@@ -415,9 +422,20 @@ final class TimedServiceClient extends CloseableHttpClient {
             BoundedDns.DEADLINE.set(System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeout));
         }
         HttpHost host = target;
-        HttpRequest hop = request;
+        HttpRequest hop = asPost(request);
+        java.util.function.Consumer<HttpRequest> pause = beforePublish;
+        if (pause != null) {
+            pause.accept(request);
+        }
+        current.set(hop);
         hop.setHeader("Accept", Boolean.TRUE.equals(expectTuple) ? ACCEPT_TUPLE : ACCEPT);
         try {
+            // A timer that fired while the POST was built aborted RDF4J's GET, not the POST; sent,
+            // the POST would run unbounded (found in co-review of #130). Checked after publishing,
+            // as between redirects, so one of the two always sees the other.
+            if (fired.get()) {
+                throw timedOut(new IOException("deadline reached before the request was sent"), timeoutUsed, budget);
+            }
             for (int redirects = 0; ; redirects++) {
                 CloseableHttpResponse response;
                 try {
@@ -440,7 +458,9 @@ final class TimedServiceClient extends CloseableHttpClient {
                     int status = response.getStatusLine().getStatusCode();
                     org.apache.http.HttpEntity entity = response.getEntity();
                     org.apache.http.Header location = response.getFirstHeader("Location");
-                    if (REDIRECTS.contains(status) && location != null && "GET".equalsIgnoreCase(hop.getRequestLine().getMethod())) {
+                    org.apache.http.HttpEntity form = repeatableForm(hop);   // null: not a POST that can be sent again
+                    if (REDIRECTS.contains(status) && location != null
+                            && ("GET".equalsIgnoreCase(hop.getRequestLine().getMethod()) || form != null)) {
                         java.net.URI from;
                         java.net.URI to;
                         try {
@@ -463,10 +483,23 @@ final class TimedServiceClient extends CloseableHttpClient {
                         if (budget != null) {
                             budget.countRequest();
                         }
-                        org.apache.http.client.methods.HttpGet next = new org.apache.http.client.methods.HttpGet(to);
+                        org.apache.http.client.methods.HttpRequestBase next;
+                        if (form != null && status != 303) {
+                            // The query and its bindings are in the body, so a redirect that drops
+                            // the body would ask the next server nothing: the POST is sent again,
+                            // as 307 and 308 require and RFC 9110 (15.4.2, 15.4.3) allows for 301 and
+                            // 302. A 303 names another resource to GET, without the body.
+                            org.apache.http.client.methods.HttpPost again = new org.apache.http.client.methods.HttpPost(to);
+                            again.setEntity(form);
+                            next = again;
+                        } else {
+                            next = new org.apache.http.client.methods.HttpGet(to);
+                        }
                         for (org.apache.http.Header h : hop.getAllHeaders()) {
-                            if (!h.getName().equalsIgnoreCase("Host")) {
-                                next.addHeader(h);
+                            String name = h.getName();
+                            if (!name.equalsIgnoreCase("Host") && !name.equalsIgnoreCase("Content-Type")
+                                    && !name.equalsIgnoreCase("Content-Length")) {
+                                next.addHeader(h);   // the body's own headers come from its entity, if it has one
                             }
                         }
                         if (!explicitPortValid(to)) {
@@ -592,6 +625,82 @@ final class TimedServiceClient extends CloseableHttpClient {
     }
 
     private static final java.util.Set<Integer> REDIRECTS = java.util.Set.of(301, 302, 303, 307, 308);
+
+    /**
+     * {@code request} as a SPARQL 1.1 Protocol "query via URL-encoded POST" (§2.1.2), when RDF4J
+     * built it as a GET; any other request as it is.
+     *
+     * <p><strong>Why.</strong> RDF4J sends a SERVICE query as a GET while the URL stays under
+     * about 4 KB, and the query carries the bindings it joins on — up to 15 rows of the caller's
+     * data in a {@code VALUES} block. In the URL they land in the access log of the remote and of
+     * every proxy on the way, which keep them long after the query (found in the federation
+     * follow-ups after #129). In a body they do not.
+     *
+     * <p><strong>What moves.</strong> RDF4J appends its own parameters — {@code query}, then any
+     * {@code default-graph-uri} and {@code named-graph-uri} — after whatever the SERVICE IRI
+     * already has. Those, from the {@code query} parameter on, go to the body, as RDF4J's own
+     * POST puts them; the IRI's parameters stay in the URL, where its owner put them (an API key,
+     * say). There is one {@code query} parameter at most: {@link #queryParameters} refused more
+     * before this is reached. The pairs move as they are, still percent-encoded, which a form body
+     * reads the same way.
+     */
+    static HttpRequest asPost(HttpRequest request) {
+        if (!"GET".equalsIgnoreCase(request.getRequestLine().getMethod())) {
+            return request;
+        }
+        String uri = request.getRequestLine().getUri();
+        int hash = uri.indexOf('#');
+        if (hash >= 0) {
+            // RDF4J keeps a SERVICE IRI's fragment at the end of the URL it builds; skipping such
+            // a URL sent its bindings as a GET after all (found in co-review of #130). A fragment
+            // never goes over the wire, so it is dropped here.
+            uri = uri.substring(0, hash);
+        }
+        int mark = uri.indexOf('?');
+        if (mark < 0) {
+            return request;   // no parameters: sent as it is
+        }
+        String[] pairs = uri.substring(mark + 1).split("&", -1);
+        int at = -1;
+        for (int i = 0; i < pairs.length && at < 0; i++) {
+            for (org.apache.http.NameValuePair pair : org.apache.http.client.utils.URLEncodedUtils.parse(pairs[i],
+                    java.nio.charset.StandardCharsets.UTF_8)) {
+                if (pair.getName().equals("query")) {
+                    at = i;
+                }
+            }
+        }
+        if (at < 0) {
+            return request;   // no query to move
+        }
+        String kept = String.join("&", java.util.Arrays.copyOfRange(pairs, 0, at));
+        String moved = String.join("&", java.util.Arrays.copyOfRange(pairs, at, pairs.length));
+        org.apache.http.client.methods.HttpPost post = new org.apache.http.client.methods.HttpPost(
+                uri.substring(0, kept.isEmpty() ? mark : mark + 1) + kept);
+        for (org.apache.http.Header h : request.getAllHeaders()) {
+            if (!h.getName().equalsIgnoreCase("Host")) {
+                post.addHeader(h);
+            }
+        }
+        if (request instanceof org.apache.http.client.methods.HttpRequestBase base) {
+            post.setConfig(base.getConfig());
+        }
+        // the pairs are ASCII already, percent-encoded by RDF4J's URIBuilder
+        post.setEntity(new org.apache.http.entity.StringEntity(moved,
+                org.apache.http.entity.ContentType.create("application/x-www-form-urlencoded",
+                        java.nio.charset.StandardCharsets.UTF_8)));
+        return post;
+    }
+
+    /** {@code request}'s body, when it is a POST whose body can be sent again; otherwise {@code null}. */
+    private static org.apache.http.HttpEntity repeatableForm(HttpRequest request) {
+        if ("POST".equalsIgnoreCase(request.getRequestLine().getMethod())
+                && request instanceof org.apache.http.HttpEntityEnclosingRequest enclosing
+                && enclosing.getEntity() != null && enclosing.getEntity().isRepeatable()) {
+            return enclosing.getEntity();
+        }
+        return null;
+    }
 
     /**
      * Whether the port {@code uri}'s authority spells out, if it spells one out, is ASCII digits

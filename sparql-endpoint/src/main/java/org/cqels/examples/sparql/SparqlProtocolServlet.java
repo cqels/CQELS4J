@@ -103,6 +103,7 @@ import java.util.function.Supplier;
  *
  * <p>Protocol mapping (SPARQL 1.1 Protocol §2):
  * <pre>
+ *   GET  (no query string)                                 service description (SD §2)
  *   GET  ?query=…                                         query via GET
  *   POST application/x-www-form-urlencoded  query=|update= query / update via URL-encoded POST
  *   POST application/sparql-query                         query via direct POST
@@ -354,11 +355,104 @@ public final class SparqlProtocolServlet extends HttpServlet {
             return;
         }
         if (query == null) {
-            fail(resp, HttpServletResponse.SC_BAD_REQUEST, "missing 'query' parameter (this endpoint serves no "
-                    + "service description; see its README)");
+            if (req.getQueryString() == null || req.getQueryString().isEmpty()) {
+                describeService(req, resp);
+                return;
+            }
+            fail(resp, HttpServletResponse.SC_BAD_REQUEST, "missing 'query' parameter");
             return;
         }
         inSlot(resp, () -> evaluateQuery(req, resp, params, query));
+    }
+
+    static final String SD = "http://www.w3.org/ns/sparql-service-description#";
+
+    /**
+     * The SPARQL 1.1 Service Description (§2: a GET of the endpoint with no query string), in
+     * any RDF format {@code Accept} names, Turtle by default. It says what a client or a
+     * federation engine needs to decide how to talk to this endpoint, and nothing about the data:
+     * no graph names from the store and no counts, which would cost a scan per request and tell
+     * an anonymous reader what the read token guards — the same access filters run before this
+     * as before a query. It takes no query slot: it reads only this servlet's own options.
+     */
+    private void describeService(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+        List<String> acceptFields = Collections.list(req.getHeaders("Accept"));
+        String accept = acceptFields.isEmpty() ? null : String.join(", ", acceptFields);
+        Optional<Negotiated<RDFFormat>> fmt = negotiate(accept, RDFWriterRegistry.getInstance(), RDFFormat.TURTLE);
+        if (fmt.isEmpty()) {
+            notAcceptable(resp, accept);
+            return;
+        }
+        org.eclipse.rdf4j.model.Model description = serviceDescription(req.getRequestURL().toString());
+        try (OutputStream out = begin(resp, fmt.get())) {
+            org.eclipse.rdf4j.rio.Rio.write(description, out, fmt.get().format());
+        }
+    }
+
+    /**
+     * What {@link #describeService} serves for the endpoint at {@code endpoint}: the languages
+     * (SPARQL 1.1 Update only while updates are enabled), the result formats the writers here can
+     * produce (those with a W3C format IRI), {@code sd:BasicFederatedQuery} only while federation is
+     * enabled (and the repository's client has the endpoint's limits, without which SERVICE is a
+     * 503), and the metadata graph among the available graphs only when this servlet serves it.
+     */
+    org.eclipse.rdf4j.model.Model serviceDescription(String endpoint) {
+        org.eclipse.rdf4j.model.Model m = new org.eclipse.rdf4j.model.impl.LinkedHashModel();
+        m.setNamespace("sd", SD);
+        m.setNamespace("formats", "http://www.w3.org/ns/formats/");
+        org.eclipse.rdf4j.model.BNode service = VF.createBNode();
+        m.add(service, org.eclipse.rdf4j.model.vocabulary.RDF.TYPE, VF.createIRI(SD, "Service"));
+        m.add(service, VF.createIRI(SD, "endpoint"), VF.createIRI(endpoint));
+        m.add(service, VF.createIRI(SD, "supportedLanguage"), VF.createIRI(SD, "SPARQL11Query"));
+        if (options.updateEnabled()) {
+            m.add(service, VF.createIRI(SD, "supportedLanguage"), VF.createIRI(SD, "SPARQL11Update"));
+        }
+        // Not sd:UnionDefaultGraph: it means the union of the named graphs, and RDF4J's default
+        // graph also holds the triples in no named graph (found in co-review of #130)
+        if (options.federationEnabled() && serviceRuns()) {
+            m.add(service, VF.createIRI(SD, "feature"), VF.createIRI(SD, "BasicFederatedQuery"));
+        }
+        java.util.Set<String> formats = new java.util.TreeSet<>();
+        for (FileFormatServiceRegistry<? extends FileFormat, ?> registry : List.of(
+                TupleQueryResultWriterRegistry.getInstance(), BooleanQueryResultWriterRegistry.getInstance(),
+                RDFWriterRegistry.getInstance())) {
+            for (FileFormat f : registry.getKeys()) {
+                IRI standard = f instanceof RDFFormat r ? r.getStandardURI()
+                        : f instanceof QueryResultFormat q ? q.getStandardURI() : null;
+                if (standard != null) {
+                    formats.add(standard.stringValue());
+                }
+            }
+        }
+        for (String f : formats) {
+            m.add(service, VF.createIRI(SD, "resultFormat"), VF.createIRI(f));
+        }
+        if (metadata != null) {
+            org.eclipse.rdf4j.model.BNode graphs = VF.createBNode();
+            org.eclipse.rdf4j.model.BNode named = VF.createBNode();
+            org.eclipse.rdf4j.model.BNode graph = VF.createBNode();
+            m.add(service, VF.createIRI(SD, "availableGraphs"), graphs);
+            m.add(graphs, org.eclipse.rdf4j.model.vocabulary.RDF.TYPE, VF.createIRI(SD, "GraphCollection"));
+            m.add(graphs, VF.createIRI(SD, "namedGraph"), named);
+            m.add(named, org.eclipse.rdf4j.model.vocabulary.RDF.TYPE, VF.createIRI(SD, "NamedGraph"));
+            m.add(named, VF.createIRI(SD, "name"), METADATA_GRAPH);
+            m.add(named, VF.createIRI(SD, "graph"), graph);
+            m.add(graph, org.eclipse.rdf4j.model.vocabulary.RDF.TYPE, VF.createIRI(SD, "Graph"));
+        }
+        return m;
+    }
+
+    /**
+     * Whether a SERVICE would run rather than be answered 503: the repository's client has the
+     * endpoint's limits ({@link #refusedOutbound}). A description advertising federation that every
+     * SERVICE then refused would send a federation engine to an endpoint that cannot serve it.
+     */
+    private boolean serviceRuns() {
+        try {
+            return SparqlEndpointLauncher.outboundLimited(repository.get());
+        } catch (RuntimeException e) {
+            return false;   // no repository yet: nothing runs
+        }
     }
 
     /**

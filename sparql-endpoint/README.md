@@ -130,6 +130,7 @@ All settings are environment variables, named like the MCP server's `CQELS_MCP_H
 | Request | Result |
 |---|---|
 | `GET /sparql?query=…` | query. Jetty refuses a request line over 8 KB with `414`, so send long queries by POST |
+| `GET /sparql` (no query string) | the SPARQL 1.1 Service Description, Turtle by default or any RDF format `Accept` names; see below |
 | `POST /sparql` — `application/x-www-form-urlencoded`, `query=` or `update=` | query / update; percent-escapes decode in the declared `charset`, UTF-8 when none |
 | `POST /sparql` — `application/sparql-query` | query, body is the query |
 | `POST /sparql` — `application/sparql-update` | update, body is the update |
@@ -208,9 +209,36 @@ and `ready` after the engine had stopped and with every slot stuck, and nothing 
   and rolls the update back. The one window left is an update that commits in the instant between
   its connection closing and the endpoint finishing its stop: it takes effect, and its client
   cannot tell.
-- **Not served:** a SPARQL 1.1 Service Description (`GET /sparql` with no query is a `400`) and
-  the SPARQL 1.1 Graph Store Protocol (`PUT`, `DELETE`, … are `405`). Both are features of their
-  own; SPARQL Update covers what the Graph Store Protocol would.
+- **Not served:** the SPARQL 1.1 Graph Store Protocol (`PUT`, `DELETE`, … are `405`). It is a
+  feature of its own; SPARQL Update covers what it would.
+
+## The service description
+
+A `GET` of the endpoint with no query string answers its
+[SPARQL 1.1 Service Description](https://www.w3.org/TR/sparql11-service-description/) (§2), so a
+client or a federation engine can find out how to talk to it. It was a `400`.
+
+```bash
+curl http://127.0.0.1:8089/sparql
+```
+
+| Says | When |
+|---|---|
+| `sd:endpoint` | always: the URL the request was sent to |
+| `sd:supportedLanguage sd:SPARQL11Query` | always |
+| `sd:supportedLanguage sd:SPARQL11Update` | `CQELS_SPARQL_UPDATE_ENABLED=true` (a read token still cannot update) |
+| `sd:feature sd:BasicFederatedQuery` | `CQELS_SPARQL_FEDERATION_ENABLED=true` and `SERVICE` would run, not be refused with `503` (see *Embedding the servlet*) |
+| `sd:resultFormat` | every format the endpoint can answer in that has a W3C format IRI |
+| `sd:availableGraphs` naming `cqels://endpoint/metadata` | the metadata graph is served |
+
+- **No `sd:UnionDefaultGraph`.** That feature means the default graph is the union of the named
+  graphs; RDF4J's also holds the triples stored in no named graph, so a client relying on the
+  feature's meaning would get different answers.
+- **Nothing about the data.** No graph names from the store and no counts: listing them would
+  scan the store on every request, and tell a reader what the token guards.
+- **The same filters as a query.** The token, the `Host` and `Origin` checks run before it; it
+  needs no query slot.
+- **Only the bare endpoint.** Parameters without a `query` (`?default-graph-uri=…`) are still a `400`.
 
 ## The metadata graph
 
@@ -352,7 +380,8 @@ was missing:
 | **Answers read whole, and checked** | Each answer is read to its end and checked before RDF4J sees it — the shape of a SPARQL JSON result in full (a `head` with `vars`, `results.bindings` naming only those variables, each term with a known `type` and a string `value`; or a `true`/`false` `boolean`; nothing after it), whether it is the form the query asked for (rows for a `SELECT`, a boolean for an `ASK`), then its terms by RDF4J's parser. A `2xx` without a result (a `204`) is a failure too. That is what makes `SERVICE SILENT` keep the query's own rows when a remote's answer breaks off or is malformed, as the standard says; RDF4J dropped every row then, so a query answered `200` with nothing and an update `204` having written nothing, and its parser alone took `{}` or a head with no results for an empty answer. Read whole, an answer also gives its connection back before RDF4J parses it, which avoids the pool deadlock of eclipse-rdf4j/rdf4j#5987. |
 | **Failures say whose they are** | A remote that is unreachable, answers an HTTP error, or answers in a refused format is a `502` that quotes it (`answered HTTP 403: …`). It was a `500` "query evaluation failed", and a remote's own plain-text reason was reported as a refused `Content-Type`. |
 | **`http` and `https` only, everywhere** | Checked in the HTTP client itself, so it holds for `SERVICE ?e` bound at run time (which skipped the check of constant IRIs) and through a JVM proxy (which Apache would route `ftp://…` through). With `SILENT`, a refused endpoint is still a `403`, not an empty match. |
-| **Redirects** | Followed by the endpoint, not by Apache: for a GET only, at most 5, each to `http`/`https` and never from `https` down to `http`, each counted as a request, and the redirect's own body is dropped unread. Inside Apache a redirect was followed past the request limit and its body drained with no cap. A refused redirect is a `502`, `SILENT` or not. |
+| **Bindings in the body, not the URL** | Every `SERVICE` query goes as a URL-encoded `POST` (SPARQL 1.1 Protocol §2.1.2), the bindings it joins on with it. RDF4J sent it as a `GET` while the URL stayed under about 4 KB, so up to 15 of the caller's rows at a time sat in the remote's and every proxy's access log. A `SERVICE` IRI's own parameters (`?key=…`) stay in its URL. A remote that answers only `GET` cannot be queried. |
+| **Redirects** | Followed by the endpoint, not by Apache: at most 5, each to `http`/`https` and never from `https` down to `http`, each counted as a request, and the redirect's own body is dropped unread. A `POST` is sent again, body and all, on `301`, `302`, `307` and `308`, so the query arrives (RFC 9110 lets a client keep the method on `301`/`302`; turned into a `GET` it would ask the next server nothing); a `303` is a `GET` of what it names. Before, only a `GET` was followed, and RDF4J's own `POST` for a long query was a `502` on any redirect. Inside Apache a redirect was followed past the request limit and its body drained with no cap. A refused redirect is a `502`, `SILENT` or not. |
 | **Formats** | SPARQL JSON, which keeps every term as it was (and `text/boolean` for an `ASK`); not RDF-star triple terms, which RDF4J read as unbound. Not CSV or TSV — RDF4J re-types what it reads from them: from CSV, `"001"` became an integer, language tags were lost and an empty string read as unbound; from TSV, `true` became a string and `-1` an `xsd:negativeInteger`. Joins and filters over them gave different answers. Not SPARQL XML or RDF4J's binary format: see *Security*. |
 | **Two shapes refused (`400`)** | `SERVICE` inside an `ORDER BY` expression (`ORDER BY (EXISTS { SERVICE … })`): RDF4J sorts in parallel, and the sort's worker threads made `SERVICE` calls outside the query's limits (19 requests under a limit of 1); bind the value first, then order by the variable. And a `SERVICE` IRI carrying a `query` parameter of its own: RDF4J adds the query it sends as a second one. |
 | **Limits under `SILENT`** | A limit of the endpoint's own — deadline, request count, bytes, scheme — is answered with its status even under `SERVICE SILENT`, and an update that ran into one is rolled back: `SILENT` excuses a remote's failure, not the endpoint's limits. |
@@ -360,8 +389,7 @@ was missing:
 Still true, and worth knowing before enabling it:
 
 - **There is no allow-list of destinations.** Any `http`/`https` URL a client names is reached,
-  internal addresses included, and the bindings `SERVICE` sends go with the request — usually in
-  the URL (RDF4J uses GET up to about 4 KB), where the remote's and any proxy's logs keep them.
+  internal addresses included, and the bindings `SERVICE` sends go with the request, in its body.
   A read token is enough to send `SERVICE`; see *Security*.
 - **No credentials go to a remote, ever.** Not the client's own token or cookies, not a
   `user:pass@` in the endpoint's URL, not the JVM's `Authenticator`: the client has no
