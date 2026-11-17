@@ -29,9 +29,9 @@ For a plain scratchpad, LangGraph's built-in store is simpler.
 - The **CQELS-MCP shaded jar**, `cqels-mcp-<version>-shaded.jar`, attached to each release at
   <https://github.com/cqels/CQELS4J/releases>. `SUPPLY_CHAIN.md` in that repository explains how to
   verify the download.
-- Python 3.10+ and:
+- Python 3.11+ and:
   ```bash
-  pip install "langchain[mcp]>=1.4" langgraph "langchain[anthropic]"
+  pip install "langchain[mcp]>=1.5" langgraph "langchain[anthropic]"
   ```
 
 `langchain.mcp` is in beta (importing it emits a `LangChainBetaWarning`) and replaces the standalone
@@ -86,13 +86,17 @@ The model now sees the CQELS tools and calls `store_memory` / `recall_memory` on
 lifetime of the process is the lifetime of the memory:
 
 - Build the client once and reuse it. The stdio transport keeps the subprocess alive between tool
-  calls, which is what lets a `recall_memory` see an earlier `store_memory`. Do not pass
-  `keep_alive=False`: each tool call would then start a fresh, empty server.
-- Call `await cqels.close()` when you are done. Without it the Java process outlives your code and
-  a script does not exit.
+  calls, which is what lets a `recall_memory` see an earlier `store_memory`. Keep the default
+  `keep_alive=True`: with `keep_alive=False` the subprocess stops whenever the last open
+  `async with` on the client exits, so memory would not carry over from one block to the next.
+- Call `await cqels.close()` when you are done; it stops the Java process. Leaving the `async with`
+  block does not, because the transport keeps the subprocess for reuse.
 - A plain config dict also works (`MCPAdapter({"mcpServers": {"cqels": {"command": "java", "args":
-  ["-jar", JAR]}}})`), but it gives you no handle to stop the server, so prefer the explicit client
-  above. With several servers in one config, LangChain prefixes tool names (`cqels_store_memory`).
+  ["-jar", JAR]}}})`); stop its server with `await adapter.client.close()`. With several servers in
+  one config, tool names are prefixed with the server name (`cqels_store_memory`).
+- This hands the model every tool, including administrative ones such as `set_access_policy` and
+  `forget_memory`. That is fine for a trusted, single-user agent; before other people use it, filter
+  the list as shown in section 9.
 - To share one memory between several agents or processes, or to keep it running independently of
   your Python code, run the server over HTTP (section 8).
 
@@ -141,14 +145,16 @@ Arguments you will use most:
   then `text`, then `pattern`:
   - `pattern: {subject?, predicate?, object?}` — omitted positions are wildcards, but give at least
     one; add `entail: true` for inferred triples or `role` for governed recall.
-  - `text` with `mode: "lexical" | "vector" | "hybrid"` — text search.
+  - `text` — text search. The published server searches lexically: `mode: "vector"` is refused
+    because no embedding provider is enabled, and `"hybrid"` ranks by the lexical match alone.
   - `sparql` — a full SELECT or CONSTRUCT.
   - `queryId` — drain the results of a watch (section 6).
   - The metadata filters `asOf`, `minConfidence`, `source` and `includeMeta` work with `pattern`
     (or on their own), not with `text`, `sparql` or `queryId`, and not together with `entail`.
     `limit` bounds the result in every mode.
-- `assemble_context({task, mode?, limit?, neighbors?, budget?})` — a ranked, budget-bounded bundle
-  of facts, procedures and recent events for a task.
+- `assemble_context({task, mode?, limit?, neighbors?, budget?})` — a bundle for a task: facts and
+  procedures, ranked and cut to fit `budget`, plus the most recent events, which the budget does not
+  limit.
 
 The snippets below run inside the `async with` block from section 2 and call tools directly, which
 is also a convenient way to seed or inspect memory without a model:
@@ -321,7 +327,8 @@ cqels = Client(StdioTransport(
 
 Stored facts with their metadata, access labels and policies, saved procedures, recorded events and
 decision traces then survive a restart. Watches and `register_reasoning` do not; register them again
-on startup. The text-search index is rebuilt only as new facts are stored, so after a restart use
+on startup. A stored access policy survives too, and it denies `register_reasoning` (section 9), so a
+governed store has no `entail` recall after a restart. The text-search index is rebuilt only as new facts are stored, so after a restart use
 `pattern` or `sparql` recall for older facts.
 
 `CQELS_MCP_STORAGE_BACKEND` / `CQELS_MCP_STORAGE_PATH` are a different setting: they journal
@@ -367,6 +374,12 @@ print(await t["recall_memory"].ainvoke({"sparql":
 await t["forget_memory"].ainvoke({"graph": "cqels://memory/user/alice"})
 ```
 
+Clearing a graph removes its facts but not the metadata recorded about them (`source`,
+`confidence`, validity, access label). That metadata is kept per fact in a separate annotations graph
+and stays readable through `query`. When the facts were stored with `meta`, forget them by `facts`
+instead, which removes a fact's metadata together with its last copy. On a governed server metadata
+is never removed, so that an access label cannot be stripped.
+
 Graphs organise; they do not isolate. A `pattern` recall reads `cqels://memory/longterm` (where facts
 go when you give no `graph`) plus *all* `cqels://memory/user/…` graphs, so scope reads with SPARQL as
 above, or enforce isolation with a policy.
@@ -384,16 +397,37 @@ await t["recall_memory"].ainvoke({"pattern": {"subject": "ex:Alice"}, "role": "h
 await t["recall_memory"].ainvoke({"pattern": {"subject": "ex:Alice"}, "role": "eng"})  # sees nothing
 ```
 
-> **Setting a policy locks the server down, and it cannot be undone.** Once any policy exists, only
-> `recall_memory` with a `pattern` (optionally `entail`) and a `role` still reads. Text, SPARQL and
-> metadata recall, `query`, `assemble_context`, episodic and decision recall, listing and running
-> procedures, and creating, feeding or registering streams and watches are all denied rather than
-> allowed to leak. There is no tool to remove a policy. Run governed memory on its own server
-> instance, separate from one you use for watches.
+> **Setting a policy locks the server down, and it cannot be undone.** Once any policy exists, the
+> only read left is `recall_memory` with a `pattern` and a `role`. Writes still work (`store_memory`,
+> `record_event`, `save_procedure`, `forget_memory`), as do `validate_stream_query` and
+> `forget_stream_query`. Everything else is denied rather than allowed to leak: text, SPARQL and
+> metadata recall, `query`, `assemble_context`, `reason`, `validate`, `solve`, episodic and decision
+> recall, listing and running procedures, `register_reasoning`, `register_rules`, `watch_invariant`,
+> and creating, feeding, removing or querying streams. `entail` with a `role` works only if
+> `register_reasoning` ran before the first policy, in the same server process. There is no tool to
+> remove a policy. Run governed memory on its own server instance, separate from one you use for
+> watches.
 
 The `role` must be set by your application from an authenticated identity, never taken from the
-model or the end user: a caller that can choose its `role` can read as anyone. Likewise, keep
-`set_access_policy` out of the tool list you hand to the model.
+model or the end user: a caller that can choose its `role` can read as anyone. The server cannot tell
+who filled in `role`, so on a governed server do not hand the model `recall_memory` itself. Give it a
+tool of your own that fixes the role, and leave out the administrative tools:
+
+```python
+from langchain_core.tools import tool
+
+
+def recall_as(role):
+    @tool
+    async def recall(subject: str):
+        """Recall what is known about a subject."""
+        return await t["recall_memory"].ainvoke({"pattern": {"subject": subject}, "role": role})
+    return recall
+
+
+HIDDEN = {"recall_memory", "set_access_policy", "forget_memory"}
+agent_tools = [x for x in tools if x.name not in HIDDEN] + [recall_as("hr")]  # role from your auth
+```
 
 ---
 
@@ -415,6 +449,6 @@ model or the end user: a caller that can choose its `role` can read as anyone. L
 
 ---
 
-*Last verified on 2026-11-15 with the alpha.22 server, `langchain` 1.5.0, `langgraph` 1.2.22 and
+*Last verified on 2026-11-17 with the alpha.22 server, `langchain` 1.5.0, `langgraph` 1.2.22 and
 `fastmcp` 4.2.0: every snippet was run against the server, with the model calls replaced by a
 scripted model. Re-check the snippets when you upgrade either side.*
