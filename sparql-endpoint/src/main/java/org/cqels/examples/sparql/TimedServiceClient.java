@@ -372,6 +372,8 @@ final class TimedServiceClient extends CloseableHttpClient {
     protected CloseableHttpResponse doExecute(HttpHost target, HttpRequest request, HttpContext context)
             throws IOException {
         Budget budget = Budget.CURRENT.get();
+        // read before anything is armed: nothing below needs cleaning up if it fails
+        Boolean expectTuple = expectedForm(request);   // null: could not tell
         if (target == null || !("http".equalsIgnoreCase(target.getSchemeName())
                 || "https".equalsIgnoreCase(target.getSchemeName()))) {
             throw trip(budget, new Refusal(403, "SERVICE may name only http and https endpoints"));
@@ -404,7 +406,6 @@ final class TimedServiceClient extends CloseableHttpClient {
         }
         HttpHost host = target;
         HttpRequest hop = request;
-        Boolean expectTuple = expectedForm(request);   // null: could not tell
         hop.setHeader("Accept", Boolean.TRUE.equals(expectTuple) ? ACCEPT_TUPLE : ACCEPT);
         try {
             for (int redirects = 0; ; redirects++) {
@@ -424,6 +425,7 @@ final class TimedServiceClient extends CloseableHttpClient {
                 }
                 boolean keep = false;
                 HttpRequest sent = hop;   // the request this response answers; hop moves on with a redirect
+                java.io.InputStream opened = null;   // closed below, after any abort: never drained
                 try {
                     int status = response.getStatusLine().getStatusCode();
                     org.apache.http.HttpEntity entity = response.getEntity();
@@ -458,6 +460,12 @@ final class TimedServiceClient extends CloseableHttpClient {
                             }
                         }
                         HttpHost nextHost = org.apache.http.client.utils.URIUtils.extractHost(to);
+                        if (nextHost != null && (nextHost.getPort() > 65535 || nextHost.getPort() == 0)) {
+                            // extractHost took port 65536, and Apache's IllegalArgumentException then
+                            // came back as the caller's 400 (found in co-review of #129)
+                            throw new RemoteFailure("the SERVICE endpoint " + host.toURI() + " redirected to <"
+                                    + strip(to) + ">, whose port is out of range");
+                        }
                         if (nextHost == null) {
                             // "Location: http:/broken" has a scheme and no host: a 502, not an NPE
                             throw new RemoteFailure("the SERVICE endpoint " + host.toURI() + " redirected to <"
@@ -476,8 +484,12 @@ final class TimedServiceClient extends CloseableHttpClient {
                         continue;   // the redirect's own body is dropped with its connection below
                     }
                     if (status / 100 != 2) {
-                        String excerpt = entity == null ? "" : new String(readCapped(entity.getContent(), Math.min(512, cap),
-                                true, budget), java.nio.charset.StandardCharsets.UTF_8).strip();
+                        String excerpt = "";
+                        if (entity != null) {
+                            opened = entity.getContent();
+                            excerpt = new String(readCapped(opened, Math.min(512, cap), true, budget),
+                                    java.nio.charset.StandardCharsets.UTF_8).strip();
+                        }
                         throw new RemoteFailure("the SERVICE endpoint " + host.toURI() + " answered HTTP " + status
                                 + (excerpt.isEmpty() ? "" : ": " + excerpt));
                     }
@@ -494,11 +506,19 @@ final class TimedServiceClient extends CloseableHttpClient {
                                 .collect(java.util.stream.Collectors.joining(", "))
                                 + "; this endpoint accepts one of " + ALLOWED + " from SERVICE");
                     }
-                    byte[] body = readCapped(entity.getContent(), cap, false, budget);
+                    opened = entity.getContent();
+                    byte[] body = readCapped(opened, cap, false, budget);
                     String mediaType = types.length == 0 ? "" : types[0].getElements()[0].getName().trim().toLowerCase(java.util.Locale.ROOT);
                     String invalid = invalidResult(mediaType, body, expectTuple);
                     if (invalid != null) {
                         throw new RemoteFailure("the SERVICE endpoint " + host.toURI() + " answered a malformed result: " + invalid);
+                    }
+                    if (mediaType.equals("text/boolean")) {
+                        // checked whole above, but RDF4J reads 16 characters: sixteen spaces and
+                        // "false" passed the check and failed there, which SILENT read as true
+                        // (found in co-review of #129). It gets the answer alone.
+                        body = new String(body, java.nio.charset.StandardCharsets.UTF_8).strip().toLowerCase(java.util.Locale.ROOT)
+                                .getBytes(java.nio.charset.StandardCharsets.US_ASCII);
                     }
                     if (entity instanceof org.apache.http.client.entity.DecompressingEntity) {
                         // The decoded end is not the end of what came over the wire (a gzip
@@ -520,6 +540,19 @@ final class TimedServiceClient extends CloseableHttpClient {
                     if (!keep) {
                         // whatever is left unread is dropped with the connection, not drained from it
                         abort(sent);
+                    }
+                    if (opened != null) {
+                        // A decompressing stream holds a native inflater until it is closed; the
+                        // entity it came from is replaced or dropped here, so nothing else would
+                        // close it (found in co-review of #129). After any abort, so closing it
+                        // cannot drain the connection; read to its end, it has nothing left to drain.
+                        try {
+                            opened.close();
+                        } catch (IOException ignored) {
+                            // aborted underneath: closed all the same
+                        }
+                    }
+                    if (!keep) {
                         try {
                             response.close();
                         } catch (IOException ignored) {
@@ -616,13 +649,18 @@ final class TimedServiceClient extends CloseableHttpClient {
         }
     }
 
-    private static final java.util.Set<String> TERM_TYPES = java.util.Set.of("uri", "literal", "bnode", "typed-literal", "triple");
+    /**
+     * Not {@code triple}: RDF-star results are not taken from SERVICE. RDF4J read a triple term
+     * whose value was a string as no value at all, an unbound variable in a 200 (found in co-review
+     * of #129), and checking a triple's parts here is more than this endpoint needs.
+     */
+    private static final java.util.Set<String> TERM_TYPES = java.util.Set.of("uri", "literal", "bnode", "typed-literal");
 
     /**
      * The shape SPARQL 1.1 Query Results JSON requires: one object, a {@code head} object, and
      * either {@code results.bindings} — then {@code head.vars} an array of strings, every binding
      * an object naming only those variables, every term an object with a {@code type} RDF4J reads
-     * and a string {@code value} (an object for an RDF-star triple), {@code xml:lang} and
+     * (not an RDF-star triple) and a string {@code value}, {@code xml:lang} and
      * {@code datatype} strings — or a JSON boolean {@code boolean}; nothing after it. Returns
      * whether it is a tuple result.
      */
@@ -715,10 +753,8 @@ final class TimedServiceClient extends CloseableHttpClient {
                     type = p.getText();
                 }
                 case "value" -> {
-                    expect(v == com.fasterxml.jackson.core.JsonToken.VALUE_STRING
-                            || v == com.fasterxml.jackson.core.JsonToken.START_OBJECT, "a term's 'value' is not a string");
+                    expect(v == com.fasterxml.jackson.core.JsonToken.VALUE_STRING, "a term's 'value' is not a string");
                     value = true;
-                    p.skipChildren();
                 }
                 case "xml:lang", "datatype" -> expect(v == com.fasterxml.jackson.core.JsonToken.VALUE_STRING,
                         "a term's '" + field + "' is not a string");
@@ -755,8 +791,7 @@ final class TimedServiceClient extends CloseableHttpClient {
             for (org.apache.http.NameValuePair pair : org.apache.http.client.utils.URLEncodedUtils.parse(params,
                     java.nio.charset.StandardCharsets.UTF_8)) {
                 if (pair.getName().equals("query") && pair.getValue() != null) {
-                    java.util.regex.Matcher m = QUERY_FORM.matcher(pair.getValue());
-                    return m.find() ? Boolean.valueOf(m.group(1).equalsIgnoreCase("SELECT")) : null;
+                    return formOf(pair.getValue());
                 }
             }
         } catch (IOException | RuntimeException e) {
@@ -765,10 +800,47 @@ final class TimedServiceClient extends CloseableHttpClient {
         return null;
     }
 
-    /** The query form after the prologue (BASE and PREFIX declarations, comments). */
-    private static final java.util.regex.Pattern QUERY_FORM = java.util.regex.Pattern.compile(
-            "\\A(?:\\s+|#[^\\n]*\\n|BASE\\s*<[^>]*>|PREFIX\\s+[^:\\s]*:\\s*<[^>]*>)*(SELECT|ASK)\\b",
-            java.util.regex.Pattern.CASE_INSENSITIVE);
+    /**
+     * The form after the prologue — whitespace, comments, BASE and PREFIX declarations — read in
+     * one pass: {@code true} SELECT, {@code false} ASK, {@code null} anything else. Not a regex:
+     * a repeated group recursed per declaration, and 2,000 PREFIX lines overflowed the stack
+     * (found in co-review of #129).
+     */
+    static Boolean formOf(String q) {
+        int i = 0;
+        int n = q.length();
+        while (i < n) {
+            char c = q.charAt(i);
+            if (Character.isWhitespace(c)) {
+                i++;
+            } else if (c == '#') {
+                int end = q.indexOf('\n', i);
+                if (end < 0) {
+                    return null;
+                }
+                i = end + 1;
+            } else if (q.regionMatches(true, i, "BASE", 0, 4) || q.regionMatches(true, i, "PREFIX", 0, 6)) {
+                int end = q.indexOf('>', i);   // an IRIREF holds no '>'
+                if (end < 0) {
+                    return null;
+                }
+                i = end + 1;
+            } else if (keyword(q, i, "SELECT")) {
+                return Boolean.TRUE;
+            } else if (keyword(q, i, "ASK")) {
+                return Boolean.FALSE;
+            } else {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    private static boolean keyword(String q, int at, String word) {
+        int end = at + word.length();
+        return q.regionMatches(true, at, word, 0, word.length())
+                && (end == q.length() || !Character.isLetterOrDigit(q.charAt(end)));
+    }
 
     /**
      * {@code in} read to its end, or to {@code cap} bytes: beyond that, {@link Refusal} (502), or
