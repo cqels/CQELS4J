@@ -3424,6 +3424,41 @@ class SparqlProtocolServletTest {
     }
 
     /**
+     * A deadline that fires while the POST is being built aborts RDF4J's GET, which is never sent;
+     * the POST must not then go out unbounded. Paused in that window until the GET is aborted, the
+     * request ends as a timeout and the remote is not asked again. On a pooled connection: a new
+     * one needs a name lookup, whose own deadline would stop the POST and hide the window.
+     */
+    @Test
+    void aDeadlineWhileThePostIsBuiltStopsIt() throws Exception {
+        var hits = new java.util.concurrent.atomic.AtomicInteger();
+        var remote = serve(java.util.Map.of("/s", rowEcho(0, hits)));
+        TimedServiceClient client = new TimedServiceClient(200);
+        // a first request leaves a pooled connection: the next needs no name lookup, whose own
+        // deadline would otherwise stop it and hide the window
+        try (var warm = client.execute(new org.apache.http.client.methods.HttpGet(base(remote) + "/s?query=" + enc("SELECT * {}")))) {
+            assertEquals(200, warm.getStatusLine().getStatusCode());
+        }
+        assertEquals(1, hits.get());
+        TimedServiceClient.beforePublish = original -> {
+            long until = System.nanoTime() + 5_000_000_000L;
+            while (!((org.apache.http.client.methods.HttpRequestBase) original).isAborted() && System.nanoTime() < until) {
+                Thread.onSpinWait();
+            }
+        };
+        try {
+            var get = new org.apache.http.client.methods.HttpGet(base(remote) + "/s?query=" + enc("ASK {}"));
+            assertThrows(java.net.SocketTimeoutException.class, () -> client.execute(get).close());
+            assertTrue(get.isAborted(), "the deadline fired in the window");
+            assertEquals(1, hits.get(), "the POST went out after the deadline");
+        } finally {
+            TimedServiceClient.beforePublish = null;
+            client.release();
+            remote.stop(0);
+        }
+    }
+
+    /**
      * A POST is redirected with its body: 301, 302, 307 and 308 send it again to the new place,
      * so the query arrives; a 303 is a GET of what it names, without the body. Before, only a GET
      * was followed, and a POST's redirect was a 502.

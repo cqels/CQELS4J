@@ -55,6 +55,13 @@ final class TimedServiceClient extends CloseableHttpClient {
         DEADLINES.setRemoveOnCancelPolicy(true);
     }
 
+    /**
+     * Called with RDF4J's request after its POST is built and before that POST is published to
+     * the deadline timer; for tests, which pause here to put the deadline in that window. Always
+     * {@code null} outside them.
+     */
+    static volatile java.util.function.Consumer<HttpRequest> beforePublish;
+
     /** Deadlines armed and not yet fired or cancelled; for tests. */
     static int armedDeadlines() {
         return DEADLINES.getQueue().size();
@@ -416,6 +423,10 @@ final class TimedServiceClient extends CloseableHttpClient {
         }
         HttpHost host = target;
         HttpRequest hop = asPost(request);
+        java.util.function.Consumer<HttpRequest> pause = beforePublish;
+        if (pause != null) {
+            pause.accept(request);
+        }
         current.set(hop);
         hop.setHeader("Accept", Boolean.TRUE.equals(expectTuple) ? ACCEPT_TUPLE : ACCEPT);
         try {
