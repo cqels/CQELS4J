@@ -3371,10 +3371,12 @@ class SparqlProtocolServletTest {
         var seen = new java.util.concurrent.ConcurrentLinkedQueue<Seen>();
         var remote = serve(java.util.Map.of("/s", recording(seen)));
         try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true), 0)) {
-            var r = getCsv(fed.url(), "SELECT * WHERE { VALUES ?v { <urn:ex:secret-k0> <urn:ex:secret-k1> } SERVICE <"
-                    + base(remote) + "/s?key=a%26b> { ?v <urn:ex:q> ?x } }");
-            assertEquals(200, r.statusCode(), r.body());
-            assertEquals(3, r.body().strip().split("\r?\n").length, "two rows joined: " + r.body());
+            for (String suffix : List.of("", "#fragment")) {
+                var r = getCsv(fed.url(), "SELECT * WHERE { VALUES ?v { <urn:ex:secret-k0> <urn:ex:secret-k1> } SERVICE <"
+                        + base(remote) + "/s?key=a%26b" + suffix + "> { ?v <urn:ex:q> ?x } }");
+                assertEquals(200, r.statusCode(), r.body());
+                assertEquals(3, r.body().strip().split("\r?\n").length, "two rows joined: " + r.body());
+            }
             assertFalse(seen.isEmpty());
             for (Seen s : seen) {
                 assertEquals("POST", s.method(), s.toString());
@@ -3409,6 +3411,12 @@ class SparqlProtocolServletTest {
 
         var bare = TimedServiceClient.asPost(new org.apache.http.client.methods.HttpGet("http://h/s?query=ASK%7B%7D"));
         assertEquals("http://h/s", bare.getRequestLine().getUri());
+        // RDF4J keeps a fragment at the end; it is dropped, and the query moves all the same
+        var fragment = TimedServiceClient.asPost(new org.apache.http.client.methods.HttpGet("http://h/s?key=1&query=ASK%7B%7D#f"));
+        assertEquals("POST", fragment.getRequestLine().getMethod());
+        assertEquals("http://h/s?key=1", fragment.getRequestLine().getUri());
+        assertEquals("query=ASK%7B%7D", org.apache.http.util.EntityUtils.toString(
+                ((org.apache.http.HttpEntityEnclosingRequest) fragment).getEntity()));
         var noQuery = new org.apache.http.client.methods.HttpGet("http://h/s?key=1");
         assertSame(noQuery, TimedServiceClient.asPost(noQuery));
         var already = new org.apache.http.client.methods.HttpPost("http://h/s");
@@ -3490,7 +3498,7 @@ class SparqlProtocolServletTest {
         assertTrue(m.contains(service, sd("endpoint"), VF.createIRI(shared.url())), r.body());
         assertTrue(m.contains(service, sd("supportedLanguage"), sd("SPARQL11Query")));
         assertFalse(m.contains(service, sd("supportedLanguage"), sd("SPARQL11Update")), "updates are off by default");
-        assertTrue(m.contains(service, sd("feature"), sd("UnionDefaultGraph")));
+        assertFalse(m.contains(service, sd("feature"), sd("UnionDefaultGraph")), "RDF4J's default graph is not only the named graphs");
         assertFalse(m.contains(service, sd("feature"), sd("BasicFederatedQuery")), "federation is off by default");
         for (String f : List.of("SPARQL_Results_JSON", "SPARQL_Results_XML", "SPARQL_Results_CSV", "SPARQL_Results_TSV",
                 "Turtle", "N-Triples", "RDF_XML", "JSON-LD")) {
