@@ -469,6 +469,12 @@ final class TimedServiceClient extends CloseableHttpClient {
                                 next.addHeader(h);
                             }
                         }
+                        if (!explicitPortValid(to)) {
+                            // Apache read ":-2" as no port and went to 80, a destination the
+                            // remote never named (found in co-review of #129)
+                            throw new RemoteFailure("the SERVICE endpoint " + host.toURI() + " redirected to <"
+                                    + strip(to) + ">, whose port is not a port");
+                        }
                         HttpHost nextHost = org.apache.http.client.utils.URIUtils.extractHost(to);
                         if (nextHost != null && (nextHost.getPort() > 65535 || nextHost.getPort() == 0)) {
                             // extractHost took port 65536, and Apache's IllegalArgumentException then
@@ -587,6 +593,49 @@ final class TimedServiceClient extends CloseableHttpClient {
 
     private static final java.util.Set<Integer> REDIRECTS = java.util.Set.of(301, 302, 303, 307, 308);
 
+    /**
+     * Whether the port {@code uri}'s authority spells out, if it spells one out, is 1 to 5 ASCII
+     * digits naming 1–65535 (an empty one, "host:", means the default, as RFC 3986 allows). Read
+     * from the raw authority: parsed, a negative or malformed port became "none".
+     */
+    static boolean explicitPortValid(java.net.URI uri) {
+        String authority = uri.getRawAuthority();
+        if (authority == null) {
+            return true;
+        }
+        String hostPort = authority.substring(authority.lastIndexOf('@') + 1);
+        int colon;
+        if (hostPort.startsWith("[")) {
+            int close = hostPort.indexOf(']');
+            if (close < 0) {
+                return false;
+            }
+            colon = close + 1 < hostPort.length() ? close + 1 : -1;
+            if (colon >= 0 && hostPort.charAt(colon) != ':') {
+                return false;
+            }
+        } else {
+            colon = hostPort.lastIndexOf(':');
+        }
+        if (colon < 0) {
+            return true;
+        }
+        String port = hostPort.substring(colon + 1);
+        if (port.isEmpty()) {
+            return true;
+        }
+        if (port.length() > 5) {
+            return false;
+        }
+        for (int i = 0; i < port.length(); i++) {
+            if (!isDigit(port.charAt(i))) {
+                return false;
+            }
+        }
+        int n = Integer.parseInt(port);
+        return n >= 1 && n <= 65535;
+    }
+
     private static void abort(HttpRequest request) {
         if (request instanceof AbstractExecutionAwareRequest a) {
             a.abort();
@@ -649,13 +698,21 @@ final class TimedServiceClient extends CloseableHttpClient {
      */
     static Checked check(String mediaType, byte[] body, Boolean expectTuple) {
         try {
-            // Strict UTF-8 before anything reads it: the overlong "C0 AF" passed, and became two
-            // U+FFFD in RDF4J's parse or "/" in the head-first rewrite, depending on member order
-            // (found in co-review of #129).
-            java.nio.charset.StandardCharsets.UTF_8.newDecoder()
+            // Decoded strictly before anything reads it: the overlong UTF-8 "C0 AF" passed, and
+            // became two U+FFFD in RDF4J's parse or "/" in the head-first rewrite, depending on
+            // member order. JSON may also be UTF-16 or UTF-32 (RFC 4627 §3, which SPARQL's JSON
+            // results adopt), and taking UTF-8 alone refused a valid UTF-16 answer (both found in
+            // co-review of #129): the encoding is told from the first four bytes, and the answer
+            // is carried on as UTF-8.
+            java.nio.charset.Charset encoding = mediaType.equals("text/boolean")
+                    ? java.nio.charset.StandardCharsets.UTF_8 : jsonEncoding(body);
+            String decoded = encoding.newDecoder()
                     .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
                     .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
-                    .decode(java.nio.ByteBuffer.wrap(body));
+                    .decode(java.nio.ByteBuffer.wrap(body)).toString();
+            if (encoding != java.nio.charset.StandardCharsets.UTF_8) {
+                body = decoded.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            }
             if (mediaType.equals("text/boolean")) {
                 if (Boolean.TRUE.equals(expectTuple)) {
                     throw new IOException("a boolean answer to a SELECT");
@@ -1107,6 +1164,32 @@ final class TimedServiceClient extends CloseableHttpClient {
 
     private static boolean isDigit(char c) {
         return c >= '0' && c <= '9';
+    }
+
+    /**
+     * RFC 4627 §3: JSON's first two characters are ASCII, so the pattern of zero bytes among the
+     * first four tells UTF-32BE, UTF-16BE, UTF-32LE or UTF-16LE from UTF-8.
+     */
+    static java.nio.charset.Charset jsonEncoding(byte[] b) {
+        if (b.length >= 4) {
+            boolean z0 = b[0] == 0;
+            boolean z1 = b[1] == 0;
+            boolean z2 = b[2] == 0;
+            boolean z3 = b[3] == 0;
+            if (z0 && z1 && z2 && !z3) {
+                return java.nio.charset.Charset.forName("UTF-32BE");
+            }
+            if (!z0 && z1 && z2 && z3) {
+                return java.nio.charset.Charset.forName("UTF-32LE");
+            }
+            if (z0 && !z1 && z2 && !z3) {
+                return java.nio.charset.StandardCharsets.UTF_16BE;
+            }
+            if (!z0 && z1 && !z2 && z3) {
+                return java.nio.charset.StandardCharsets.UTF_16LE;
+            }
+        }
+        return java.nio.charset.StandardCharsets.UTF_8;
     }
 
     /** Whether every surrogate in {@code s} is half of a pair, in order. */
