@@ -3275,10 +3275,37 @@ class SparqlProtocolServletTest {
             assertEquals(null, checked.why(), cs);
             assertEquals(answer, new String(checked.body(), StandardCharsets.UTF_8), cs + " carried on as UTF-8");
         }
-        byte[] broken = answer.getBytes(StandardCharsets.UTF_16LE);
-        broken[broken.length - 1] = (byte) 0xD8;   // the last code unit becomes half a surrogate pair
-        broken[broken.length - 2] = 0x00;
-        assertTrue(TimedServiceClient.check(json, broken, true).why() != null, "malformed UTF-16");
+        // a malformed unit inside a literal, so the JSON stays well formed: only strict decoding
+        // refuses it (the test once broke the closing brace, and passed with lenient decoding)
+        String marked = row("{\"type\":\"literal\",\"value\":\"aZb\"}");
+        Object[][] cases = {
+                {"UTF-16LE", new byte[] {0x00, (byte) 0xDC}},             // a lone low surrogate
+                {"UTF-16BE", new byte[] {(byte) 0xDC, 0x00}},
+                {"UTF-32BE", new byte[] {0x00, 0x00, (byte) 0xD8, 0x00}}, // U+D800, a surrogate code point
+                {"UTF-32LE", new byte[] {0x00, (byte) 0xD8, 0x00, 0x00}},
+        };
+        for (Object[] c : cases) {
+            String cs = (String) c[0];
+            byte[] unit = (byte[]) c[1];
+            byte[] bytes = marked.getBytes(java.nio.charset.Charset.forName(cs));
+            byte[] z = "Z".getBytes(java.nio.charset.Charset.forName(cs));
+            int at = indexOf(bytes, z);
+            System.arraycopy(unit, 0, bytes, at, unit.length);
+            assertTrue(TimedServiceClient.check(json, bytes, true).why() != null, "malformed " + cs);
+        }
+    }
+
+    static int indexOf(byte[] haystack, byte[] needle) {
+        outer:
+        for (int i = 0; i + needle.length <= haystack.length; i++) {
+            for (int j = 0; j < needle.length; j++) {
+                if (haystack[i + j] != needle[j]) {
+                    continue outer;
+                }
+            }
+            return i;
+        }
+        throw new AssertionError("not found");
     }
 
     /** An explicit port must be a port: Apache read ":-2" as none and went to port 80. */
@@ -3292,6 +3319,9 @@ class SparqlProtocolServletTest {
         assertFalse(TimedServiceClient.explicitPortValid(URI.create("http://h:0/")));
         assertFalse(TimedServiceClient.explicitPortValid(URI.create("http://h:65536/")));
         assertFalse(TimedServiceClient.explicitPortValid(URI.create("http://h:123456/")));
+        assertTrue(TimedServiceClient.explicitPortValid(URI.create("https://h:000443/")));   // leading zeros are allowed
+        assertFalse(TimedServiceClient.explicitPortValid(URI.create("http://h:0000/")));
+        assertFalse(TimedServiceClient.explicitPortValid(URI.create("http://h:99999999999999999999/")));
         var remote = serve(java.util.Map.of("/neg", respond(302, "text/plain", "", 0, "Location", "http://127.0.0.1:-2/a")));
         try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true), 0)) {
             var r = getCsv(fed.url(), "SELECT * WHERE { SERVICE <http://127.0.0.1:" + remote.getAddress().getPort() + "/neg> { ?s ?p ?o } }");
