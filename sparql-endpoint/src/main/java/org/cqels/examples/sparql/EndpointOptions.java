@@ -93,10 +93,11 @@ import java.util.List;
  *                             makes; beyond it the query is answered 503. RDF4J joins a SERVICE
  *                             in batches of 15 bindings, so one query over many rows made a request
  *                             per batch, with no limit (found in the SERVICE audit after #128)
- * @param maxServiceBytes      with federation on, the most one query or update takes from SERVICE
- *                             answers in all, decoded; beyond it the query is answered 502. Each
- *                             answer is read whole before RDF4J parses it (see
- *                             {@code TimedServiceClient}), so this is also what one query may hold
+ * @param maxServiceBytes      with federation on, the most one query or update reads from SERVICE
+ *                             answers in all, decoded, error answers included; beyond it the query
+ *                             is answered 502 and makes no further request. Each answer is read and
+ *                             checked whole before RDF4J parses it (see {@code TimedServiceClient}),
+ *                             so the heap one query takes is a multiple of this, not this
  */
 public record EndpointOptions(
         String path,

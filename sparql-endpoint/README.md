@@ -115,7 +115,7 @@ All settings are environment variables, named like the MCP server's `CQELS_MCP_H
 | `CQELS_SPARQL_UPDATE_ENABLED` | `false` | Accept SPARQL Update. |
 | `CQELS_SPARQL_FEDERATION_ENABLED` | `false` | Accept `SERVICE` (in queries and updates) and `LOAD`. Both make the endpoint itself send requests to a URL the client names; only `http` and `https` are reached (redirects and endpoints bound at run time too), all of one query's `SERVICE` calls together must finish within `MAX_EXECUTION_SECONDS`, and `LOAD` must be the only operation in its request. See *Federation*. |
 | `CQELS_SPARQL_MAX_SERVICE_REQUESTS` | `100` | The most `SERVICE` requests one query or update makes (RDF4J joins in batches of 15 rows); beyond it, `503`. |
-| `CQELS_SPARQL_MAX_SERVICE_BYTES` | `16777216` | The most one query or update takes from `SERVICE` answers in all, decoded; beyond it, `502`. Each answer is held whole while it is checked, so this is also what one query may hold. |
+| `CQELS_SPARQL_MAX_SERVICE_BYTES` | `16777216` | The most one query or update reads from `SERVICE` answers in all, decoded, error answers included; beyond it, `502`, and no further request. Each answer is held whole while it is checked, so the heap it takes is a multiple of this (the bytes, a copy, and what parsing builds). |
 | `CQELS_SPARQL_METADATA_ENABLED` | `false` | Serve the engine's streams and status as the read-only graph `cqels://endpoint/metadata`; see *The metadata graph*. |
 | `CQELS_SPARQL_STORE_PATH` | unset | NativeStore directory for a graph that survives restarts; unset = memory store. |
 | `CQELS_SPARQL_SEED_FLEET` | `false` | Seed the fleet world. |
@@ -155,7 +155,7 @@ All settings are environment variables, named like the MCP server's `CQELS_MCP_H
 | `415` | unknown POST `Content-Type` or charset |
 | `500` | evaluation failed, or the request ran out of heap (see *Memory*) |
 | `503` | execution limit exceeded by a query or an update (as Fuseki answers), a request arriving while the endpoint stops, every query slot busy (then with `Retry-After: 1`), a JSON-LD / NDJSON-LD result larger than `CQELS_SPARQL_MAX_BUFFERED_BYTES` with no `MAX_ROWS` set (with one, it is truncated instead), `SERVICE` while the repository's `SERVICE` client lacks the endpoint's limits (an embedding that skipped `limitOutboundRequests`), or a query needing more than `CQELS_SPARQL_MAX_SERVICE_REQUESTS` `SERVICE` requests |
-| `502` | a `LOAD` source failed: an HTTP error, a redirect to anything but `http`/`https`, a body over `CQELS_SPARQL_MAX_BUFFERED_BYTES`, or no parseable RDF (`LOAD SILENT`: `204`, nothing changed); a `SERVICE` endpoint failed: unreachable, an HTTP error (quoted: `answered HTTP 403: …`), a format other than SPARQL JSON or TSV, a malformed result, a redirect off `http`/`https` or from `https` to `http`, or answers over `CQELS_SPARQL_MAX_SERVICE_BYTES` |
+| `502` | a `LOAD` source failed: an HTTP error, a redirect to anything but `http`/`https`, a body over `CQELS_SPARQL_MAX_BUFFERED_BYTES`, or no parseable RDF (`LOAD SILENT`: `204`, nothing changed); a `SERVICE` endpoint failed: unreachable, an HTTP error (quoted: `answered HTTP 403: …`), a format other than SPARQL JSON, a malformed result, an answer that breaks off, a redirect off `http`/`https` or from `https` to `http`, or answers over `CQELS_SPARQL_MAX_SERVICE_BYTES` |
 | `504` | a `SERVICE` or `LOAD` target did not answer within `CQELS_SPARQL_MAX_EXECUTION_SECONDS` — for `SERVICE`, counted from the start of the query, for all its calls together |
 
 A result streams as it is produced, so the status is sent with the first buffer. If the
@@ -348,11 +348,12 @@ was missing:
 |---|---|
 | **One deadline per query** | All of a query's `SERVICE` requests share `CQELS_SPARQL_MAX_EXECUTION_SECONDS`, counted from the start of the query: `504` when it runs out. Each request had the whole limit to itself before, so 20 batches against a remote taking 1.5 s each ran a query for 30 s under a 2 s limit and answered `200`. |
 | **Requests per query** | At most `CQELS_SPARQL_MAX_SERVICE_REQUESTS` (`503` beyond). There was no limit: 10,000 rows would have been some 670 requests to someone else's server from one client query. |
-| **Bytes per query** | At most `CQELS_SPARQL_MAX_SERVICE_BYTES` of answers in all, counted after `gzip` / `deflate` are undone (`502` beyond, at once). Before, an answer was bounded only by deadline × bandwidth: 1.1 GB in 5 s. |
-| **Answers read whole, and checked** | Each answer is read to its end and parsed once before RDF4J sees it. That is what makes `SERVICE SILENT` keep the query's own rows when a remote's answer breaks off or is malformed, as the standard says; RDF4J dropped every row then, so a query answered `200` with nothing and an update `204` having written nothing. |
+| **Bytes per query** | At most `CQELS_SPARQL_MAX_SERVICE_BYTES` of answers in all, counted as they are read and after `gzip` / `deflate` are undone, error answers and answers that fail included (`502` beyond, at once, and no further request). Before, an answer was bounded only by deadline × bandwidth: 1.1 GB in 5 s. This bounds bytes, not heap: an answer is held and parsed whole, which takes a multiple of its size. |
+| **Answers read whole, and checked** | Each answer is read to its end and checked before RDF4J sees it — the shape of a SPARQL JSON result (a `head`, and `results.bindings` or a `true`/`false` `boolean`, nothing after it), then its terms by RDF4J's parser. That is what makes `SERVICE SILENT` keep the query's own rows when a remote's answer breaks off or is malformed, as the standard says; RDF4J dropped every row then, so a query answered `200` with nothing and an update `204` having written nothing, and its parser alone took `{}` or a head with no results for an empty answer. Read whole, an answer also gives its connection back before RDF4J parses it, which avoids the pool deadlock of eclipse-rdf4j/rdf4j#5987. |
 | **Failures say whose they are** | A remote that is unreachable, answers an HTTP error, or answers in a refused format is a `502` that quotes it (`answered HTTP 403: …`). It was a `500` "query evaluation failed", and a remote's own plain-text reason was reported as a refused `Content-Type`. |
-| **`http` and `https` only, everywhere** | Checked in the HTTP client itself, so it holds for `SERVICE ?e` bound at run time (which skipped the check of constant IRIs) and through a JVM proxy (which Apache would route `ftp://…` through). Redirects are followed only to `http`/`https`, never from `https` down to `http`. With `SILENT`, a refused endpoint is still a `403`, not an empty match. |
-| **Formats** | SPARQL JSON and TSV, which keep every term as it was. Not CSV — RDF4J re-types what it reads from it (`"001"` became an integer, language tags were lost, an empty string read as unbound), so joins over it gave different answers. Not SPARQL XML or RDF4J's binary format: see *Security*. |
+| **`http` and `https` only, everywhere** | Checked in the HTTP client itself, so it holds for `SERVICE ?e` bound at run time (which skipped the check of constant IRIs) and through a JVM proxy (which Apache would route `ftp://…` through). With `SILENT`, a refused endpoint is still a `403`, not an empty match. |
+| **Redirects** | Followed by the endpoint, not by Apache: for a GET only, at most 5, each to `http`/`https` and never from `https` down to `http`, each counted as a request, and the redirect's own body is dropped unread. Inside Apache a redirect was followed past the request limit and its body drained with no cap. A refused redirect is a `502`, `SILENT` or not. |
+| **Formats** | SPARQL JSON, which keeps every term as it was (and `text/boolean` for an `ASK`). Not CSV or TSV — RDF4J re-types what it reads from them: from CSV, `"001"` became an integer, language tags were lost and an empty string read as unbound; from TSV, `true` became a string and `-1` an `xsd:negativeInteger`. Joins and filters over them gave different answers. Not SPARQL XML or RDF4J's binary format: see *Security*. |
 | **Limits under `SILENT`** | A limit of the endpoint's own — deadline, request count, bytes, scheme — is answered with its status even under `SERVICE SILENT`, and an update that ran into one is rolled back: `SILENT` excuses a remote's failure, not the endpoint's limits. |
 
 Still true, and worth knowing before enabling it:
@@ -361,9 +362,11 @@ Still true, and worth knowing before enabling it:
   internal addresses included, and the bindings `SERVICE` sends go with the request — usually in
   the URL (RDF4J uses GET up to about 4 KB), where the remote's and any proxy's logs keep them.
   A read token is enough to send `SERVICE`; see *Security*.
-- **No credentials go to a remote.** The client's own token and cookies are never forwarded, and
-  there is no setting for a remote's credentials; a `user:pass@` in the URL is not sent up front
-  (measured), and a remote that needs a bearer token cannot be queried.
+- **No credentials go to a remote, ever.** Not the client's own token or cookies, not a
+  `user:pass@` in the endpoint's URL, not the JVM's `Authenticator`: the client has no
+  authentication schemes, so even a remote that asks gets nothing (Apache sent the URL's
+  `user:pass` on its second request when challenged, before this). A remote that needs
+  credentials cannot be queried, and neither can one behind a proxy that does.
 - **The JVM's proxy settings apply** (`http.proxyHost`, `https.proxyHost`, `http.nonProxyHosts`).
 - **RDF4J keeps one small object per distinct endpoint URL** it has called, for the repository's
   lifetime; with `SERVICE ?e`, clients choose how many.
@@ -408,7 +411,7 @@ Still true, and worth knowing before enabling it:
   direct RDF4J queries on `engine.getRepository()` get the deadline too, one request at a time (the
   per-query budget of *Federation* is the servlet's; with `MAX_EXECUTION_SECONDS=0` the client is
   installed with no deadline, for the format rule below); its connections are released when Jetty
-  stops and reopen if it is used again. A `SERVICE` endpoint must answer SPARQL JSON or TSV, in
+  stops and reopen if it is used again. A `SERVICE` endpoint must answer SPARQL JSON, in
   exactly one `Content-Type` header (an allow-list, not a deny-list: an empty header followed by an
   XML one got past a check of the first): SPARQL XML is refused, because RDF4J parses it with
   settings under which an XML entity read a local file into the results, and so is RDF4J's binary

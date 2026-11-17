@@ -70,14 +70,15 @@ final class TimedServiceClient extends CloseableHttpClient {
      * refused. Not CSV either: CSV carries lexical forms only, and RDF4J re-types what it reads —
      * {@code "001"} became an integer, language tags were lost, an empty string read as unbound —
      * so joins and filters over it gave different answers (found in the SERVICE audit after #128).
-     * JSON and TSV keep every term as it was.
+     * Not TSV: RDF4J 4.3.8's TSV parser re-types its shorthand too — {@code true} became a string,
+     * {@code -1} an {@code xsd:negativeInteger} (found in co-review of #129). SPARQL JSON keeps
+     * every term as it was; {@code text/boolean} answers an ASK.
      */
-    static final String ACCEPT = "application/sparql-results+json, application/json;q=0.9, "
-            + "text/tab-separated-values;q=0.7, text/boolean;q=0.5";
+    static final String ACCEPT = "application/sparql-results+json, application/json;q=0.9, text/boolean;q=0.5";
 
     /** The only media types a SERVICE answer may declare; see {@link #ACCEPT}. */
     private static final java.util.Set<String> ALLOWED = java.util.Set.of("application/sparql-results+json",
-            "application/json", "text/tab-separated-values", "text/boolean");
+            "application/json", "text/boolean");
 
     /**
      * Whether a SERVICE answer with these {@code Content-Type} headers is refused unread. An
@@ -233,45 +234,44 @@ final class TimedServiceClient extends CloseableHttpClient {
         }
     }
 
+    /** Redirects followed for one SERVICE request, at most. */
+    static final int MAX_REDIRECTS = 5;
+
     /**
-     * Apache's own redirect rules (GET and HEAD follow 301, 302, 303, 307 and 308), but only to
-     * http or https, and never from https down to http — the rules the servlet's LOAD keeps. Apache's
-     * default followed an https SERVICE to plain http, and, through a JVM proxy, to other schemes
-     * (found in the SERVICE audit after #128).
+     * Why a redirect from {@code from} to {@code to} is not followed, or {@code null} when it is:
+     * only to http or https, and never from https down to http — the rules the servlet's LOAD
+     * keeps. Apache's default followed an https SERVICE to plain http, and, through a JVM proxy,
+     * to other schemes (found in the SERVICE audit after #128).
      */
-    static final org.apache.http.impl.client.DefaultRedirectStrategy HTTP_ONLY_REDIRECTS =
-            new org.apache.http.impl.client.DefaultRedirectStrategy() {
-                @Override
-                protected java.net.URI createLocationURI(String location) throws org.apache.http.ProtocolException {
-                    java.net.URI uri = super.createLocationURI(location);
-                    String scheme = uri.getScheme();
-                    if (scheme != null && !"http".equalsIgnoreCase(scheme) && !"https".equalsIgnoreCase(scheme)) {
-                        throw new org.apache.http.ProtocolException("a SERVICE endpoint redirected to <" + strip(uri)
-                                + ">: only http and https are followed");
-                    }
-                    return uri;
-                }
+    static String refusedRedirect(java.net.URI from, java.net.URI to) {
+        String scheme = to.getScheme();
+        if (scheme == null || !("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme))) {
+            return "a SERVICE endpoint redirected to <" + strip(to) + ">: only http and https are followed";
+        }
+        if ("https".equalsIgnoreCase(from.getScheme()) && "http".equalsIgnoreCase(scheme)) {
+            return "a SERVICE endpoint redirected from https to <" + strip(to) + ">: a redirect may not drop to plain http";
+        }
+        return null;
+    }
 
-                @Override
-                public java.net.URI getLocationURI(HttpRequest request, org.apache.http.HttpResponse response,
-                                                   HttpContext context) throws org.apache.http.ProtocolException {
-                    java.net.URI next = super.getLocationURI(request, response, context);
-                    HttpHost from = org.apache.http.client.protocol.HttpClientContext.adapt(context).getTargetHost();
-                    if (from != null && "https".equalsIgnoreCase(from.getSchemeName())
-                            && "http".equalsIgnoreCase(next.getScheme())) {
-                        throw new org.apache.http.ProtocolException("a SERVICE endpoint redirected from https to <"
-                                + strip(next) + ">: a redirect may not drop to plain http");
-                    }
-                    return next;
-                }
-            };
-
+    /**
+     * Apache follows no redirect and retries nothing on its own: {@link #doExecute} does the
+     * following itself, so that every hop is checked, counted against the query's budget and
+     * dropped without its body being read. Inside Apache, a redirect was followed past a budget of
+     * one request, and its body drained with no cap (found in co-review of #129). No credentials
+     * either: with no authentication schemes, a {@code user:pass@} in an endpoint's URL, or the
+     * JVM's {@code Authenticator}, is never sent, even when a remote asks for it.
+     */
     private synchronized CloseableHttpClient pool() {
         if (pool == null) {
             pool = HttpClientBuilder.create()
                     .useSystemProperties()
                     .setDnsResolver(dns)
-                    .setRedirectStrategy(HTTP_ONLY_REDIRECTS)
+                    .disableRedirectHandling()
+                    .disableAutomaticRetries()
+                    .setDefaultAuthSchemeRegistry(org.apache.http.config.RegistryBuilder
+                            .<org.apache.http.auth.AuthSchemeProvider>create().build())
+                    .setDefaultCredentialsProvider(new org.apache.http.impl.client.BasicCredentialsProvider())
                     .setDefaultRequestConfig(RequestConfig.custom()
                             .setCookieSpec("standard")   // what RDF4J's own client sets
                             .setConnectTimeout(timeoutMillis)
@@ -338,36 +338,37 @@ final class TimedServiceClient extends CloseableHttpClient {
     }
 
     /**
-     * One SERVICE request, read to its end before RDF4J sees it.
+     * One SERVICE request, its redirects followed here, and its answer read to its end, capped
+     * and checked before RDF4J sees it.
      *
-     * <p><strong>Why the body is read here, whole.</strong> RDF4J's {@code SERVICE SILENT} keeps the
-     * query's own rows when a remote fails before answering, but drops every one of them when the
-     * answer breaks off midway: the failure then surfaces while RDF4J iterates, where its silent
-     * iteration ends the results instead (found in the SERVICE audit after #128: a cut-off body
-     * answered 200 with no rows, and an update answered 204 having written nothing). Read here,
-     * a body that breaks off fails the request itself, which SILENT handles as the standard says.
-     * Reading it here also bounds it: at most {@code maxResponseBytes}, after Apache has undone
-     * any gzip or deflate, so neither an endless answer nor a compressed one can grow the heap.
+     * <p><strong>Why the answer is read here, whole.</strong> RDF4J's {@code SERVICE SILENT} keeps
+     * the query's own rows when a remote fails before answering, but drops every one of them when
+     * the failure comes while RDF4J iterates the answer — one that breaks off, or does not parse
+     * (found in the SERVICE audit after #128: 200 with no rows, and an update answered 204 having
+     * written nothing). Read and checked here, such an answer fails the request itself, which
+     * SILENT handles as the standard says. Reading it here also bounds it, after Apache has undone
+     * any gzip or deflate, and gives the connection back at once: before, RDF4J held it leased
+     * while a background thread parsed (the pool deadlock of eclipse-rdf4j/rdf4j#5987).
      *
      * <p><strong>Status before format.</strong> A remote's 403 or 503 is answered in plain text,
      * and checking the media type first reported "answered Content-Type text/plain" instead of the
-     * remote's own reason (found in the same audit). A non-2xx answer now fails as
-     * {@link RemoteFailure}, quoting the start of its body; the servlet answers 502.
+     * remote's own reason. A non-2xx answer fails as {@link RemoteFailure}, quoting the start of
+     * its body; so does an answer that breaks off, or a remote that cannot be reached. The servlet
+     * answers 502 for all of them.
      *
-     * <p><strong>The query's budget.</strong> Within a {@link Budget} — the servlet opens one per
-     * query and update — every request also counts against the query's own deadline, request
-     * count and bytes, so the query's execution limit bounds its SERVICE calls as a whole rather
-     * than each of them: 20 requests of 1.5 s each ran a query for 30 s under a 2 s limit (found
-     * in the same audit).
+     * <p><strong>The query's budget.</strong> Within a {@link Budget} every request, redirects
+     * included, counts against the query's deadline, request count and bytes — bytes as they are
+     * read, error answers included. A limit that trips is recorded, and refuses every request after
+     * it, so that SILENT cannot carry the query past it.
      */
     @Override
     protected CloseableHttpResponse doExecute(HttpHost target, HttpRequest request, HttpContext context)
             throws IOException {
+        Budget budget = Budget.CURRENT.get();
         if (target == null || !("http".equalsIgnoreCase(target.getSchemeName())
                 || "https".equalsIgnoreCase(target.getSchemeName()))) {
-            throw new Refusal(403, "SERVICE may name only http and https endpoints");
+            throw trip(budget, new Refusal(403, "SERVICE may name only http and https endpoints"));
         }
-        Budget budget = Budget.CURRENT.get();
         long timeout = timeoutMillis;   // 0: none
         long cap = maxResponseBytes;
         if (budget != null) {
@@ -383,157 +384,294 @@ final class TimedServiceClient extends CloseableHttpClient {
         }
         long timeoutUsed = timeout;
         java.util.concurrent.atomic.AtomicBoolean fired = new java.util.concurrent.atomic.AtomicBoolean();
+        // the request the deadline aborts: the current hop, once redirects are followed
+        java.util.concurrent.atomic.AtomicReference<HttpRequest> current = new java.util.concurrent.atomic.AtomicReference<>(request);
+        ScheduledFuture<?> deadline = timeout > 0
+                ? DEADLINES.schedule(() -> {
+                    fired.set(true);
+                    abort(current.get());
+                }, timeout, TimeUnit.MILLISECONDS)
+                : NO_DEADLINE;
         if (timeout > 0) {
             BoundedDns.DEADLINE.set(System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeout));
         }
-        ScheduledFuture<?> deadline = timeout > 0 && request instanceof AbstractExecutionAwareRequest abortable
-                ? DEADLINES.schedule(() -> {
-                    fired.set(true);
-                    abortable.abort();
-                }, timeout, TimeUnit.MILLISECONDS)
-                : NO_DEADLINE;
-        request.setHeader("Accept", ACCEPT);
-        CloseableHttpResponse response;
+        HttpHost host = target;
+        HttpRequest hop = request;
+        hop.setHeader("Accept", ACCEPT);
         try {
-            response = pool().execute(target, request, context);
-        } catch (IOException e) {
-            deadline.cancel(false);
-            throw fired.get() ? timedOut(e, timeoutUsed, budget) : e;
-        } catch (RuntimeException e) {
-            deadline.cancel(false);
-            throw e;
-        } catch (Error e) {
-            // Apache shuts its connection manager down on an Error (an OutOfMemoryError, say);
-            // kept, that pool failed every later SERVICE with "Connection pool shut down" (found
-            // in co-review of #123). Let it go so the next request opens a new one.
-            deadline.cancel(false);
-            release();
-            throw e;
+            for (int redirects = 0; ; redirects++) {
+                CloseableHttpResponse response;
+                try {
+                    response = pool().execute(host, hop, context);
+                } catch (Refusal | RemoteFailure e) {
+                    throw e;
+                } catch (IOException e) {
+                    throw failure(e, fired, timeoutUsed, budget, host, "could not be reached");
+                } catch (Error e) {
+                    // Apache shuts its connection manager down on an Error (an OutOfMemoryError,
+                    // say); kept, that pool failed every later SERVICE with "Connection pool shut
+                    // down" (found in co-review of #123). Let it go so the next request opens a new one.
+                    release();
+                    throw e;
+                }
+                boolean keep = false;
+                HttpRequest sent = hop;   // the request this response answers; hop moves on with a redirect
+                try {
+                    int status = response.getStatusLine().getStatusCode();
+                    org.apache.http.HttpEntity entity = response.getEntity();
+                    org.apache.http.Header location = response.getFirstHeader("Location");
+                    if (REDIRECTS.contains(status) && location != null && "GET".equalsIgnoreCase(hop.getRequestLine().getMethod())) {
+                        java.net.URI from = java.net.URI.create(host.toURI()).resolve(hop.getRequestLine().getUri());
+                        java.net.URI to;
+                        try {
+                            to = from.resolve(location.getValue().trim());
+                        } catch (IllegalArgumentException e) {
+                            throw new RemoteFailure("the SERVICE endpoint " + host.toURI() + " redirected to an invalid URI");
+                        }
+                        String refused = refusedRedirect(from, to);
+                        if (refused != null) {
+                            throw trip(budget, new Refusal(502, refused));
+                        }
+                        if (redirects + 1 > MAX_REDIRECTS) {
+                            throw new RemoteFailure("the SERVICE endpoint " + host.toURI() + " redirected more than "
+                                    + MAX_REDIRECTS + " times");
+                        }
+                        if (budget != null) {
+                            budget.countRequest();
+                        }
+                        org.apache.http.client.methods.HttpGet next = new org.apache.http.client.methods.HttpGet(to);
+                        for (org.apache.http.Header h : hop.getAllHeaders()) {
+                            if (!h.getName().equalsIgnoreCase("Host")) {
+                                next.addHeader(h);
+                            }
+                        }
+                        host = org.apache.http.client.utils.URIUtils.extractHost(to);
+                        current.set(next);
+                        hop = next;
+                        continue;   // the redirect's own body is dropped with its connection below
+                    }
+                    if (status / 100 != 2) {
+                        String excerpt = entity == null ? "" : new String(readCapped(entity.getContent(), Math.min(512, cap),
+                                true, budget), java.nio.charset.StandardCharsets.UTF_8).strip();
+                        throw new RemoteFailure("the SERVICE endpoint " + host.toURI() + " answered HTTP " + status
+                                + (excerpt.isEmpty() ? "" : ": " + excerpt));
+                    }
+                    if (entity == null) {
+                        keep = true;
+                        return response;   // a 204, say: nothing to read
+                    }
+                    org.apache.http.Header[] types = response.getHeaders("Content-Type");
+                    if (refused(types)) {
+                        throw new RemoteFailure("the SERVICE endpoint " + host.toURI() + " answered Content-Type "
+                                + java.util.Arrays.stream(types).map(h -> "'" + h.getValue() + "'")
+                                .collect(java.util.stream.Collectors.joining(", "))
+                                + "; this endpoint accepts one of " + ALLOWED + " from SERVICE");
+                    }
+                    byte[] body = readCapped(entity.getContent(), cap, false, budget);
+                    String mediaType = types.length == 0 ? "" : types[0].getElements()[0].getName().trim().toLowerCase(java.util.Locale.ROOT);
+                    String invalid = invalidResult(mediaType, body);
+                    if (invalid != null) {
+                        throw new RemoteFailure("the SERVICE endpoint " + host.toURI() + " answered a malformed result: " + invalid);
+                    }
+                    if (entity instanceof org.apache.http.client.entity.DecompressingEntity) {
+                        // The decoded end is not the end of what came over the wire (a gzip
+                        // trailer, say), so Apache never took the connection back: five such
+                        // answers emptied a route's pool and the sixth request waited for one
+                        // (found in co-review of #129). Drop the connection; never drain it.
+                        abort(sent);
+                    }
+                    org.apache.http.entity.ByteArrayEntity held = new org.apache.http.entity.ByteArrayEntity(body);
+                    held.setContentType(types.length == 0 ? null : types[0]);
+                    response.setEntity(held);
+                    keep = true;
+                    return response;
+                } catch (Refusal | RemoteFailure e) {
+                    throw e;
+                } catch (IOException e) {
+                    throw failure(e, fired, timeoutUsed, budget, host, "answer broke off");
+                } finally {
+                    if (!keep) {
+                        // whatever is left unread is dropped with the connection, not drained from it
+                        abort(sent);
+                        try {
+                            response.close();
+                        } catch (IOException ignored) {
+                            // aborted: nothing more to close
+                        }
+                    }
+                }
+            }
         } finally {
+            deadline.cancel(false);
             BoundedDns.DEADLINE.remove();
         }
-        boolean done = false;
+    }
+
+    private static final java.util.Set<Integer> REDIRECTS = java.util.Set.of(301, 302, 303, 307, 308);
+
+    private static void abort(HttpRequest request) {
+        if (request instanceof AbstractExecutionAwareRequest a) {
+            a.abort();
+        }
+    }
+
+    private static Refusal trip(Budget budget, Refusal r) {
+        return budget == null ? r : budget.trip(r);
+    }
+
+    /**
+     * What a failed request reports: a timeout when the deadline fired or the cause is one (the
+     * name lookup's own deadline can win the race against the abort timer, and its timeout then
+     * vanished under SILENT — found in co-review of #129), otherwise a {@link RemoteFailure}, so
+     * that every way a remote fails — unreachable, or an answer that breaks off — is a 502.
+     */
+    static IOException failure(IOException e, java.util.concurrent.atomic.AtomicBoolean fired, long timeoutMillis,
+                                       Budget budget, HttpHost host, String what) {
+        boolean timeout = fired.get();
+        for (Throwable t = e; t != null && !timeout; t = t.getCause()) {
+            timeout = t instanceof java.net.SocketTimeoutException || t instanceof org.apache.http.conn.ConnectTimeoutException;
+            if (t.getCause() == t) {
+                break;
+            }
+        }
+        if (timeout) {
+            return timedOut(e, timeoutMillis, budget);
+        }
+        RemoteFailure f = new RemoteFailure("the SERVICE endpoint " + host.toURI() + " " + what + ": " + e.getMessage());
+        f.initCause(e);
+        return f;
+    }
+
+    /**
+     * Why {@code body} is not a SPARQL result in {@code mediaType}, or {@code null} when it is one.
+     * Parsed here, once, so that a malformed answer fails the request itself: left to RDF4J, the
+     * parse failed while it iterated, where {@code SERVICE SILENT} dropped the query's own rows
+     * instead of keeping them (found in the SERVICE audit after #128). RDF4J's parser alone is not
+     * enough: it accepted {@code {}}, a head with no results, content after the result, and
+     * {@code "boolean": 42}, which RDF4J then read as no rows (found in co-review of #129), so the
+     * JSON's shape is checked first, then its terms by RDF4J's parser. RDF4J parses the same bytes
+     * again; the cost is bounded by the byte cap.
+     */
+    static String invalidResult(String mediaType, byte[] body) {
         try {
-            int status = response.getStatusLine().getStatusCode();
-            org.apache.http.HttpEntity entity = response.getEntity();
-            if (status / 100 != 2) {
-                String excerpt = entity == null ? "" : new String(readCapped(entity.getContent(), 512, true),
-                        java.nio.charset.StandardCharsets.UTF_8).strip();
-                throw new RemoteFailure("the SERVICE endpoint " + target.toURI() + " answered HTTP " + status
-                        + (excerpt.isEmpty() ? "" : ": " + excerpt));
+            if (mediaType.equals("text/boolean")) {
+                org.eclipse.rdf4j.query.resultio.QueryResultIO.parseBoolean(new java.io.ByteArrayInputStream(body),
+                        org.eclipse.rdf4j.query.resultio.BooleanQueryResultFormat.TEXT);
+                return null;
             }
-            if (entity == null) {
-                done = true;
-                return response;   // a 204, say: nothing to read
+            if (!mediaType.equals("application/sparql-results+json") && !mediaType.equals("application/json")) {
+                return "no parser for '" + mediaType + "'";
             }
-            org.apache.http.Header[] types = response.getHeaders("Content-Type");
-            if (refused(types)) {
-                throw new RemoteFailure("the SERVICE endpoint " + target.toURI() + " answered Content-Type "
-                        + java.util.Arrays.stream(types).map(h -> "'" + h.getValue() + "'")
-                        .collect(java.util.stream.Collectors.joining(", "))
-                        + "; this endpoint accepts one of " + ALLOWED + " from SERVICE");
+            Boolean tuple = jsonShape(body);   // true: results, false: boolean
+            if (tuple) {
+                var parser = org.eclipse.rdf4j.query.resultio.QueryResultIO.createTupleParser(
+                        org.eclipse.rdf4j.query.resultio.TupleQueryResultFormat.JSON);
+                parser.setQueryResultHandler(new org.eclipse.rdf4j.query.AbstractTupleQueryResultHandler() { });
+                parser.parseQueryResult(new java.io.ByteArrayInputStream(body));
+            } else {
+                org.eclipse.rdf4j.query.resultio.QueryResultIO.parseBoolean(new java.io.ByteArrayInputStream(body),
+                        org.eclipse.rdf4j.query.resultio.BooleanQueryResultFormat.JSON);
             }
-            byte[] body;
-            try {
-                body = readCapped(entity.getContent(), cap, false);
-            } catch (Refusal tooBig) {
-                throw budget == null ? tooBig : budget.trip(tooBig);
-            }
-            if (budget != null) {
-                budget.addBytes(body.length);
-            }
-            String mediaType = types.length == 0 ? "" : types[0].getElements()[0].getName().trim().toLowerCase(java.util.Locale.ROOT);
-            String invalid = invalidResult(mediaType, body);
-            if (invalid != null) {
-                throw new RemoteFailure("the SERVICE endpoint " + target.toURI() + " answered a malformed result: " + invalid);
-            }
-            org.apache.http.entity.ByteArrayEntity held = new org.apache.http.entity.ByteArrayEntity(body);
-            held.setContentType(entity.getContentType());
-            response.setEntity(held);
-            done = true;
-            return response;
-        } catch (IOException e) {
-            throw fired.get() ? timedOut(e, timeoutUsed, budget) : e;
-        } finally {
-            deadline.cancel(false);
-            if (!done) {
-                // whatever is left unread is dropped with the connection, not drained from it
-                if (request instanceof AbstractExecutionAwareRequest a) {
-                    a.abort();
-                }
-                try {
-                    response.close();
-                } catch (IOException ignored) {
-                    // aborted: nothing more to close
-                }
-            }
+            return null;
+        } catch (Exception e) {
+            String why = String.valueOf(e.getMessage());
+            return why.length() > 300 ? why.substring(0, 300) + "…" : why;
         }
     }
 
     /**
-     * Why {@code body} is not a SPARQL result in {@code mediaType}, or {@code null} when it is one —
-     * a tuple result, or for JSON and {@code text/boolean} a boolean one. Parsed here, once, so
-     * that a malformed answer fails the request itself: left to RDF4J, the parse failed while it
-     * iterated, where {@code SERVICE SILENT} dropped the query's own rows instead of keeping them
-     * (found in the SERVICE audit after #128, with a remote whose JSON broke off inside a
-     * complete HTTP body). RDF4J parses the same bytes again; the cost is bounded by the byte cap.
+     * The shape SPARQL 1.1 Query Results JSON requires: one object with a {@code head} object and
+     * either {@code results} holding a {@code bindings} array (returns {@code true}) or a JSON
+     * boolean {@code boolean} (returns {@code false}), and nothing after it.
      */
-    static String invalidResult(String mediaType, byte[] body) {
-        org.eclipse.rdf4j.query.resultio.QueryResultFormat tuple = switch (mediaType) {
-            case "application/sparql-results+json", "application/json" -> org.eclipse.rdf4j.query.resultio.TupleQueryResultFormat.JSON;
-            case "text/tab-separated-values" -> org.eclipse.rdf4j.query.resultio.TupleQueryResultFormat.TSV;
-            default -> null;
-        };
-        org.eclipse.rdf4j.query.resultio.QueryResultFormat bool = switch (mediaType) {
-            case "application/sparql-results+json", "application/json" -> org.eclipse.rdf4j.query.resultio.BooleanQueryResultFormat.JSON;
-            case "text/boolean" -> org.eclipse.rdf4j.query.resultio.BooleanQueryResultFormat.TEXT;
-            default -> null;
-        };
-        String why = "no parser for '" + mediaType + "'";
-        if (tuple != null) {
-            try {
-                var parser = org.eclipse.rdf4j.query.resultio.QueryResultIO.createTupleParser(tuple);
-                parser.setQueryResultHandler(new org.eclipse.rdf4j.query.AbstractTupleQueryResultHandler() { });
-                parser.parseQueryResult(new java.io.ByteArrayInputStream(body));
-                return null;
-            } catch (Exception e) {
-                why = String.valueOf(e.getMessage());
+    private static boolean jsonShape(byte[] body) throws IOException {
+        try (com.fasterxml.jackson.core.JsonParser p = new com.fasterxml.jackson.core.JsonFactory().createParser(body)) {
+            if (p.nextToken() != com.fasterxml.jackson.core.JsonToken.START_OBJECT) {
+                throw new IOException("not a JSON object");
             }
-        }
-        if (bool != null) {
-            try {
-                org.eclipse.rdf4j.query.resultio.QueryResultIO.parseBoolean(new java.io.ByteArrayInputStream(body), bool);
-                return null;
-            } catch (Exception e) {
-                if (tuple == null) {
-                    why = String.valueOf(e.getMessage());
+            boolean head = false;
+            boolean results = false;
+            boolean bool = false;
+            while (p.nextToken() == com.fasterxml.jackson.core.JsonToken.FIELD_NAME) {
+                String name = p.currentName();
+                com.fasterxml.jackson.core.JsonToken value = p.nextToken();
+                switch (name) {
+                    case "head" -> {
+                        if (value != com.fasterxml.jackson.core.JsonToken.START_OBJECT) {
+                            throw new IOException("'head' is not an object");
+                        }
+                        head = true;
+                        p.skipChildren();
+                    }
+                    case "results" -> {
+                        if (value != com.fasterxml.jackson.core.JsonToken.START_OBJECT) {
+                            throw new IOException("'results' is not an object");
+                        }
+                        while (p.nextToken() == com.fasterxml.jackson.core.JsonToken.FIELD_NAME) {
+                            String inner = p.currentName();
+                            com.fasterxml.jackson.core.JsonToken v = p.nextToken();
+                            if (inner.equals("bindings")) {
+                                if (v != com.fasterxml.jackson.core.JsonToken.START_ARRAY) {
+                                    throw new IOException("'bindings' is not an array");
+                                }
+                                results = true;
+                            }
+                            p.skipChildren();
+                        }
+                        if (!results) {
+                            throw new IOException("'results' has no 'bindings'");
+                        }
+                    }
+                    case "boolean" -> {
+                        if (value != com.fasterxml.jackson.core.JsonToken.VALUE_TRUE
+                                && value != com.fasterxml.jackson.core.JsonToken.VALUE_FALSE) {
+                            throw new IOException("'boolean' is not true or false");
+                        }
+                        bool = true;
+                    }
+                    default -> p.skipChildren();
                 }
             }
+            if (p.currentToken() != com.fasterxml.jackson.core.JsonToken.END_OBJECT || p.nextToken() != null) {
+                throw new IOException("content after the result");
+            }
+            if (!head) {
+                throw new IOException("no 'head'");
+            }
+            if (results == bool) {
+                throw new IOException(results ? "both 'results' and 'boolean'" : "neither 'results' nor 'boolean'");
+            }
+            return results;
         }
-        return why.length() > 300 ? why.substring(0, 300) + "…" : why;
     }
 
     /**
      * {@code in} read to its end, or to {@code cap} bytes: beyond that, {@link Refusal} (502), or
-     * with {@code truncate} the first {@code cap} bytes (for an error answer's excerpt).
+     * with {@code truncate} the first {@code cap} bytes (for an error answer's excerpt). Every byte
+     * read is charged to {@code budget} as it arrives — a read that then fails, or an error answer,
+     * spends it as surely as a result does (found in co-review of #129: with a 50-byte budget,
+     * error answers of 1 KB each went uncounted).
      *
      * <p>{@code in} is not closed here. Closing an Apache body before its end makes Apache read
      * the rest, to reuse the connection: stopping at a 16 MiB cap then drained a 1 GB answer for
      * 3.5 s (found while fixing the SERVICE audit after #128). The caller aborts the request
      * first, which drops the connection instead; a body read to its end releases it by itself.
      */
-    static byte[] readCapped(java.io.InputStream in, long cap, boolean truncate) throws IOException {
+    static byte[] readCapped(java.io.InputStream in, long cap, boolean truncate, Budget budget) throws IOException {
         java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
         byte[] buf = new byte[65536];
         int n;
         while ((n = in.read(buf)) >= 0) {
+            if (budget != null) {
+                budget.addBytes(n);
+            }
             if (out.size() + (long) n > cap) {
                 if (truncate) {
                     out.write(buf, 0, (int) (cap - out.size()));
                     return out.toByteArray();
                 }
-                throw new Refusal(502, "a SERVICE endpoint answered more than " + cap
-                        + " bytes, the most this endpoint takes from SERVICE in one query");
+                throw trip(budget, new Refusal(502, "a SERVICE endpoint answered more than " + cap
+                        + " bytes, the most this endpoint takes from SERVICE in one query"));
             }
             out.write(buf, 0, n);
         }
@@ -601,7 +739,16 @@ final class TimedServiceClient extends CloseableHttpClient {
             return b;
         }
 
+        /** Counts a request; refused once any limit has tripped, the bytes are spent, or there were enough. */
         void countRequest() throws Refusal {
+            Refusal earlier = tripped;
+            if (earlier != null) {
+                throw earlier;   // SILENT swallowed it; the query does not get to go on asking
+            }
+            if (bytes.get() >= maxBytes) {
+                throw trip(new Refusal(502, "the query's SERVICE answers reached " + maxBytes
+                        + " bytes, the most this endpoint takes from SERVICE in one query"));
+            }
             if (requests.incrementAndGet() > maxRequests) {
                 throw trip(new Refusal(503, "the query needs more than " + maxRequests
                         + " SERVICE requests, the most this endpoint makes for one query"));
