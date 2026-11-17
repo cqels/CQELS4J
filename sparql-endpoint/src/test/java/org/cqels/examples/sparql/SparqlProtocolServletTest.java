@@ -3166,6 +3166,39 @@ class SparqlProtocolServletTest {
         assertFalse(TimedServiceClient.absoluteIri("relative/path"));
     }
 
+    // ---- co-review round 8 of #129 ----------------------------------------------------------------
+
+    /** Members RDF4J reads are checked too: a malformed head.link ended its parse early, and ordered held bindings it read. */
+    @Test
+    void membersRdf4jReadsAreChecked() {
+        String json = "application/sparql-results+json";
+        for (String bad : List.of(
+                "{\"head\":{\"link\":[{\"x\":[]}],\"vars\":[\"x\"]},\"results\":{\"bindings\":[]}}",
+                "{\"head\":{\"vars\":[\"x\"]},\"results\":{\"bindings\":[],\"ordered\":{\"bindings\":[{\"x\":{\"type\":\"uri\",\"value\":\"http://example.org/a b\"}}]}}}",
+                "{\"head\":{\"vars\":[\"x\"]},\"results\":{\"bindings\":[],\"distinct\":\"yes\"}}")) {
+            assertTrue(TimedServiceClient.invalidResult(json, bad.getBytes(StandardCharsets.UTF_8), null) != null, bad);
+        }
+        assertEquals(null, TimedServiceClient.invalidResult(json, ("{\"head\":{\"link\":[\"http://example.org/about\"],\"vars\":[\"x\"]},"
+                + "\"results\":{\"ordered\":true,\"distinct\":false,\"bindings\":[]}}").getBytes(StandardCharsets.UTF_8), null));
+    }
+
+    /** RFC 3987 itself: java.net.URI refused U+00A0 in a path and took urn:a[b] and private-use characters outside the query. */
+    @Test
+    void iriCheckingFollowsRfc3987() {
+        assertTrue(TimedServiceClient.absoluteIri("http://example.org/a b"));
+        assertTrue(TimedServiceClient.absoluteIri("http://example.org/?q="));
+        assertTrue(TimedServiceClient.absoluteIri("http://[v1.fe80::a]/x"));
+        assertTrue(TimedServiceClient.absoluteIri("http://user:pw@example.org:8080/p?q#f"));
+        assertTrue(TimedServiceClient.absoluteIri("mailto:someone@example.org"));
+        assertFalse(TimedServiceClient.absoluteIri("urn:a[b]"));
+        assertFalse(TimedServiceClient.absoluteIri("http://example.org/"));
+        assertFalse(TimedServiceClient.absoluteIri("http://example.org:80a/"));
+        assertFalse(TimedServiceClient.absoluteIri("http://[::1/x"));
+        assertFalse(TimedServiceClient.absoluteIri("1http://example.org/"));
+        assertFalse(TimedServiceClient.absoluteIri("http://example.org/%zz"));
+        assertFalse(TimedServiceClient.absoluteIri("http://example.org/a￾b"));
+    }
+
     @SuppressWarnings("unused")
     private static void silence(IOException ignored) { }
 }

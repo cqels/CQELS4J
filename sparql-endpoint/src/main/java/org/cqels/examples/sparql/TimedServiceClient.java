@@ -724,6 +724,16 @@ final class TimedServiceClient extends CloseableHttpClient {
                         while (p.nextToken() == com.fasterxml.jackson.core.JsonToken.FIELD_NAME) {
                             String field = p.currentName();
                             com.fasterxml.jackson.core.JsonToken v = p.nextToken();
+                            if (field.equals("link")) {
+                                // RDF4J reads link; a malformed one ended its parse early, and the
+                                // rows after it were lost (found in co-review of #129)
+                                expect(v == com.fasterxml.jackson.core.JsonToken.START_ARRAY, "'head.link' is not an array");
+                                while (p.nextToken() != com.fasterxml.jackson.core.JsonToken.END_ARRAY) {
+                                    expect(p.currentToken() == com.fasterxml.jackson.core.JsonToken.VALUE_STRING,
+                                            "'head.link' holds a non-string");
+                                }
+                                continue;
+                            }
                             if (field.equals("vars")) {
                                 expect(!varsSeen, "'head.vars' given twice");
                                 varsSeen = true;
@@ -744,6 +754,14 @@ final class TimedServiceClient extends CloseableHttpClient {
                         while (p.nextToken() == com.fasterxml.jackson.core.JsonToken.FIELD_NAME) {
                             String field = p.currentName();
                             com.fasterxml.jackson.core.JsonToken v = p.nextToken();
+                            if (field.equals("ordered") || field.equals("distinct")) {
+                                // RDF4J reads these older members, and read bindings nested in them
+                                // that this check had skipped: an update stored an invalid IRI that
+                                // way (found in co-review of #129)
+                                expect(v == com.fasterxml.jackson.core.JsonToken.VALUE_TRUE
+                                        || v == com.fasterxml.jackson.core.JsonToken.VALUE_FALSE, "'" + field + "' is not true or false");
+                                continue;
+                            }
                             if (!field.equals("bindings")) {
                                 p.skipChildren();
                                 continue;
@@ -840,17 +858,185 @@ final class TimedServiceClient extends CloseableHttpClient {
     }
 
     /**
-     * An absolute IRI. {@code java.net.URI}, not RDF4J's {@code ParsedIRI}: that refused the valid
-     * {@code http://127.0.0.1?x} and took {@code http://[not-an-ip]/a} (found in co-review of
-     * #129). {@code URI} takes non-ASCII characters as IRIs allow, and refuses spaces, unbalanced
-     * or malformed brackets and the like.
+     * An absolute IRI by RFC 3987's grammar: {@code scheme ":" ihier-part ["?" iquery]
+     * ["#" ifragment]}, with its character ranges. Neither library parser matched it:
+     * RDF4J's {@code ParsedIRI} refused {@code http://127.0.0.1?x} and took
+     * {@code http://[not-an-ip]/a}; {@code java.net.URI} refused U+00A0 in a path and took
+     * {@code urn:a[b]} and private-use characters outside the query (both found in co-review of
+     * #129). Checked character by character, without recursion.
      */
-    static boolean absoluteIri(String s) {
-        try {
-            return new java.net.URI(s).isAbsolute();
-        } catch (java.net.URISyntaxException e) {
+    static boolean absoluteIri(String iri) {
+        int colon = iri.indexOf(':');
+        if (colon < 1 || !isAlpha(iri.charAt(0))) {
             return false;
         }
+        for (int i = 1; i < colon; i++) {
+            char c = iri.charAt(i);
+            if (!isAlpha(c) && !isDigit(c) && c != '+' && c != '-' && c != '.') {
+                return false;
+            }
+        }
+        String rest = iri.substring(colon + 1);
+        int hash = rest.indexOf('#');
+        String fragment = hash < 0 ? null : rest.substring(hash + 1);
+        if (hash >= 0) {
+            rest = rest.substring(0, hash);
+        }
+        int question = rest.indexOf('?');
+        String query = question < 0 ? null : rest.substring(question + 1);
+        String hier = question < 0 ? rest : rest.substring(0, question);
+        if (fragment != null && !chars(fragment, "/?", false)) {
+            return false;
+        }
+        if (query != null && !chars(query, "/?", true)) {
+            return false;
+        }
+        String path = hier;
+        if (hier.startsWith("//")) {
+            int slash = hier.indexOf('/', 2);
+            String authority = slash < 0 ? hier.substring(2) : hier.substring(2, slash);
+            path = slash < 0 ? "" : hier.substring(slash);
+            if (!authority(authority)) {
+                return false;
+            }
+        }
+        return chars(path, "/", false);
+    }
+
+    private static boolean authority(String a) {
+        int at = a.lastIndexOf('@');
+        if (at >= 0 && !chars(a.substring(0, at), ":", false, false)) {
+            return false;
+        }
+        String hostPort = a.substring(at + 1);
+        String host = hostPort;
+        String port = null;
+        if (hostPort.startsWith("[")) {
+            int close = hostPort.indexOf(']');
+            if (close < 0) {
+                return false;
+            }
+            host = hostPort.substring(0, close + 1);
+            String after = hostPort.substring(close + 1);
+            if (!after.isEmpty()) {
+                if (after.charAt(0) != ':') {
+                    return false;
+                }
+                port = after.substring(1);
+            }
+            if (!ipLiteral(host.substring(1, host.length() - 1))) {
+                return false;
+            }
+        } else {
+            int c = hostPort.lastIndexOf(':');
+            if (c >= 0) {
+                host = hostPort.substring(0, c);
+                port = hostPort.substring(c + 1);
+            }
+            if (!chars(host, "", false, false)) {   // ireg-name: no ':' '@' '/' '[' ']'
+                return false;
+            }
+        }
+        if (port != null) {
+            for (int i = 0; i < port.length(); i++) {
+                if (!isDigit(port.charAt(i))) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    /** IPv6address or IPvFuture, the brackets' content. IPv6 is parsed as a literal: it has ':', so no name is looked up. */
+    private static boolean ipLiteral(String s) {
+        if (!s.isEmpty() && (s.charAt(0) == 'v' || s.charAt(0) == 'V')) {
+            int dot = s.indexOf('.');
+            if (dot < 2 || dot == s.length() - 1) {
+                return false;
+            }
+            for (int i = 1; i < dot; i++) {
+                if (Character.digit(s.charAt(i), 16) < 0) {
+                    return false;
+                }
+            }
+            for (int i = dot + 1; i < s.length(); i++) {
+                char c = s.charAt(i);
+                if (!(isAlpha(c) || isDigit(c) || "-._~!$&'()*+,;=:".indexOf(c) >= 0)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        if (s.indexOf(':') < 0) {
+            return false;
+        }
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (Character.digit(c, 16) < 0 && c != ':' && c != '.') {
+                return false;
+            }
+        }
+        try {
+            return java.net.InetAddress.getByName(s) instanceof java.net.Inet6Address;
+        } catch (java.net.UnknownHostException e) {
+            return false;
+        }
+    }
+
+    /** An ipchar sequence (adds ':' and '@' to {@code extra}); see the overload. */
+    private static boolean chars(String s, String extra, boolean privateUse) {
+        return chars(s, extra + ":@", privateUse, true);
+    }
+
+    /**
+     * Every code point of {@code s} an iunreserved, sub-delim, percent-encoding or one of
+     * {@code extra}, taken exactly as given ({@code exactExtras} marks this overload, used for
+     * userinfo and host, which are not ipchar); private-use code points only where
+     * {@code privateUse} (the query).
+     */
+    private static boolean chars(String s, String extra, boolean privateUse, boolean exactExtras) {
+        for (int i = 0; i < s.length(); ) {
+            int cp = s.codePointAt(i);
+            if (cp == '%') {
+                if (i + 2 >= s.length() || Character.digit(s.charAt(i + 1), 16) < 0 || Character.digit(s.charAt(i + 2), 16) < 0) {
+                    return false;
+                }
+                i += 3;
+                continue;
+            }
+            boolean ok = (cp < 128 && (isAlpha((char) cp) || isDigit((char) cp) || "-._~!$&'()*+,;=".indexOf(cp) >= 0
+                    || extra.indexOf(cp) >= 0))
+                    || ucschar(cp) || (privateUse && iprivate(cp));
+            if (!ok) {
+                return false;
+            }
+            i += Character.charCount(cp);
+        }
+        return true;
+    }
+
+    /** RFC 3987's ucschar. */
+    private static boolean ucschar(int c) {
+        if ((c >= 0xA0 && c <= 0xD7FF) || (c >= 0xF900 && c <= 0xFDCF) || (c >= 0xFDF0 && c <= 0xFFEF)) {
+            return true;
+        }
+        if (c >= 0x10000 && c <= 0xEFFFD) {
+            return (c & 0xFFFF) <= 0xFFFD;   // each plane's xxFFFE and xxFFFF are not
+        }
+        return false;
+    }
+
+    /** RFC 3987's iprivate. */
+    private static boolean iprivate(int c) {
+        return (c >= 0xE000 && c <= 0xF8FF) || (c >= 0xF0000 && c <= 0xFFFFD) || (c >= 0x100000 && c <= 0x10FFFD);
+    }
+
+    private static boolean isAlpha(char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+    }
+
+    private static boolean isDigit(char c) {
+        return c >= '0' && c <= '9';
     }
 
     /**
