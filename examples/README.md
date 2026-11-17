@@ -68,6 +68,7 @@ mvn -q exec:java -Dexec.mainClass=org.cqels.examples.GeoSpatialFilter
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.SosaObservations
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.VehicleSignalsCdsp
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.RdfMessageIngestion
+mvn -q exec:java -Dexec.mainClass=org.cqels.examples.messages.MessageLogReplay
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.ChargerRangeFilter
 
 # Advanced CDSP analytics & CEP (org.cqels.examples.cdsp):
@@ -252,6 +253,7 @@ Each demo pairs the derivation with a case that must NOT derive, so the semantic
 | [`SosaObservations`](src/main/java/org/cqels/examples/SosaObservations.java) | W3C [SOSA/SSN](https://www.w3.org/TR/vocab-ssn/) + multi-pattern stream join | Average / count per (vehicle × observed VSS signal) — the `observedProperty` keeps speed and battery readings apart. |
 | [`VehicleSignalsCdsp`](src/main/java/org/cqels/examples/VehicleSignalsCdsp.java) | COVESA [VSS](https://covesa.global/) (CDSP) + `GROUP BY` + `HAVING` | The flagship query: per-vehicle top/average speed over a window, emitting only vehicles that were speeding. |
 | [`RdfMessageIngestion`](src/main/java/org/cqels/examples/RdfMessageIngestion.java) | W3C [RSP CG **RDF Messages**](https://w3c-cg.github.io/rsp/spec/messages) N-Quads envelope (`RdfMessageCodec`, alpha.9) | Decode a `VERSION "1.2-messages"` document into atomic observations and push each as one stream element, so a multi-pattern `[NOW]` query binds two predicates of the *same* observation. |
+| [`MessageLogReplay`](src/main/java/org/cqels/examples/messages/MessageLogReplay.java) (`org.cqels.examples.messages`) | RDF Messages **Turtle** log reader/writer ([`RdfMessageLog`](src/main/java/org/cqels/examples/messages/RdfMessageLog.java)); `[TRIPLES 1]` vs `[RANGE 30s]` | Replay [`cabin-temperatures.ttl`](src/main/resources/messages/cabin-temperatures.ttl): 6 messages, the same `_:r` label in every observation. Read one message at a time, 4 readings; read as one plain document, the labels collide into 1 blank node and the same query returns 16 rows. Results go back out as a message log that re-reads as 4 messages. See [RDF_MESSAGES_MAPPING.md](../RDF_MESSAGES_MAPPING.md). |
 
 ## Keeping the caveats honest
 

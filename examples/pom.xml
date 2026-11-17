@@ -69,6 +69,15 @@
             <version>2.0.16</version>
             <scope>runtime</scope>
         </dependency>
+
+        <!-- Tests for the RDF Message Log reader (org.cqels.examples.messages); same JUnit
+             and surefire versions as sparql-endpoint. -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>5.10.2</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <!-- Served anonymously: no account, no token, no ~/.m2/settings.xml.
@@ -87,6 +96,11 @@
 
     <build>
         <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.2.5</version>
+            </plugin>
             <!-- Run an example with:
                  mvn -q compile exec:java -Dexec.mainClass=org.cqels.examples.HelloCqels -->
             <plugin>
