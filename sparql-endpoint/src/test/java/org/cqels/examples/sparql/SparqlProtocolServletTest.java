@@ -2614,8 +2614,16 @@ class SparqlProtocolServletTest {
             }
             ex.getResponseHeaders().add("Content-Type", "application/sparql-results+json");
             ex.getResponseHeaders().add("Content-Encoding", "deflate");
-            ex.sendResponseHeaders(200, deflated.size());
+            // the body promises 64 KB more than the compressed data and then stalls: a client that
+            // drained it to reuse the connection would wait here (closing the decoder drains)
+            ex.sendResponseHeaders(200, deflated.size() + 65_536);
             ex.getResponseBody().write(deflated.toByteArray());
+            ex.getResponseBody().flush();
+            try {
+                Thread.sleep(8_000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
             ex.close();
         }));
         try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true).withMaxExecutionSeconds(10), 0)) {
@@ -2625,7 +2633,7 @@ class SparqlProtocolServletTest {
             assertEquals(200, r.statusCode(), r.body());
             assertEquals(150, r.body().lines().count() - 1);
             assertEquals(10, hits.get());
-            assertTrue((System.nanoTime() - t0) / 1e9 < 5, "a request waited for a connection");
+            assertTrue((System.nanoTime() - t0) / 1e9 < 5, "a request waited for a connection, or drained one");
         } finally {
             remote.stop(0);
         }
@@ -3077,6 +3085,32 @@ class SparqlProtocolServletTest {
         assertEquals(null, checked.why());
         assertTrue(new String(checked.body(), 0, 8, StandardCharsets.UTF_8).equals("{\"head\":"), "not rewritten head first");
         assertTrue(took < 1.5, "checking took " + took + " s");
+    }
+
+    // ---- co-review round 6 of #129 ----------------------------------------------------------------
+
+    /** A member given twice is refused: a second head after the results slipped past the head-first rewrite. */
+    @Test
+    void aMemberGivenTwiceIsRefused() {
+        String json = "application/sparql-results+json";
+        for (String bad : List.of(
+                "{\"head\":{},\"results\":{\"bindings\":[]},\"head\":{\"vars\":[\"x\"]}}",
+                "{\"head\":{\"vars\":[\"x\"],\"vars\":[\"y\"]},\"results\":{\"bindings\":[]}}",
+                "{\"head\":{\"vars\":[\"x\"]},\"results\":{\"bindings\":[],\"bindings\":[]}}")) {
+            assertTrue(TimedServiceClient.invalidResult(json, bad.getBytes(StandardCharsets.UTF_8), null) != null, bad);
+        }
+    }
+
+    /** IRIs are checked strictly: RDF4J took "http://example.org/a b", and an update stored it. */
+    @Test
+    void iriValuesMustBeAbsoluteIris() {
+        String json = "application/sparql-results+json";
+        for (String bad : List.of("{\"type\":\"uri\",\"value\":\"http://example.org/a b\"}", "{\"type\":\"uri\",\"value\":\"relative/path\"}",
+                "{\"type\":\"literal\",\"value\":\"1\",\"datatype\":\"not an iri\"}")) {
+            assertTrue(TimedServiceClient.invalidResult(json, row(bad).getBytes(StandardCharsets.UTF_8), null) != null, bad);
+        }
+        assertEquals(null, TimedServiceClient.invalidResult(json,
+                row("{\"type\":\"uri\",\"value\":\"http://example.org/ä?q=1#f\"}").getBytes(StandardCharsets.UTF_8), null));
     }
 
     @SuppressWarnings("unused")

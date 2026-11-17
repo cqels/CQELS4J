@@ -704,17 +704,25 @@ final class TimedServiceClient extends CloseableHttpClient {
             boolean bool = false;
             java.util.Set<String> vars = null;
             java.util.Set<String> used = new java.util.HashSet<>();
+            java.util.Set<String> members = new java.util.HashSet<>();
             while (p.nextToken() == com.fasterxml.jackson.core.JsonToken.FIELD_NAME) {
                 String name = p.currentName();
+                // A second "head" after the results let the answer past the head-first rewrite
+                // with RDF4J buffering again (found in co-review of #129): a member given twice
+                // is refused, as JSON's own advice on duplicate names would have it.
+                expect(members.add(name), "'" + name + "' given twice");
                 com.fasterxml.jackson.core.JsonToken value = p.nextToken();
                 switch (name) {
                     case "head" -> {
                         expect(value == com.fasterxml.jackson.core.JsonToken.START_OBJECT, "'head' is not an object");
                         head = true;
+                        boolean varsSeen = false;
                         while (p.nextToken() == com.fasterxml.jackson.core.JsonToken.FIELD_NAME) {
                             String field = p.currentName();
                             com.fasterxml.jackson.core.JsonToken v = p.nextToken();
                             if (field.equals("vars")) {
+                                expect(!varsSeen, "'head.vars' given twice");
+                                varsSeen = true;
                                 expect(v == com.fasterxml.jackson.core.JsonToken.START_ARRAY, "'head.vars' is not an array");
                                 vars = new java.util.HashSet<>();
                                 while (p.nextToken() != com.fasterxml.jackson.core.JsonToken.END_ARRAY) {
@@ -736,6 +744,7 @@ final class TimedServiceClient extends CloseableHttpClient {
                                 p.skipChildren();
                                 continue;
                             }
+                            expect(!results, "'results.bindings' given twice");
                             expect(v == com.fasterxml.jackson.core.JsonToken.START_ARRAY, "'bindings' is not an array");
                             results = true;
                             while (p.nextToken() != com.fasterxml.jackson.core.JsonToken.END_ARRAY) {
@@ -778,7 +787,7 @@ final class TimedServiceClient extends CloseableHttpClient {
      * {@code value}, and {@code xml:lang} / {@code datatype} only where they make a term — a
      * language only on a literal, and then with no datatype or {@code rdf:langString}; a datatype
      * only on a literal (required on a {@code typed-literal}); {@code rdf:langString} only with a
-     * language. RDF4J took the rest and changed them: an {@code rdf:langString} with no language
+     * language; a {@code uri}'s value and a datatype absolute IRIs. RDF4J took the rest and changed them: an {@code rdf:langString} with no language
      * became an {@code xsd:string}, a language beside another datatype lost the datatype (found in
      * co-review of #129).
      */
@@ -787,6 +796,7 @@ final class TimedServiceClient extends CloseableHttpClient {
         boolean value = false;
         String lang = null;
         String datatype = null;
+        String text = null;
         while (p.nextToken() == com.fasterxml.jackson.core.JsonToken.FIELD_NAME) {
             String field = p.currentName();
             com.fasterxml.jackson.core.JsonToken v = p.nextToken();
@@ -799,6 +809,7 @@ final class TimedServiceClient extends CloseableHttpClient {
                 case "value" -> {
                     expect(v == com.fasterxml.jackson.core.JsonToken.VALUE_STRING, "a term's 'value' is not a string");
                     value = true;
+                    text = p.getText();
                 }
                 case "xml:lang", "datatype" -> {
                     expect(v == com.fasterxml.jackson.core.JsonToken.VALUE_STRING, "a term's '" + field + "' is not a string");
@@ -818,6 +829,18 @@ final class TimedServiceClient extends CloseableHttpClient {
         expect(lang == null || languageTag(lang), "a malformed language tag");
         expect(lang == null || datatype == null || datatype.equals(RDF_LANG_STRING), "a language beside the datatype " + datatype);
         expect(!RDF_LANG_STRING.equals(datatype) || lang != null, "an rdf:langString without a language");
+        // RDF4J's parser takes "http://example.org/a b" as an IRI, and an update stored it (found
+        // in co-review of #129): the strict RFC 3987 parse the servlet gives graph IRIs
+        expect(!type.equals("uri") || absoluteIri(text), "a uri that is not an absolute IRI");
+        expect(datatype == null || absoluteIri(datatype), "a datatype that is not an absolute IRI");
+    }
+
+    private static boolean absoluteIri(String s) {
+        try {
+            return new org.eclipse.rdf4j.common.net.ParsedIRI(s).isAbsolute();
+        } catch (java.net.URISyntaxException e) {
+            return false;
+        }
     }
 
     /**
