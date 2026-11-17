@@ -1489,6 +1489,12 @@ public final class SparqlProtocolServlet extends HttpServlet {
             // SparqlEndpointLauncher.limitOutboundRequests gives a deadline and the refusal of
             // XML answers. A program mounting the servlet without it — or a resolver that
             // ignored it — would run SERVICE without either, so SERVICE waits for it.
+            if (options.federationEnabled() && serviceInOrdering(node)) {
+                fail(resp, HttpServletResponse.SC_BAD_REQUEST, "SERVICE inside an ORDER BY expression is not accepted "
+                        + "here: RDF4J sorts in parallel, and SERVICE calls made by the sort's worker threads would escape "
+                        + "this query's SERVICE limits. Bind the value first (BIND or a subquery), then order by the variable");
+                return true;
+            }
             if (options.federationEnabled() && containsService(node)
                     && !SparqlEndpointLauncher.outboundLimited(repository.get())) {
                 fail(resp, HttpServletResponse.SC_SERVICE_UNAVAILABLE, "SERVICE is unavailable: the repository's SERVICE "
@@ -1497,6 +1503,29 @@ public final class SparqlProtocolServlet extends HttpServlet {
             }
         }
         return false;
+    }
+
+    /**
+     * Whether a SERVICE sits inside an ORDER BY key ({@code EXISTS { SERVICE … }} in one).
+     * RDF4J's {@code OrderIterator} sorts with {@code Arrays.parallelSort}, so the comparator —
+     * which evaluates those keys — runs on common-pool threads, where the query's
+     * {@code TimedServiceClient.Budget} is not: 9,000 rows made 19 SERVICE requests under a limit
+     * of 1 (found in co-review of #129). Refused rather than half-bounded.
+     */
+    static boolean serviceInOrdering(QueryModelNode node) {
+        boolean[] found = {false};
+        node.visit(new AbstractQueryModelVisitor<RuntimeException>() {
+            @Override
+            public void meet(org.eclipse.rdf4j.query.algebra.Order order) {
+                for (org.eclipse.rdf4j.query.algebra.OrderElem elem : order.getElements()) {
+                    if (containsService(elem.getExpr())) {
+                        found[0] = true;
+                    }
+                }
+                super.meet(order);
+            }
+        });
+        return found[0];
     }
 
     private static boolean containsService(QueryModelNode node) {
