@@ -955,7 +955,7 @@ final class TimedServiceClient extends CloseableHttpClient {
                 return false;
             }
             for (int i = 1; i < dot; i++) {
-                if (Character.digit(s.charAt(i), 16) < 0) {
+                if (!hex(s.charAt(i))) {
                     return false;
                 }
             }
@@ -967,20 +967,76 @@ final class TimedServiceClient extends CloseableHttpClient {
             }
             return true;
         }
-        if (s.indexOf(':') < 0) {
+        return ipv6(s);
+    }
+
+    /**
+     * RFC 3986's IPv6address, by its grammar: groups of 1 to 4 hex digits, at most one "::", and
+     * an optional dotted IPv4 tail standing for two groups. Not {@code InetAddress}: it turned
+     * {@code ::ffff:192.0.2.1} into an {@code Inet4Address}, refusing a valid IRI, and took
+     * {@code ::192.000.2.1} (found in co-review of #129).
+     */
+    static boolean ipv6(String s) {
+        int gap = s.indexOf("::");
+        if (gap >= 0 && s.indexOf("::", gap + 1) >= 0) {
             return false;
         }
-        for (int i = 0; i < s.length(); i++) {
-            char c = s.charAt(i);
-            if (Character.digit(c, 16) < 0 && c != ':' && c != '.') {
+        String head = gap < 0 ? s : s.substring(0, gap);
+        String tail = gap < 0 ? "" : s.substring(gap + 2);
+        int groups = 0;
+        String[][] sides = {head.isEmpty() ? new String[0] : head.split(":", -1),
+                tail.isEmpty() ? new String[0] : tail.split(":", -1)};
+        for (int side = 0; side < 2; side++) {
+            String[] parts = sides[side];
+            for (int i = 0; i < parts.length; i++) {
+                String part = parts[i];
+                boolean last = side == (gap < 0 ? 0 : 1) && i == parts.length - 1;
+                if (last && part.indexOf('.') >= 0) {
+                    if (!ipv4(part)) {
+                        return false;
+                    }
+                    groups += 2;
+                } else {
+                    if (part.isEmpty() || part.length() > 4) {
+                        return false;
+                    }
+                    for (int k = 0; k < part.length(); k++) {
+                        if (!hex(part.charAt(k))) {
+                            return false;
+                        }
+                    }
+                    groups++;
+                }
+            }
+        }
+        return gap < 0 ? groups == 8 : groups <= 7;
+    }
+
+    /** dec-octet "." dec-octet "." dec-octet "." dec-octet, no leading zeros. */
+    private static boolean ipv4(String s) {
+        String[] octets = s.split("\\.", -1);
+        if (octets.length != 4) {
+            return false;
+        }
+        for (String o : octets) {
+            if (o.isEmpty() || o.length() > 3 || (o.length() > 1 && o.charAt(0) == '0')) {
+                return false;
+            }
+            for (int i = 0; i < o.length(); i++) {
+                if (!isDigit(o.charAt(i))) {
+                    return false;
+                }
+            }
+            if (Integer.parseInt(o) > 255) {
                 return false;
             }
         }
-        try {
-            return java.net.InetAddress.getByName(s) instanceof java.net.Inet6Address;
-        } catch (java.net.UnknownHostException e) {
-            return false;
-        }
+        return true;
+    }
+
+    /** An ASCII hex digit: {@code Character.digit} took fullwidth and other Unicode digits (found in co-review of #129). */
+    private static boolean hex(char c) {
+        return isDigit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
     }
 
     /** An ipchar sequence (adds ':' and '@' to {@code extra}); see the overload. */
@@ -998,7 +1054,7 @@ final class TimedServiceClient extends CloseableHttpClient {
         for (int i = 0; i < s.length(); ) {
             int cp = s.codePointAt(i);
             if (cp == '%') {
-                if (i + 2 >= s.length() || Character.digit(s.charAt(i + 1), 16) < 0 || Character.digit(s.charAt(i + 2), 16) < 0) {
+                if (i + 2 >= s.length() || !hex(s.charAt(i + 1)) || !hex(s.charAt(i + 2))) {
                     return false;
                 }
                 i += 3;
@@ -1020,8 +1076,10 @@ final class TimedServiceClient extends CloseableHttpClient {
         if ((c >= 0xA0 && c <= 0xD7FF) || (c >= 0xF900 && c <= 0xFDCF) || (c >= 0xFDF0 && c <= 0xFFEF)) {
             return true;
         }
-        if (c >= 0x10000 && c <= 0xEFFFD) {
-            return (c & 0xFFFF) <= 0xFFFD;   // each plane's xxFFFE and xxFFFF are not
+        if ((c >= 0x10000 && c <= 0xDFFFD) || (c >= 0xE1000 && c <= 0xEFFFD)) {
+            // each plane's xxFFFE and xxFFFF are not; plane 14 starts at E1000, its tags block
+            // E0000–E0FFF excluded (found in co-review of #129)
+            return (c & 0xFFFF) <= 0xFFFD;
         }
         return false;
     }
