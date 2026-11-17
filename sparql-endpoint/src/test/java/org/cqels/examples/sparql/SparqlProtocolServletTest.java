@@ -2980,6 +2980,58 @@ class SparqlProtocolServletTest {
         }
     }
 
+    // ---- co-review round 4 of #129 ----------------------------------------------------------------
+
+    static String row(String term) {
+        return "{\"head\":{\"vars\":[\"x\"]},\"results\":{\"bindings\":[{\"x\":" + term + "}]}}";
+    }
+
+    /** A literal's language and datatype must make a term: RDF4J took the rest and changed what it meant. */
+    @Test
+    void literalMetadataMustMakeATerm() {
+        String json = "application/sparql-results+json";
+        String lang = "http://www.w3.org/1999/02/22-rdf-syntax-ns#langString";
+        for (String bad : List.of(
+                "{\"type\":\"literal\",\"value\":\"a\",\"datatype\":\"" + lang + "\"}",
+                "{\"type\":\"literal\",\"value\":\"a\",\"xml:lang\":\"en\",\"datatype\":\"http://www.w3.org/2001/XMLSchema#integer\"}",
+                "{\"type\":\"uri\",\"value\":\"urn:a\",\"xml:lang\":\"en\"}",
+                "{\"type\":\"bnode\",\"value\":\"b\",\"datatype\":\"http://www.w3.org/2001/XMLSchema#string\"}",
+                "{\"type\":\"typed-literal\",\"value\":\"a\"}",
+                "{\"type\":\"literal\",\"value\":\"a\",\"xml:lang\":\"not a tag\"}")) {
+            assertTrue(TimedServiceClient.invalidResult(json, row(bad).getBytes(StandardCharsets.UTF_8), null) != null, bad);
+        }
+        for (String good : List.of(
+                "{\"type\":\"literal\",\"value\":\"a\",\"xml:lang\":\"en-GB\"}",
+                "{\"type\":\"literal\",\"value\":\"a\",\"xml:lang\":\"en\",\"datatype\":\"" + lang + "\"}",
+                "{\"type\":\"literal\",\"value\":\"7\",\"datatype\":\"http://www.w3.org/2001/XMLSchema#integer\"}",
+                "{\"type\":\"typed-literal\",\"value\":\"7\",\"datatype\":\"http://www.w3.org/2001/XMLSchema#integer\"}")) {
+            assertEquals(null, TimedServiceClient.invalidResult(json, row(good).getBytes(StandardCharsets.UTF_8), null), good);
+        }
+    }
+
+    /**
+     * Results before head: RDF4J held the bindings in a set until the head came, so two identical
+     * solutions became one. The answer reaches it head first, the bindings untouched.
+     */
+    @Test
+    void identicalSolutionsSurviveResultsBeforeHead() throws Exception {
+        String reversed = "{\"results\":{\"bindings\":[{\"x\":{\"type\":\"literal\",\"value\":\"a\"}},"
+                + "{\"x\":{\"type\":\"literal\",\"value\":\"a\"}},{\"x\":{\"type\":\"literal\",\"value\":\"b\"}}]},"
+                + "\"head\":{\"vars\":[\"x\"]}}";
+        String normalised = new String(TimedServiceClient.headFirst(reversed.getBytes(StandardCharsets.UTF_8)), StandardCharsets.UTF_8);
+        assertTrue(normalised.startsWith("{\"head\":"), normalised);
+        byte[] already = row("{\"type\":\"literal\",\"value\":\"a\"}").getBytes(StandardCharsets.UTF_8);
+        assertTrue(already == TimedServiceClient.headFirst(already), "rewritten though the head was first");
+        var remote = serve(java.util.Map.of("/rev", respond(200, "application/sparql-results+json", reversed, 0)));
+        try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true), 0)) {
+            var r = getCsv(fed.url(), "SELECT ?x WHERE { SERVICE <http://127.0.0.1:" + remote.getAddress().getPort() + "/rev> { ?s ?p ?x } }");
+            assertEquals(200, r.statusCode(), r.body());
+            assertEquals(List.of("x", "a", "a", "b"), r.body().lines().toList());
+        } finally {
+            remote.stop(0);
+        }
+    }
+
     @SuppressWarnings("unused")
     private static void silence(IOException ignored) { }
 }

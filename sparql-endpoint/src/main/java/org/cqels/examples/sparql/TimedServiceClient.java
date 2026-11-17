@@ -398,6 +398,12 @@ final class TimedServiceClient extends CloseableHttpClient {
         ScheduledFuture<?> deadline = timeout > 0
                 ? DEADLINES.schedule(() -> {
                     fired.set(true);
+                    if (budget != null) {
+                        // recorded here, not only where a read fails: an answer already read is
+                        // past the abort's reach, and its check could outlast the deadline
+                        // unnoticed (found in co-review of #129)
+                        budget.trip(new Refusal(504, "a SERVICE endpoint did not answer within the query's execution limit"));
+                    }
                     abort(current.get());
                 }, timeout, TimeUnit.MILLISECONDS)
                 : NO_DEADLINE;
@@ -512,6 +518,14 @@ final class TimedServiceClient extends CloseableHttpClient {
                     String invalid = invalidResult(mediaType, body, expectTuple);
                     if (invalid != null) {
                         throw new RemoteFailure("the SERVICE endpoint " + host.toURI() + " answered a malformed result: " + invalid);
+                    }
+                    if (!mediaType.equals("text/boolean")) {
+                        body = headFirst(body);
+                    }
+                    if (fired.get()) {
+                        // the deadline passed while the answer was checked: a timeout, as if the
+                        // remote itself had been late
+                        throw timedOut(new IOException("deadline reached while checking the answer"), timeoutUsed, budget);
                     }
                     if (mediaType.equals("text/boolean")) {
                         // checked whole above, but RDF4J reads 16 characters: sixteen spaces and
@@ -739,10 +753,22 @@ final class TimedServiceClient extends CloseableHttpClient {
         }
     }
 
-    /** One RDF term's object, its START_OBJECT already read. */
+    private static final String RDF_LANG_STRING = "http://www.w3.org/1999/02/22-rdf-syntax-ns#langString";
+
+    /**
+     * One RDF term's object, its START_OBJECT already read: a known {@code type}, a string
+     * {@code value}, and {@code xml:lang} / {@code datatype} only where they make a term — a
+     * language only on a literal, and then with no datatype or {@code rdf:langString}; a datatype
+     * only on a literal (required on a {@code typed-literal}); {@code rdf:langString} only with a
+     * language. RDF4J took the rest and changed them: an {@code rdf:langString} with no language
+     * became an {@code xsd:string}, a language beside another datatype lost the datatype (found in
+     * co-review of #129).
+     */
     private static void term(com.fasterxml.jackson.core.JsonParser p) throws IOException {
         String type = null;
         boolean value = false;
+        String lang = null;
+        String datatype = null;
         while (p.nextToken() == com.fasterxml.jackson.core.JsonToken.FIELD_NAME) {
             String field = p.currentName();
             com.fasterxml.jackson.core.JsonToken v = p.nextToken();
@@ -756,12 +782,63 @@ final class TimedServiceClient extends CloseableHttpClient {
                     expect(v == com.fasterxml.jackson.core.JsonToken.VALUE_STRING, "a term's 'value' is not a string");
                     value = true;
                 }
-                case "xml:lang", "datatype" -> expect(v == com.fasterxml.jackson.core.JsonToken.VALUE_STRING,
-                        "a term's '" + field + "' is not a string");
+                case "xml:lang", "datatype" -> {
+                    expect(v == com.fasterxml.jackson.core.JsonToken.VALUE_STRING, "a term's '" + field + "' is not a string");
+                    if (field.equals("datatype")) {
+                        datatype = p.getText();
+                    } else {
+                        lang = p.getText();
+                    }
+                }
                 default -> p.skipChildren();
             }
         }
         expect(type != null && value, "a term without 'type' and 'value'");
+        boolean literal = type.equals("literal") || type.equals("typed-literal");
+        expect(literal || (lang == null && datatype == null), "a " + type + " with a language or datatype");
+        expect(!type.equals("typed-literal") || datatype != null, "a typed-literal without a datatype");
+        expect(lang == null || lang.matches("[A-Za-z]{1,8}(-[A-Za-z0-9]{1,8})*"), "a malformed language tag");
+        expect(lang == null || datatype == null || datatype.equals(RDF_LANG_STRING), "a language beside the datatype " + datatype);
+        expect(!RDF_LANG_STRING.equals(datatype) || lang != null, "an rdf:langString without a language");
+    }
+
+    /**
+     * {@code body} with its {@code head} member first, the rest as it was. RDF4J 4.3.8 reading
+     * {@code results} before {@code head} holds the bindings in a set until the head arrives, so
+     * two identical solutions became one, and their order was lost — a COUNT and a join over them
+     * changed (found in co-review of #129). The bindings array is copied token by token,
+     * untouched. Returns {@code body} itself when the head is already first.
+     */
+    static byte[] headFirst(byte[] body) throws IOException {
+        com.fasterxml.jackson.core.JsonFactory json = new com.fasterxml.jackson.core.JsonFactory();
+        try (com.fasterxml.jackson.core.JsonParser p = json.createParser(body)) {
+            p.nextToken();
+            if (p.nextToken() == com.fasterxml.jackson.core.JsonToken.FIELD_NAME && p.currentName().equals("head")) {
+                return body;
+            }
+        }
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream(body.length + 16);
+        try (com.fasterxml.jackson.core.JsonGenerator g = json.createGenerator(out)) {
+            g.writeStartObject();
+            for (boolean headPass : new boolean[] {true, false}) {
+                try (com.fasterxml.jackson.core.JsonParser p = json.createParser(body)) {
+                    p.nextToken();   // the outer object
+                    while (p.nextToken() == com.fasterxml.jackson.core.JsonToken.FIELD_NAME) {
+                        boolean isHead = p.currentName().equals("head");
+                        if (isHead == headPass) {
+                            g.writeFieldName(p.currentName());
+                            p.nextToken();
+                            g.copyCurrentStructure(p);
+                        } else {
+                            p.nextToken();
+                            p.skipChildren();
+                        }
+                    }
+                }
+            }
+            g.writeEndObject();
+        }
+        return out.toByteArray();
     }
 
     private static void expect(boolean ok, String why) throws IOException {
