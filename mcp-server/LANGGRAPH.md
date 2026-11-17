@@ -95,8 +95,8 @@ lifetime of the process is the lifetime of the memory:
   ["-jar", JAR]}}})`); stop its server with `await adapter.client.close()`. With several servers in
   one config, tool names are prefixed with the server name (`cqels_store_memory`).
 - This hands the model every tool, including administrative ones such as `set_access_policy` and
-  `forget_memory`. That is fine for a trusted, single-user agent; before other people use it, filter
-  the list as shown in section 9.
+  `forget_memory`. That is fine for a trusted, single-user agent; before other people use it, replace
+  it with narrower tools of your own, as shown in section 9.
 - To share one memory between several agents or processes, or to keep it running independently of
   your Python code, run the server over HTTP (section 8).
 
@@ -411,7 +411,8 @@ await t["recall_memory"].ainvoke({"pattern": {"subject": "ex:Alice"}, "role": "e
 The `role` must be set by your application from an authenticated identity, never taken from the
 model or the end user: a caller that can choose its `role` can read as anyone. Writes need the same
 care. A label belongs to a fact (its subject, predicate and object), not to the graph the fact is
-stored in, and once a policy exists the first label written to a fact is the one that stays. A model that can store facts
+stored in. Once a policy exists, a fact keeps the label it has, even after it is forgotten and stored
+again; before that, a later store replaces it. A model that can store facts
 can therefore claim any fact it can name: an unlabelled one already stored, or one your application
 stores later under another label, which then stays readable to the model's role and hidden from the
 intended one. So on a governed server give the model only a recall tool that fixes its role, and
@@ -440,7 +441,10 @@ agent_tools = [recall_as("hr")]
 Pass `agent_tools` instead of `tools` to `create_agent` (section 2), or to both `bind_tools` and
 `ToolNode` (section 7), and change the system prompt to match: the model now has one tool,
 `recall(subject)`, without `entail`. Store every fact with a label, and each fact under one label
-only: an unlabelled fact is visible only to roles granted `"*"`, and under a policy a second label is ignored.
+only: an unlabelled fact is visible only to roles granted `"*"`, and under a policy a second label is
+ignored. Labels and roles do not separate users either: a `pattern` recall reads every user graph, so
+an `hr` session for one user also sees another user's `hr` facts. To keep users apart, use a label
+per user (`hr:alice`) and grant it only to that user's role.
 
 ---
 
