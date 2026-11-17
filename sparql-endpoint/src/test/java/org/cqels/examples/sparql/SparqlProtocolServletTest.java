@@ -2731,14 +2731,14 @@ class SparqlProtocolServletTest {
         for (String bad : List.of("{}", "{\"head\":{\"vars\":[\"x\"]}}", "{\"head\":{},\"results\":{\"bindings\":[]}} trailing",
                 "{\"head\":{},\"boolean\":42}", "{\"head\":{},\"results\":{}}", "[]",
                 "{\"head\":{},\"results\":{\"bindings\":[]},\"boolean\":true}")) {
-            assertTrue(TimedServiceClient.invalidResult(json, bad.getBytes(StandardCharsets.UTF_8)) != null, bad);
+            assertTrue(TimedServiceClient.invalidResult(json, bad.getBytes(StandardCharsets.UTF_8), null) != null, bad);
         }
         for (String good : List.of("{\"head\":{\"vars\":[\"x\"]},\"results\":{\"bindings\":[]}}", "{\"head\":{},\"boolean\":true}",
                 "{\"head\":{\"vars\":[\"x\"]},\"results\":{\"bindings\":[{\"x\":{\"type\":\"literal\",\"value\":\"a\"}}]}}")) {
-            assertEquals(null, TimedServiceClient.invalidResult(json, good.getBytes(StandardCharsets.UTF_8)), good);
+            assertEquals(null, TimedServiceClient.invalidResult(json, good.getBytes(StandardCharsets.UTF_8), null), good);
         }
-        assertEquals(null, TimedServiceClient.invalidResult("text/boolean", "true".getBytes(StandardCharsets.UTF_8)));
-        assertTrue(TimedServiceClient.invalidResult("text/tab-separated-values", "?x\ntrue\n".getBytes(StandardCharsets.UTF_8)) != null);
+        assertEquals(null, TimedServiceClient.invalidResult("text/boolean", "true".getBytes(StandardCharsets.UTF_8), null));
+        assertTrue(TimedServiceClient.invalidResult("text/tab-separated-values", "?x\ntrue\n".getBytes(StandardCharsets.UTF_8), null) != null);
         // end to end: a head-only answer under SILENT keeps the rows
         var remote = serve(java.util.Map.of("/head", respond(200, json, "{\"head\":{\"vars\":[\"x\"]}}", 0),
                 "/tsv", respond(200, "text/tab-separated-values", "?x\n\"a\"\n", 0)));
@@ -2789,6 +2789,143 @@ class SparqlProtocolServletTest {
             assertEquals(List.of("null"), seen, "Authorization sent: " + seen);
         } finally {
             remote.stop(0);
+        }
+    }
+
+    // ---- co-review round 2 of #129 ----------------------------------------------------------------
+
+    /** An error answer that spends the budget trips it there and then; it returned with nothing recorded, and SILENT went on. */
+    @Test
+    void anErrorAnswerThatSpendsTheBudgetTripsIt() throws Exception {
+        var remote = serve(java.util.Map.of("/error", respond(500, "text/plain", "x".repeat(1024), 0)));
+        try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true).withUpdateEnabled(true)
+                .withMaxServiceBytes(50), 0)) {
+            String service = "http://127.0.0.1:" + remote.getAddress().getPort() + "/error";
+            var r = getCsv(fed.url(), "SELECT ?v WHERE { ?v <urn:ex:depot> ?d SERVICE SILENT <" + service + "> { ?y <urn:ex:q> ?x } }");
+            assertEquals(502, r.statusCode(), r.body());
+            var u = post(fed.url(), "application/sparql-update", "INSERT { ?v <urn:ex:spent> true } WHERE { ?v <urn:ex:depot> ?d "
+                    + "SERVICE SILENT <" + service + "> { ?y <urn:ex:q> ?x } }", null);
+            assertEquals(502, u.statusCode(), u.body());
+            assertFalse(ask(fed.url(), "ASK { ?v <urn:ex:spent> true }"), "the update committed");
+        } finally {
+            remote.stop(0);
+        }
+    }
+
+    /**
+     * The shape is checked in full, and against the form the query asked for: RDF4J took a binding
+     * outside head.vars, a number for a term's value, a boolean answering a SELECT and text after
+     * 'false', and read each as no rows — under SILENT dropping the query's own.
+     */
+    @Test
+    void answersAreCheckedInFullAndAgainstTheQueryForm() throws Exception {
+        String json = "application/sparql-results+json";
+        for (String bad : List.of(
+                "{\"head\":{},\"results\":{\"bindings\":[{\"x\":{\"type\":\"literal\",\"value\":\"a\"}}]}}",
+                "{\"head\":{\"vars\":[\"y\"]},\"results\":{\"bindings\":[{\"x\":{\"type\":\"literal\",\"value\":\"a\"}}]}}",
+                "{\"head\":{\"vars\":[\"x\"]},\"results\":{\"bindings\":[{\"x\":{\"type\":\"literal\",\"value\":42}}]}}",
+                "{\"head\":{\"vars\":[\"x\"]},\"results\":{\"bindings\":[{\"x\":{\"type\":\"thing\",\"value\":\"a\"}}]}}",
+                "{\"head\":{\"vars\":[\"x\"]},\"results\":{\"bindings\":[{\"x\":\"a\"}]}}")) {
+            assertTrue(TimedServiceClient.invalidResult(json, bad.getBytes(StandardCharsets.UTF_8), null) != null, bad);
+        }
+        byte[] bool = "{\"head\":{},\"boolean\":false}".getBytes(StandardCharsets.UTF_8);
+        assertTrue(TimedServiceClient.invalidResult(json, bool, true) != null, "a boolean answering a SELECT");
+        assertEquals(null, TimedServiceClient.invalidResult(json, bool, false));
+        assertTrue(TimedServiceClient.invalidResult("text/boolean", ("false" + " ".repeat(11) + "junk").getBytes(StandardCharsets.UTF_8), null) != null);
+        assertEquals(null, TimedServiceClient.invalidResult("text/boolean", " false\n".getBytes(StandardCharsets.UTF_8), false));
+        // the form, read from the query text, by URL or form body
+        assertEquals(Boolean.TRUE, TimedServiceClient.expectedForm(new org.apache.http.client.methods.HttpGet(
+                "http://r.example/sparql?query=" + enc("PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>\nSELECT ?x WHERE {}"))));
+        var post = new org.apache.http.client.methods.HttpPost("http://r.example/sparql");
+        post.setEntity(new org.apache.http.client.entity.UrlEncodedFormEntity(List.of(
+                new org.apache.http.message.BasicNameValuePair("query", "BASE <http://b/>\n# note\nASK { ?s ?p ?o }")), StandardCharsets.UTF_8));
+        assertEquals(Boolean.FALSE, TimedServiceClient.expectedForm(post));
+        assertEquals(null, TimedServiceClient.expectedForm(new org.apache.http.client.methods.HttpGet("http://r.example/sparql")));
+        // end to end: a boolean answering the SELECT RDF4J sends is the remote's failure, and SILENT keeps the rows
+        var remote = serve(java.util.Map.of("/bool", respond(200, json, "{\"head\":{},\"boolean\":false}", 0)));
+        try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true), 0)) {
+            String service = "http://127.0.0.1:" + remote.getAddress().getPort() + "/bool";
+            var loud = getCsv(fed.url(), "SELECT ?v WHERE { ?v <urn:ex:depot> ?d SERVICE <" + service + "> { ?y <urn:ex:q> ?x } }");
+            assertEquals(502, loud.statusCode(), loud.body());
+            var silent = getCsv(fed.url(), "SELECT ?v WHERE { ?v <urn:ex:depot> ?d SERVICE SILENT <" + service + "> { ?y <urn:ex:q> ?x } }");
+            assertEquals(3, silent.body().lines().count(), silent.body());
+        } finally {
+            remote.stop(0);
+        }
+    }
+
+    /**
+     * Redirects resolve as Apache resolved them (a query-only Location keeps the path; URI.resolve
+     * dropped it), a Location with no host is the remote's failure (it was an NPE, a 500), and so is
+     * a 2xx with no result (a 204 went on to RDF4J, a 500 quoting the outbound query).
+     */
+    @Test
+    void oddRedirectsAndEmptyAnswersAreTheRemotesFailure() throws Exception {
+        var hits = new java.util.concurrent.atomic.AtomicInteger();
+        var rows = rowEcho(0, hits);
+        var remote = serve(java.util.Map.of(
+                "/qr", ex -> {
+                    if (String.valueOf(ex.getRequestURI().getRawQuery()).contains("redirected")) {
+                        rows.handle(ex);
+                    } else {
+                        respond(302, "text/plain", "", 0, "Location", "?redirected=1").handle(ex);
+                    }
+                },
+                "/nohost", respond(302, "text/plain", "", 0, "Location", "http:/broken"),
+                "/empty", ex -> {
+                    ex.sendResponseHeaders(204, -1);
+                    ex.close();
+                }));
+        try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true), 0)) {
+            String base = "http://127.0.0.1:" + remote.getAddress().getPort();
+            var qr = getCsv(fed.url(), "SELECT * WHERE { SERVICE <" + base + "/qr> { ?s ?p ?x } }");
+            assertEquals(200, qr.statusCode(), qr.body());
+            assertEquals(1, hits.get());
+            var nohost = getCsv(fed.url(), "SELECT * WHERE { SERVICE <" + base + "/nohost> { ?s ?p ?o } }");
+            assertEquals(502, nohost.statusCode(), nohost.body());
+            assertTrue(nohost.body().contains("names no host"), nohost.body());
+            var empty = getCsv(fed.url(), "SELECT * WHERE { SERVICE <" + base + "/empty> { ?s ?p ?o } }");
+            assertEquals(502, empty.statusCode(), empty.body());
+            assertTrue(empty.body().contains("answered HTTP 204"), empty.body());
+            assertFalse(empty.body().contains("query="), "the outbound query leaked into the answer: " + empty.body());
+        } finally {
+            remote.stop(0);
+        }
+    }
+
+    /** A query's budget bounds a name lookup even when the client was installed with no deadline of its own. */
+    @Test
+    void aBudgetBoundsANameLookupWhenTheClientHasNoDeadline() throws Exception {
+        var release = new java.util.concurrent.CountDownLatch(1);
+        TimedServiceClient client = new TimedServiceClient(0, host -> {
+            try {
+                release.await();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            throw new java.net.UnknownHostException(host);
+        });
+        try {
+            long t0 = System.nanoTime();
+            // preemptive, on this thread's budget: an unbounded lookup fails the test instead of hanging it
+            var call = java.util.concurrent.CompletableFuture.supplyAsync(() -> {
+                var budget = TimedServiceClient.Budget.open(1, 100, 1 << 20);
+                try {
+                    client.execute(new org.apache.http.client.methods.HttpGet("http://stalled.example/sparql"));
+                    return (TimedServiceClient.Refusal) null;
+                } catch (IOException expected) {
+                    return budget.tripped();
+                } finally {
+                    budget.close();
+                }
+            });
+            TimedServiceClient.Refusal tripped = call.get(5, java.util.concurrent.TimeUnit.SECONDS);
+            double took = (System.nanoTime() - t0) / 1e9;
+            assertTrue(took < 2.5, "took " + took + " s under a 1 s budget");
+            assertEquals(504, tripped.status);
+        } finally {
+            release.countDown();
+            client.close();
         }
     }
 

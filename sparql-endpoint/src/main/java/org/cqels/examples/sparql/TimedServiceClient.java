@@ -75,6 +75,8 @@ final class TimedServiceClient extends CloseableHttpClient {
      * every term as it was; {@code text/boolean} answers an ASK.
      */
     static final String ACCEPT = "application/sparql-results+json, application/json;q=0.9, text/boolean;q=0.5";
+    /** What a SELECT is asked to answer in: a boolean format could not answer it. */
+    static final String ACCEPT_TUPLE = "application/sparql-results+json, application/json;q=0.9";
 
     /** The only media types a SERVICE answer may declare; see {@link #ACCEPT}. */
     private static final java.util.Set<String> ALLOWED = java.util.Set.of("application/sparql-results+json",
@@ -161,7 +163,9 @@ final class TimedServiceClient extends CloseableHttpClient {
     TimedServiceClient(int timeoutMillis, long maxResponseBytes, org.apache.http.conn.DnsResolver dns) {
         this.timeoutMillis = timeoutMillis;
         this.maxResponseBytes = maxResponseBytes;
-        this.dns = timeoutMillis > 0 ? new BoundedDns(dns, timeoutMillis) : dns;
+        // always wrapped: a query's budget can set a deadline even when this client has none
+        // (found in co-review of #129); with neither, the lookup runs unbounded as before
+        this.dns = new BoundedDns(dns, timeoutMillis);
     }
 
     /**
@@ -199,6 +203,9 @@ final class TimedServiceClient extends CloseableHttpClient {
 
         @Override
         public java.net.InetAddress[] resolve(String host) throws java.net.UnknownHostException {
+            if (DEADLINE.get() == null && timeoutMillis <= 0) {
+                return delegate.resolve(host);   // no deadline from anywhere: nothing to bound
+            }
             java.util.concurrent.Future<java.net.InetAddress[]> lookup;
             try {
                 lookup = LOOKUPS.submit(() -> delegate.resolve(host));
@@ -397,7 +404,8 @@ final class TimedServiceClient extends CloseableHttpClient {
         }
         HttpHost host = target;
         HttpRequest hop = request;
-        hop.setHeader("Accept", ACCEPT);
+        Boolean expectTuple = expectedForm(request);   // null: could not tell
+        hop.setHeader("Accept", Boolean.TRUE.equals(expectTuple) ? ACCEPT_TUPLE : ACCEPT);
         try {
             for (int redirects = 0; ; redirects++) {
                 CloseableHttpResponse response;
@@ -421,10 +429,14 @@ final class TimedServiceClient extends CloseableHttpClient {
                     org.apache.http.HttpEntity entity = response.getEntity();
                     org.apache.http.Header location = response.getFirstHeader("Location");
                     if (REDIRECTS.contains(status) && location != null && "GET".equalsIgnoreCase(hop.getRequestLine().getMethod())) {
-                        java.net.URI from = java.net.URI.create(host.toURI()).resolve(hop.getRequestLine().getUri());
+                        java.net.URI from;
                         java.net.URI to;
                         try {
-                            to = from.resolve(location.getValue().trim());
+                            from = org.apache.http.client.utils.URIUtils.resolve(java.net.URI.create(host.toURI()),
+                                    hop.getRequestLine().getUri());
+                            // Apache's resolve, not URI.resolve: a query-only reference ("?query=…")
+                            // kept the path there and lost it here (found in co-review of #129)
+                            to = org.apache.http.client.utils.URIUtils.resolve(from, location.getValue().trim());
                         } catch (IllegalArgumentException e) {
                             throw new RemoteFailure("the SERVICE endpoint " + host.toURI() + " redirected to an invalid URI");
                         }
@@ -445,9 +457,22 @@ final class TimedServiceClient extends CloseableHttpClient {
                                 next.addHeader(h);
                             }
                         }
-                        host = org.apache.http.client.utils.URIUtils.extractHost(to);
+                        HttpHost nextHost = org.apache.http.client.utils.URIUtils.extractHost(to);
+                        if (nextHost == null) {
+                            // "Location: http:/broken" has a scheme and no host: a 502, not an NPE
+                            throw new RemoteFailure("the SERVICE endpoint " + host.toURI() + " redirected to <"
+                                    + strip(to) + ">, which names no host");
+                        }
+                        host = nextHost;
                         current.set(next);
                         hop = next;
+                        // The timer aborts whichever request is current when it fires: one that fired
+                        // before this hop was published aborted the last one, and this one would run
+                        // unbounded (found in co-review of #129). Checked after publishing, so one
+                        // of the two always sees the other.
+                        if (fired.get()) {
+                            throw timedOut(new IOException("deadline reached between redirects"), timeoutUsed, budget);
+                        }
                         continue;   // the redirect's own body is dropped with its connection below
                     }
                     if (status / 100 != 2) {
@@ -456,9 +481,11 @@ final class TimedServiceClient extends CloseableHttpClient {
                         throw new RemoteFailure("the SERVICE endpoint " + host.toURI() + " answered HTTP " + status
                                 + (excerpt.isEmpty() ? "" : ": " + excerpt));
                     }
-                    if (entity == null) {
-                        keep = true;
-                        return response;   // a 204, say: nothing to read
+                    if (entity == null || (status != 200 && status != 203)) {
+                        // RDF4J takes only 200 and 203 as a result; a 204 went on to RDF4J, which
+                        // failed it as a 500 that quoted the outbound query (found in co-review of #129)
+                        throw new RemoteFailure("the SERVICE endpoint " + host.toURI() + " answered HTTP " + status
+                                + (entity == null ? " with no result" : ", not a result"));
                     }
                     org.apache.http.Header[] types = response.getHeaders("Content-Type");
                     if (refused(types)) {
@@ -469,7 +496,7 @@ final class TimedServiceClient extends CloseableHttpClient {
                     }
                     byte[] body = readCapped(entity.getContent(), cap, false, budget);
                     String mediaType = types.length == 0 ? "" : types[0].getElements()[0].getName().trim().toLowerCase(java.util.Locale.ROOT);
-                    String invalid = invalidResult(mediaType, body);
+                    String invalid = invalidResult(mediaType, body, expectTuple);
                     if (invalid != null) {
                         throw new RemoteFailure("the SERVICE endpoint " + host.toURI() + " answered a malformed result: " + invalid);
                     }
@@ -543,26 +570,36 @@ final class TimedServiceClient extends CloseableHttpClient {
     }
 
     /**
-     * Why {@code body} is not a SPARQL result in {@code mediaType}, or {@code null} when it is one.
-     * Parsed here, once, so that a malformed answer fails the request itself: left to RDF4J, the
-     * parse failed while it iterated, where {@code SERVICE SILENT} dropped the query's own rows
-     * instead of keeping them (found in the SERVICE audit after #128). RDF4J's parser alone is not
-     * enough: it accepted {@code {}}, a head with no results, content after the result, and
-     * {@code "boolean": 42}, which RDF4J then read as no rows (found in co-review of #129), so the
-     * JSON's shape is checked first, then its terms by RDF4J's parser. RDF4J parses the same bytes
-     * again; the cost is bounded by the byte cap.
+     * Why {@code body} is not a SPARQL result in {@code mediaType} of the form the query asked for
+     * ({@code expectTuple}: {@code true} SELECT, {@code false} ASK, {@code null} either), or
+     * {@code null} when it is one. Checked here, once, so that a malformed answer fails the
+     * request itself: left to RDF4J, the parse failed while it iterated, where {@code SERVICE
+     * SILENT} dropped the query's own rows instead of keeping them (found in the SERVICE audit
+     * after #128). RDF4J's parsers alone are not enough — they took {@code {}}, a head with no
+     * results, a binding outside {@code head.vars}, a number for a term's value, content after the
+     * result, {@code "boolean": 42}, a boolean answer to a SELECT, and text after
+     * {@code false} past its 16th character (found in co-review of #129) — so the shape is checked
+     * here in full, and the terms then by RDF4J's parser. The cost is bounded by the byte cap.
      */
-    static String invalidResult(String mediaType, byte[] body) {
+    static String invalidResult(String mediaType, byte[] body, Boolean expectTuple) {
         try {
             if (mediaType.equals("text/boolean")) {
-                org.eclipse.rdf4j.query.resultio.QueryResultIO.parseBoolean(new java.io.ByteArrayInputStream(body),
-                        org.eclipse.rdf4j.query.resultio.BooleanQueryResultFormat.TEXT);
+                if (Boolean.TRUE.equals(expectTuple)) {
+                    throw new IOException("a boolean answer to a SELECT");
+                }
+                String text = new String(body, java.nio.charset.StandardCharsets.UTF_8).strip();
+                if (!text.equalsIgnoreCase("true") && !text.equalsIgnoreCase("false")) {
+                    throw new IOException("not 'true' or 'false'");
+                }
                 return null;
             }
             if (!mediaType.equals("application/sparql-results+json") && !mediaType.equals("application/json")) {
                 return "no parser for '" + mediaType + "'";
             }
-            Boolean tuple = jsonShape(body);   // true: results, false: boolean
+            boolean tuple = jsonShape(body);   // true: results, false: boolean
+            if (expectTuple != null && tuple != expectTuple) {
+                throw new IOException(tuple ? "rows answering an ASK" : "a boolean answer to a SELECT");
+            }
             if (tuple) {
                 var parser = org.eclipse.rdf4j.query.resultio.QueryResultIO.createTupleParser(
                         org.eclipse.rdf4j.query.resultio.TupleQueryResultFormat.JSON);
@@ -579,71 +616,159 @@ final class TimedServiceClient extends CloseableHttpClient {
         }
     }
 
+    private static final java.util.Set<String> TERM_TYPES = java.util.Set.of("uri", "literal", "bnode", "typed-literal", "triple");
+
     /**
-     * The shape SPARQL 1.1 Query Results JSON requires: one object with a {@code head} object and
-     * either {@code results} holding a {@code bindings} array (returns {@code true}) or a JSON
-     * boolean {@code boolean} (returns {@code false}), and nothing after it.
+     * The shape SPARQL 1.1 Query Results JSON requires: one object, a {@code head} object, and
+     * either {@code results.bindings} — then {@code head.vars} an array of strings, every binding
+     * an object naming only those variables, every term an object with a {@code type} RDF4J reads
+     * and a string {@code value} (an object for an RDF-star triple), {@code xml:lang} and
+     * {@code datatype} strings — or a JSON boolean {@code boolean}; nothing after it. Returns
+     * whether it is a tuple result.
      */
     private static boolean jsonShape(byte[] body) throws IOException {
         try (com.fasterxml.jackson.core.JsonParser p = new com.fasterxml.jackson.core.JsonFactory().createParser(body)) {
-            if (p.nextToken() != com.fasterxml.jackson.core.JsonToken.START_OBJECT) {
-                throw new IOException("not a JSON object");
-            }
+            expect(p.nextToken() == com.fasterxml.jackson.core.JsonToken.START_OBJECT, "not a JSON object");
             boolean head = false;
             boolean results = false;
             boolean bool = false;
+            java.util.Set<String> vars = null;
+            java.util.Set<String> used = new java.util.HashSet<>();
             while (p.nextToken() == com.fasterxml.jackson.core.JsonToken.FIELD_NAME) {
                 String name = p.currentName();
                 com.fasterxml.jackson.core.JsonToken value = p.nextToken();
                 switch (name) {
                     case "head" -> {
-                        if (value != com.fasterxml.jackson.core.JsonToken.START_OBJECT) {
-                            throw new IOException("'head' is not an object");
-                        }
+                        expect(value == com.fasterxml.jackson.core.JsonToken.START_OBJECT, "'head' is not an object");
                         head = true;
-                        p.skipChildren();
+                        while (p.nextToken() == com.fasterxml.jackson.core.JsonToken.FIELD_NAME) {
+                            String field = p.currentName();
+                            com.fasterxml.jackson.core.JsonToken v = p.nextToken();
+                            if (field.equals("vars")) {
+                                expect(v == com.fasterxml.jackson.core.JsonToken.START_ARRAY, "'head.vars' is not an array");
+                                vars = new java.util.HashSet<>();
+                                while (p.nextToken() != com.fasterxml.jackson.core.JsonToken.END_ARRAY) {
+                                    expect(p.currentToken() == com.fasterxml.jackson.core.JsonToken.VALUE_STRING,
+                                            "'head.vars' holds a non-string");
+                                    vars.add(p.getText());
+                                }
+                            } else {
+                                p.skipChildren();
+                            }
+                        }
                     }
                     case "results" -> {
-                        if (value != com.fasterxml.jackson.core.JsonToken.START_OBJECT) {
-                            throw new IOException("'results' is not an object");
-                        }
+                        expect(value == com.fasterxml.jackson.core.JsonToken.START_OBJECT, "'results' is not an object");
                         while (p.nextToken() == com.fasterxml.jackson.core.JsonToken.FIELD_NAME) {
-                            String inner = p.currentName();
+                            String field = p.currentName();
                             com.fasterxml.jackson.core.JsonToken v = p.nextToken();
-                            if (inner.equals("bindings")) {
-                                if (v != com.fasterxml.jackson.core.JsonToken.START_ARRAY) {
-                                    throw new IOException("'bindings' is not an array");
-                                }
-                                results = true;
+                            if (!field.equals("bindings")) {
+                                p.skipChildren();
+                                continue;
                             }
-                            p.skipChildren();
+                            expect(v == com.fasterxml.jackson.core.JsonToken.START_ARRAY, "'bindings' is not an array");
+                            results = true;
+                            while (p.nextToken() != com.fasterxml.jackson.core.JsonToken.END_ARRAY) {
+                                expect(p.currentToken() == com.fasterxml.jackson.core.JsonToken.START_OBJECT, "a binding is not an object");
+                                while (p.nextToken() == com.fasterxml.jackson.core.JsonToken.FIELD_NAME) {
+                                    used.add(p.currentName());
+                                    expect(p.nextToken() == com.fasterxml.jackson.core.JsonToken.START_OBJECT, "a term is not an object");
+                                    term(p);
+                                }
+                            }
                         }
-                        if (!results) {
-                            throw new IOException("'results' has no 'bindings'");
-                        }
+                        expect(results, "'results' has no 'bindings'");
                     }
                     case "boolean" -> {
-                        if (value != com.fasterxml.jackson.core.JsonToken.VALUE_TRUE
-                                && value != com.fasterxml.jackson.core.JsonToken.VALUE_FALSE) {
-                            throw new IOException("'boolean' is not true or false");
-                        }
+                        expect(value == com.fasterxml.jackson.core.JsonToken.VALUE_TRUE
+                                || value == com.fasterxml.jackson.core.JsonToken.VALUE_FALSE, "'boolean' is not true or false");
                         bool = true;
                     }
                     default -> p.skipChildren();
                 }
             }
-            if (p.currentToken() != com.fasterxml.jackson.core.JsonToken.END_OBJECT || p.nextToken() != null) {
-                throw new IOException("content after the result");
-            }
-            if (!head) {
-                throw new IOException("no 'head'");
-            }
-            if (results == bool) {
-                throw new IOException(results ? "both 'results' and 'boolean'" : "neither 'results' nor 'boolean'");
+            expect(p.currentToken() == com.fasterxml.jackson.core.JsonToken.END_OBJECT && p.nextToken() == null,
+                    "content after the result");
+            expect(head, "no 'head'");
+            expect(results != bool, results ? "both 'results' and 'boolean'" : "neither 'results' nor 'boolean'");
+            if (results) {
+                expect(vars != null, "no 'head.vars'");
+                for (String v : used) {
+                    expect(vars.contains(v), "a binding names '" + v + "', which 'head.vars' does not");
+                }
             }
             return results;
         }
     }
+
+    /** One RDF term's object, its START_OBJECT already read. */
+    private static void term(com.fasterxml.jackson.core.JsonParser p) throws IOException {
+        String type = null;
+        boolean value = false;
+        while (p.nextToken() == com.fasterxml.jackson.core.JsonToken.FIELD_NAME) {
+            String field = p.currentName();
+            com.fasterxml.jackson.core.JsonToken v = p.nextToken();
+            switch (field) {
+                case "type" -> {
+                    expect(v == com.fasterxml.jackson.core.JsonToken.VALUE_STRING && TERM_TYPES.contains(p.getText()),
+                            "a term's 'type' is not one of " + TERM_TYPES);
+                    type = p.getText();
+                }
+                case "value" -> {
+                    expect(v == com.fasterxml.jackson.core.JsonToken.VALUE_STRING
+                            || v == com.fasterxml.jackson.core.JsonToken.START_OBJECT, "a term's 'value' is not a string");
+                    value = true;
+                    p.skipChildren();
+                }
+                case "xml:lang", "datatype" -> expect(v == com.fasterxml.jackson.core.JsonToken.VALUE_STRING,
+                        "a term's '" + field + "' is not a string");
+                default -> p.skipChildren();
+            }
+        }
+        expect(type != null && value, "a term without 'type' and 'value'");
+    }
+
+    private static void expect(boolean ok, String why) throws IOException {
+        if (!ok) {
+            throw new IOException(why);
+        }
+    }
+
+    /**
+     * Whether {@code request} carries a SELECT ({@code true}) or an ASK ({@code false}), read from
+     * the {@code query} parameter of its URL or form body; {@code null} when that cannot be told.
+     * RDF4J's {@code Accept} is the same for both, so the query text is what says which result
+     * may answer it.
+     */
+    static Boolean expectedForm(HttpRequest request) {
+        try {
+            String params = null;
+            if (request instanceof org.apache.http.HttpEntityEnclosingRequest enclosing && enclosing.getEntity() != null
+                    && enclosing.getEntity().isRepeatable()) {
+                params = org.apache.http.util.EntityUtils.toString(enclosing.getEntity(), java.nio.charset.StandardCharsets.UTF_8);
+            } else {
+                params = java.net.URI.create(request.getRequestLine().getUri()).getRawQuery();
+            }
+            if (params == null) {
+                return null;
+            }
+            for (org.apache.http.NameValuePair pair : org.apache.http.client.utils.URLEncodedUtils.parse(params,
+                    java.nio.charset.StandardCharsets.UTF_8)) {
+                if (pair.getName().equals("query") && pair.getValue() != null) {
+                    java.util.regex.Matcher m = QUERY_FORM.matcher(pair.getValue());
+                    return m.find() ? Boolean.valueOf(m.group(1).equalsIgnoreCase("SELECT")) : null;
+                }
+            }
+        } catch (IOException | RuntimeException e) {
+            // cannot tell: either form is accepted
+        }
+        return null;
+    }
+
+    /** The query form after the prologue (BASE and PREFIX declarations, comments). */
+    private static final java.util.regex.Pattern QUERY_FORM = java.util.regex.Pattern.compile(
+            "\\A(?:\\s+|#[^\\n]*\\n|BASE\\s*<[^>]*>|PREFIX\\s+[^:\\s]*:\\s*<[^>]*>)*(SELECT|ASK)\\b",
+            java.util.regex.Pattern.CASE_INSENSITIVE);
 
     /**
      * {@code in} read to its end, or to {@code cap} bytes: beyond that, {@link Refusal} (502), or
@@ -664,6 +789,13 @@ final class TimedServiceClient extends CloseableHttpClient {
         while ((n = in.read(buf)) >= 0) {
             if (budget != null) {
                 budget.addBytes(n);
+                if (budget.overspent()) {
+                    // spent here, by this answer — an error answer's excerpt included, which
+                    // returned with the budget spent and nothing recorded, so SILENT went on to a
+                    // 200 and an update committed (found in co-review of #129)
+                    throw budget.trip(new Refusal(502, "a SERVICE endpoint answered more than " + budget.maxBytes
+                            + " bytes, the most this endpoint takes from SERVICE in one query"));
+                }
             }
             if (out.size() + (long) n > cap) {
                 if (truncate) {
@@ -721,7 +853,7 @@ final class TimedServiceClient extends CloseableHttpClient {
 
         private final long deadlineNanos;   // Long.MAX_VALUE: none
         private final int maxRequests;
-        private final long maxBytes;
+        final long maxBytes;
         private final java.util.concurrent.atomic.AtomicInteger requests = new java.util.concurrent.atomic.AtomicInteger();
         private final java.util.concurrent.atomic.AtomicLong bytes = new java.util.concurrent.atomic.AtomicLong();
         private volatile Refusal tripped;
@@ -762,6 +894,10 @@ final class TimedServiceClient extends CloseableHttpClient {
 
         long remainingBytes() {
             return Math.max(0, maxBytes - bytes.get());
+        }
+
+        boolean overspent() {
+            return bytes.get() > maxBytes;
         }
 
         void addBytes(long n) {
