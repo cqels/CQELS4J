@@ -3032,6 +3032,53 @@ class SparqlProtocolServletTest {
         }
     }
 
+    // ---- co-review round 5 of #129 ----------------------------------------------------------------
+
+    /**
+     * A language tag of 10,000 subtags is checked, not a stack overflow: the regex recursed per
+     * subtag, and the overflow reached the caller as "nests too deeply". The tag is well formed,
+     * so the answer is taken.
+     */
+    @Test
+    void aLongLanguageTagIsCheckedWithoutAStackOverflow() {
+        String tag = "x" + "-a".repeat(10_000);
+        String r = row("{\"type\":\"literal\",\"value\":\"v\",\"xml:lang\":\"" + tag + "\"}");
+        assertEquals(null, TimedServiceClient.invalidResult("application/sparql-results+json", r.getBytes(StandardCharsets.UTF_8), null));
+        assertFalse(TimedServiceClient.languageTag(tag + "-toolongsub"));
+        assertTrue(TimedServiceClient.languageTag("en-GB") && TimedServiceClient.languageTag("zh-Hant-TW"));
+        assertFalse(TimedServiceClient.languageTag("1en") || TimedServiceClient.languageTag("en--GB")
+                || TimedServiceClient.languageTag("abcdefghi") || TimedServiceClient.languageTag("") || TimedServiceClient.languageTag("en-"));
+        assertTrue(TimedServiceClient.languageTag("de-1996"));
+    }
+
+    /**
+     * RDF4J parses the answer head first: reading the bindings first, it held them in a hash set,
+     * and 16,384 distinct literals with one hash code took seconds — a parse no deadline can abort.
+     */
+    @Test
+    void anAnswerIsParsedHeadFirstSoCollidingHashesStayCheap() {
+        List<String> labels = new java.util.ArrayList<>(List.of(""));
+        for (int i = 0; i < 14; i++) {   // "Aa" and "BB" share a hash code, and so do all their concatenations
+            List<String> next = new java.util.ArrayList<>();
+            for (String l : labels) {
+                next.add(l + "Aa");
+                next.add(l + "BB");
+            }
+            labels = next;
+        }
+        StringBuilder bindings = new StringBuilder();
+        for (String l : labels) {
+            bindings.append(bindings.length() == 0 ? "" : ",").append("{\"x\":{\"type\":\"literal\",\"value\":\"").append(l).append("\"}}");
+        }
+        byte[] reversed = ("{\"results\":{\"bindings\":[" + bindings + "]},\"head\":{\"vars\":[\"x\"]}}").getBytes(StandardCharsets.UTF_8);
+        long t0 = System.nanoTime();
+        var checked = TimedServiceClient.check("application/sparql-results+json", reversed, true);
+        double took = (System.nanoTime() - t0) / 1e9;
+        assertEquals(null, checked.why());
+        assertTrue(new String(checked.body(), 0, 8, StandardCharsets.UTF_8).equals("{\"head\":"), "not rewritten head first");
+        assertTrue(took < 1.5, "checking took " + took + " s");
+    }
+
     @SuppressWarnings("unused")
     private static void silence(IOException ignored) { }
 }

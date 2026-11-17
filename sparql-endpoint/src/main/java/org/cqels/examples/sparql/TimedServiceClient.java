@@ -515,18 +515,18 @@ final class TimedServiceClient extends CloseableHttpClient {
                     opened = entity.getContent();
                     byte[] body = readCapped(opened, cap, false, budget);
                     String mediaType = types.length == 0 ? "" : types[0].getElements()[0].getName().trim().toLowerCase(java.util.Locale.ROOT);
-                    String invalid = invalidResult(mediaType, body, expectTuple);
-                    if (invalid != null) {
-                        throw new RemoteFailure("the SERVICE endpoint " + host.toURI() + " answered a malformed result: " + invalid);
-                    }
-                    if (!mediaType.equals("text/boolean")) {
-                        body = headFirst(body);
-                    }
+                    Checked checked = check(mediaType, body, expectTuple);
                     if (fired.get()) {
-                        // the deadline passed while the answer was checked: a timeout, as if the
-                        // remote itself had been late
+                        // The deadline passed while the answer was checked: a timeout, as if the
+                        // remote itself had been late — before the check's own verdict, which
+                        // otherwise answered a 502 for a query the deadline had ended (found in
+                        // co-review of #129).
                         throw timedOut(new IOException("deadline reached while checking the answer"), timeoutUsed, budget);
                     }
+                    if (checked.why() != null) {
+                        throw new RemoteFailure("the SERVICE endpoint " + host.toURI() + " answered a malformed result: " + checked.why());
+                    }
+                    body = checked.body();
                     if (mediaType.equals("text/boolean")) {
                         // checked whole above, but RDF4J reads 16 characters: sixteen spaces and
                         // "false" passed the check and failed there, which SILENT read as true
@@ -629,6 +629,21 @@ final class TimedServiceClient extends CloseableHttpClient {
      * here in full, and the terms then by RDF4J's parser. The cost is bounded by the byte cap.
      */
     static String invalidResult(String mediaType, byte[] body, Boolean expectTuple) {
+        return check(mediaType, body, expectTuple).why();
+    }
+
+    /** What {@link #check} found: why the answer is refused, or {@code null} and the bytes RDF4J is to get. */
+    record Checked(String why, byte[] body) { }
+
+    /**
+     * {@link #invalidResult}, and the bytes to hand RDF4J: a JSON answer {@linkplain #headFirst head
+     * first}. The rewrite comes between the shape check (on the bytes as sent, so content after the
+     * result is still seen) and RDF4J's parse, which reads the rewritten bytes: RDF4J reading the
+     * bindings before the head holds them in a hash set, and distinct literals with colliding
+     * hashes made that quadratic — a valid 1 MB answer took 3.3 s to parse, 8 ms head first, and a
+     * parse cannot be aborted (found in co-review of #129).
+     */
+    static Checked check(String mediaType, byte[] body, Boolean expectTuple) {
         try {
             if (mediaType.equals("text/boolean")) {
                 if (Boolean.TRUE.equals(expectTuple)) {
@@ -638,15 +653,16 @@ final class TimedServiceClient extends CloseableHttpClient {
                 if (!text.equalsIgnoreCase("true") && !text.equalsIgnoreCase("false")) {
                     throw new IOException("not 'true' or 'false'");
                 }
-                return null;
+                return new Checked(null, body);
             }
             if (!mediaType.equals("application/sparql-results+json") && !mediaType.equals("application/json")) {
-                return "no parser for '" + mediaType + "'";
+                return new Checked("no parser for '" + mediaType + "'", body);
             }
             boolean tuple = jsonShape(body);   // true: results, false: boolean
             if (expectTuple != null && tuple != expectTuple) {
                 throw new IOException(tuple ? "rows answering an ASK" : "a boolean answer to a SELECT");
             }
+            body = headFirst(body);
             if (tuple) {
                 var parser = org.eclipse.rdf4j.query.resultio.QueryResultIO.createTupleParser(
                         org.eclipse.rdf4j.query.resultio.TupleQueryResultFormat.JSON);
@@ -656,10 +672,12 @@ final class TimedServiceClient extends CloseableHttpClient {
                 org.eclipse.rdf4j.query.resultio.QueryResultIO.parseBoolean(new java.io.ByteArrayInputStream(body),
                         org.eclipse.rdf4j.query.resultio.BooleanQueryResultFormat.JSON);
             }
-            return null;
-        } catch (Exception e) {
+            return new Checked(null, body);
+        } catch (Exception | StackOverflowError e) {
+            // StackOverflowError: no check here recurses on the input, but a parser that did would
+            // otherwise reach the servlet as the caller's "nests too deeply" 400
             String why = String.valueOf(e.getMessage());
-            return why.length() > 300 ? why.substring(0, 300) + "…" : why;
+            return new Checked(why.length() > 300 ? why.substring(0, 300) + "…" : why, body);
         }
     }
 
@@ -797,9 +815,34 @@ final class TimedServiceClient extends CloseableHttpClient {
         boolean literal = type.equals("literal") || type.equals("typed-literal");
         expect(literal || (lang == null && datatype == null), "a " + type + " with a language or datatype");
         expect(!type.equals("typed-literal") || datatype != null, "a typed-literal without a datatype");
-        expect(lang == null || lang.matches("[A-Za-z]{1,8}(-[A-Za-z0-9]{1,8})*"), "a malformed language tag");
+        expect(lang == null || languageTag(lang), "a malformed language tag");
         expect(lang == null || datatype == null || datatype.equals(RDF_LANG_STRING), "a language beside the datatype " + datatype);
         expect(!RDF_LANG_STRING.equals(datatype) || lang != null, "an rdf:langString without a language");
+    }
+
+    /**
+     * A BCP 47 shape, checked in one pass: subtags of 1 to 8 letters or digits, the first letters
+     * only. Not a regex: its repeated group recursed per subtag, and a tag of 10,000 subtags
+     * overflowed the stack (found in co-review of #129).
+     */
+    static boolean languageTag(String tag) {
+        int length = 0;
+        boolean first = true;
+        for (int i = 0; i <= tag.length(); i++) {
+            char c = i < tag.length() ? tag.charAt(i) : '-';
+            if (c == '-') {
+                if (length == 0) {
+                    return false;
+                }
+                length = 0;
+                first = false;
+            } else if (c < 128 && (Character.isLetter(c) || (!first && Character.isDigit(c))) && ++length <= 8) {
+                continue;
+            } else {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
