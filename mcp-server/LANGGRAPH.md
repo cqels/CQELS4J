@@ -409,39 +409,38 @@ await t["recall_memory"].ainvoke({"pattern": {"subject": "ex:Alice"}, "role": "e
 > watches.
 
 The `role` must be set by your application from an authenticated identity, never taken from the
-model or the end user: a caller that can choose its `role` can read as anyone. Access labels need the
-same care. A store adds a label to an unlabelled fact but never replaces one, so a caller that can
-write labels can expose an unlabelled fact to a role of its choosing. The server cannot tell who
-filled in these arguments, so on a governed server do not hand the model the server's tools at all.
-Give it tools of your own that fix the role, the graph and the label:
+model or the end user: a caller that can choose its `role` can read as anyone. Writes need the same
+care. A label belongs to a fact (its subject, predicate and object), not to the graph the fact is
+stored in, and once a policy exists the first label written to a fact is the one that stays. A model that can store facts
+can therefore claim any fact it can name: an unlabelled one already stored, or one your application
+stores later under another label, which then stays readable to the model's role and hidden from the
+intended one. So on a governed server give the model only a recall tool that fixes its role, and
+store from your application, where you decide both the facts and their label:
 
 ```python
 from langchain_core.tools import tool
 
 
-def memory_tools(user, role, label):  # all three from your authenticated session
-    @tool
-    async def remember(subject: str, predicate: str, object: str):
-        """Save a fact."""
-        return await t["store_memory"].ainvoke({
-            "graph": f"cqels://memory/user/{user}",
-            "facts": [{"subject": subject, "predicate": predicate, "object": object}],
-            "meta": {"accessLabel": label}})
-
+def recall_as(role):  # role from your authenticated session
     @tool
     async def recall(subject: str):
         """Recall what is known about a subject."""
         return await t["recall_memory"].ainvoke({"pattern": {"subject": subject}, "role": role})
+    return recall
 
-    return [remember, recall]
+
+async def remember(user, label, facts):  # called by your application, never by the model
+    return await t["store_memory"].ainvoke({
+        "graph": f"cqels://memory/user/{user}", "facts": facts, "meta": {"accessLabel": label}})
 
 
-agent_tools = memory_tools("alice", role="hr", label="hr")
+agent_tools = [recall_as("hr")]
 ```
 
 Pass `agent_tools` instead of `tools` to `create_agent` (section 2), or to both `bind_tools` and
-`ToolNode` (section 7). Label every fact you store on a governed server, so that none is left for a
-later write to claim.
+`ToolNode` (section 7), and change the system prompt to match: the model now has one tool,
+`recall(subject)`, without `entail`. Store every fact with a label, and each fact under one label
+only: an unlabelled fact is visible only to roles granted `"*"`, and under a policy a second label is ignored.
 
 ---
 
