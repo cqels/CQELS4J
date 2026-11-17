@@ -2340,6 +2340,244 @@ class SparqlProtocolServletTest {
         assertTrue(formats >= 8, "graph formats: " + formats);
     }
 
+    // ---- the SERVICE audit after #128 -----------------------------------------------------------
+
+    /**
+     * A stand-in SPARQL endpoint for bound joins: one row per {@code ?__rowIdx} RDF4J sends in its
+     * VALUES block (or one row when it sends none), after {@code delayMillis}; counts its requests.
+     */
+    static com.sun.net.httpserver.HttpHandler rowEcho(long delayMillis, java.util.concurrent.atomic.AtomicInteger hits) {
+        return rowEcho(n -> delayMillis, hits);
+    }
+
+    /** As {@link #rowEcho(long, java.util.concurrent.atomic.AtomicInteger)}, the delay chosen by the request's number (1, 2, …). */
+    static com.sun.net.httpserver.HttpHandler rowEcho(java.util.function.IntToLongFunction delayMillis,
+                                                      java.util.concurrent.atomic.AtomicInteger hits) {
+        return ex -> {
+            long delay = delayMillis.applyAsLong(hits.incrementAndGet());
+            String q = ex.getRequestURI().getRawQuery() == null ? ""
+                    : java.net.URLDecoder.decode(ex.getRequestURI().getRawQuery(), StandardCharsets.UTF_8);
+            if (q.isEmpty()) {
+                q = java.net.URLDecoder.decode(new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8), StandardCharsets.UTF_8);
+            }
+            try {
+                Thread.sleep(delay);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            var m = java.util.regex.Pattern.compile("\\(\"(\\d+)\"").matcher(q);
+            StringBuilder rows = new StringBuilder();
+            while (m.find()) {
+                rows.append(rows.length() == 0 ? "" : ",").append("{\"x\":{\"type\":\"literal\",\"value\":\"r\"},"
+                        + "\"__rowIdx\":{\"type\":\"literal\",\"value\":\"").append(m.group(1)).append("\"}}");
+            }
+            if (rows.length() == 0) {
+                rows.append("{\"x\":{\"type\":\"literal\",\"value\":\"r\"}}");
+            }
+            byte[] body = ("{\"head\":{\"vars\":[\"x\",\"__rowIdx\"]},\"results\":{\"bindings\":[" + rows + "]}}")
+                    .getBytes(StandardCharsets.UTF_8);
+            ex.getResponseHeaders().add("Content-Type", "application/sparql-results+json");
+            ex.sendResponseHeaders(200, body.length);
+            ex.getResponseBody().write(body);
+            ex.close();
+        };
+    }
+
+    static String values(int n) {
+        StringBuilder v = new StringBuilder("VALUES ?v {");
+        for (int i = 0; i < n; i++) {
+            v.append(" <urn:ex:k").append(i).append('>');
+        }
+        return v.append(" }").toString();
+    }
+
+    static HttpResponse<String> getCsv(String url, String query) throws Exception {
+        return HTTP.send(HttpRequest.newBuilder(URI.create(url + "?query=" + enc(query))).header("Accept", "text/csv")
+                .timeout(java.time.Duration.ofSeconds(60)).build(), HttpResponse.BodyHandlers.ofString());
+    }
+
+    /**
+     * The execution limit bounds a query's SERVICE calls together. Each request had the whole limit
+     * to itself: RDF4J joins in batches of 15, so 300 rows made 20 requests, and a remote taking
+     * 1.5 s each ran the query for 30 s under a 2 s limit, answered 200.
+     */
+    @Test
+    void aQueryHasOneDeadlineForAllItsServiceCalls() throws Exception {
+        var hits = new java.util.concurrent.atomic.AtomicInteger();
+        // under a 2 s limit, the first batch takes 1 s and the second stalls: it may have only the
+        // 1 s left, not a fresh 2 s of its own
+        var remote = serve(java.util.Map.of("/slow", rowEcho(n -> n == 1 ? 1000 : 10_000, hits)));
+        try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true).withMaxExecutionSeconds(2), 0)) {
+            String service = "http://127.0.0.1:" + remote.getAddress().getPort() + "/slow";
+            long t0 = System.nanoTime();
+            var r = getCsv(fed.url(), "SELECT * WHERE { " + values(300) + " SERVICE <" + service + "> { ?v <urn:ex:q> ?x } }");
+            double took = (System.nanoTime() - t0) / 1e9;
+            assertEquals(504, r.statusCode(), r.body());
+            assertTrue(took < 2.6, "took " + took + " s under a 2 s limit");
+            assertTrue(hits.get() <= 2, "requests made: " + hits.get());
+        } finally {
+            remote.stop(0);
+        }
+    }
+
+    /** One query's SERVICE requests are counted; a query that needs more is refused, not run to the end. */
+    @Test
+    void serviceRequestsPerQueryAreCapped() throws Exception {
+        var hits = new java.util.concurrent.atomic.AtomicInteger();
+        var remote = serve(java.util.Map.of("/rows", rowEcho(0, hits)));
+        try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true).withUpdateEnabled(true)
+                .withMaxServiceRequests(3), 0)) {
+            String service = "http://127.0.0.1:" + remote.getAddress().getPort() + "/rows";
+            var ok = getCsv(fed.url(), "SELECT * WHERE { " + values(45) + " SERVICE <" + service + "> { ?v <urn:ex:q> ?x } }");
+            assertEquals(200, ok.statusCode(), ok.body());   // 45 rows: 3 batches of 15
+            assertEquals(45, ok.body().lines().count() - 1);
+            hits.set(0);
+            var r = getCsv(fed.url(), "SELECT * WHERE { " + values(300) + " SERVICE <" + service + "> { ?v <urn:ex:q> ?x } }");
+            assertEquals(503, r.statusCode(), r.body());
+            assertTrue(r.body().contains("more than 3 SERVICE requests"), r.body());
+            assertEquals(3, hits.get());
+            // SILENT does not turn the refusal into a shorter answer
+            hits.set(0);
+            var silent = getCsv(fed.url(), "SELECT * WHERE { " + values(300) + " SERVICE SILENT <" + service + "> { ?v <urn:ex:q> ?x } }");
+            assertEquals(503, silent.statusCode(), silent.body());
+            // nor into a partial update: rolled back
+            var update = post(fed.url(), "application/sparql-update", "INSERT { ?v <urn:ex:echoed> ?x } WHERE { " + values(300)
+                    + " SERVICE SILENT <" + service + "> { ?v <urn:ex:q> ?x } }", null);
+            assertEquals(503, update.statusCode(), update.body());
+            assertFalse(ask(fed.url(), "ASK { ?v <urn:ex:echoed> ?x }"), "a partial update committed");
+        } finally {
+            remote.stop(0);
+        }
+    }
+
+    /** A SERVICE answer is read whole within a byte cap: an endless one is refused at the cap, at once. */
+    @Test
+    void serviceAnswersAreCappedInBytes() throws Exception {
+        var remote = serve(java.util.Map.of("/endless", ex -> {
+            ex.getResponseHeaders().add("Content-Type", "application/sparql-results+json");
+            ex.sendResponseHeaders(200, 0);
+            try (var out = ex.getResponseBody()) {
+                out.write("{\"head\":{\"vars\":[\"x\"]},\"results\":{\"bindings\":[".getBytes(StandardCharsets.UTF_8));
+                byte[] row = ("{\"x\":{\"type\":\"literal\",\"value\":\"" + "y".repeat(1000) + "\"}},").repeat(64)
+                        .getBytes(StandardCharsets.UTF_8);
+                for (int i = 0; i < 100_000; i++) {
+                    out.write(row);
+                }
+            } catch (IOException gone) {
+                // the endpoint stopped reading
+            }
+        }));
+        try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true)
+                .withMaxServiceBytes(1L << 20), 0)) {
+            long t0 = System.nanoTime();
+            var r = getCsv(fed.url(), "SELECT * WHERE { SERVICE <http://127.0.0.1:" + remote.getAddress().getPort()
+                    + "/endless> { ?s ?p ?x } }");
+            assertEquals(502, r.statusCode(), r.body());
+            assertTrue(r.body().contains("more than 1048576 bytes"), r.body());
+            assertTrue((System.nanoTime() - t0) / 1e9 < 5, "the cap took too long: the rest of the answer was drained");
+        } finally {
+            remote.stop(0);
+        }
+    }
+
+    /**
+     * SERVICE SILENT keeps the query's own rows when the remote's answer is broken, as it does when
+     * the remote cannot be reached. RDF4J dropped every row when the failure came while it iterated
+     * (a complete HTTP body holding broken JSON): 200 with no rows, and an update wrote nothing.
+     */
+    @Test
+    void serviceSilentKeepsTheRowsWhenTheAnswerIsBroken() throws Exception {
+        var remote = serve(java.util.Map.of("/broken", respond(200, "application/sparql-results+json",
+                "{\"head\":{\"vars\":[\"x\"]},\"results\":{\"bindings\":[{\"x\":{\"type\":\"lit", 0)));
+        try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true).withUpdateEnabled(true), 0)) {
+            String service = "http://127.0.0.1:" + remote.getAddress().getPort() + "/broken";
+            var r = getCsv(fed.url(), "SELECT ?v WHERE { ?v <urn:ex:depot> ?d SERVICE SILENT <" + service + "> { ?y <urn:ex:q> ?x } } ORDER BY ?v");
+            assertEquals(200, r.statusCode(), r.body());
+            assertEquals(List.of("v", "urn:ex:EV-3K8", "urn:ex:EV-7Q2"), r.body().lines().toList());
+            assertEquals(204, post(fed.url(), "application/sparql-update", "INSERT { ?v <urn:ex:checked> true } WHERE { "
+                    + "?v <urn:ex:depot> ?d SERVICE SILENT <" + service + "> { ?y <urn:ex:q> ?x } }", null).statusCode());
+            assertEquals(3, getCsv(fed.url(), "SELECT ?v WHERE { ?v <urn:ex:checked> true }").body().lines().count());
+            var loud = getCsv(fed.url(), "SELECT ?v WHERE { ?v <urn:ex:depot> ?d SERVICE <" + service + "> { ?y <urn:ex:q> ?x } }");
+            assertEquals(502, loud.statusCode(), loud.body());
+            assertTrue(loud.body().contains("malformed result"), loud.body());
+        } finally {
+            remote.stop(0);
+        }
+    }
+
+    /**
+     * A remote that fails is a 502 that says how — its status and the start of its reason — not a
+     * 500 "query evaluation failed", and not "answered Content-Type text/plain", which hid the
+     * remote's own reason because the format was checked before the status. CSV is refused too:
+     * RDF4J re-types what it reads from it.
+     */
+    @Test
+    void aRemoteThatFailsIsA502ThatSaysHow() throws Exception {
+        var remote = serve(java.util.Map.of(
+                "/forbidden", respond(403, "text/plain; charset=UTF-8", "federation is off over here", 0),
+                "/csv", respond(200, "text/csv", "v,s\r\nurn:ex:v1,001\r\n", 0)));
+        try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true), 0)) {
+            String base = "http://127.0.0.1:" + remote.getAddress().getPort();
+            var forbidden = getCsv(fed.url(), "SELECT * WHERE { SERVICE <" + base + "/forbidden> { ?s ?p ?o } }");
+            assertEquals(502, forbidden.statusCode(), forbidden.body());
+            assertTrue(forbidden.body().contains("answered HTTP 403: federation is off over here"), forbidden.body());
+            var dead = getCsv(fed.url(), "SELECT * WHERE { SERVICE <http://127.0.0.1:1/sparql> { ?s ?p ?o } }");
+            assertEquals(502, dead.statusCode(), dead.body());
+            assertTrue(dead.body().contains("could not be reached"), dead.body());
+            var csv = getCsv(fed.url(), "SELECT * WHERE { SERVICE <" + base + "/csv> { ?v <urn:ex:s> ?s } }");
+            assertEquals(502, csv.statusCode(), csv.body());
+            assertTrue(csv.body().contains("answered Content-Type 'text/csv'"), csv.body());
+            assertFalse(TimedServiceClient.ACCEPT.contains("csv"), TimedServiceClient.ACCEPT);
+        } finally {
+            remote.stop(0);
+        }
+    }
+
+    /**
+     * Only http and https, whatever names the endpoint: a variable bound at run time skipped the
+     * servlet's check of constant IRIs, and a redirect could leave http too. SILENT does not turn
+     * the refusal into an empty match.
+     */
+    @Test
+    void variableEndpointsAndRedirectsStayOnHttp() throws Exception {
+        var hits = new java.util.concurrent.atomic.AtomicInteger();
+        var remote = serve(java.util.Map.of("/to-ftp", respond(302, "text/plain", "", 0, "Location", "ftp://127.0.0.1/x"),
+                "/rows", rowEcho(0, hits)));
+        try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true), 0)) {
+            for (String target : List.of("file:///etc/hosts", "ftp://127.0.0.1/x")) {
+                var r = getCsv(fed.url(), "SELECT * WHERE { VALUES ?e { <" + target + "> } SERVICE ?e { ?s ?p ?o } }");
+                assertEquals(403, r.statusCode(), target + ": " + r.body());
+                var silent = getCsv(fed.url(), "SELECT * WHERE { VALUES ?e { <" + target + "> } SERVICE SILENT ?e { ?s ?p ?o } }");
+                assertEquals(403, silent.statusCode(), target + " under SILENT: " + silent.body());
+            }
+            String base = "http://127.0.0.1:" + remote.getAddress().getPort();
+            var ok = getCsv(fed.url(), "SELECT * WHERE { VALUES ?e { <" + base + "/rows> } SERVICE ?e { ?s ?p ?x } }");
+            assertEquals(200, ok.statusCode(), ok.body());   // a variable http endpoint still works
+            var redirected = getCsv(fed.url(), "SELECT * WHERE { SERVICE <" + base + "/to-ftp> { ?s ?p ?o } }");
+            assertEquals(502, redirected.statusCode(), redirected.body());
+            assertTrue(redirected.body().contains("only http and https are followed"), redirected.body());
+        } finally {
+            remote.stop(0);
+        }
+    }
+
+    /** A redirect from https may not drop to plain http (the LOAD rule); checked on the strategy itself, without a TLS server. */
+    @Test
+    void anHttpsServiceIsNotRedirectedToHttp() throws Exception {
+        var strategy = TimedServiceClient.HTTP_ONLY_REDIRECTS;
+        var context = org.apache.http.client.protocol.HttpClientContext.create();
+        context.setAttribute(org.apache.http.protocol.HttpCoreContext.HTTP_TARGET_HOST,
+                new org.apache.http.HttpHost("remote.example", 443, "https"));
+        var request = new org.apache.http.client.methods.HttpGet("https://remote.example/sparql");
+        var down = new org.apache.http.message.BasicHttpResponse(org.apache.http.HttpVersion.HTTP_1_1, 302, "Found");
+        down.addHeader("Location", "http://remote.example/sparql");
+        var e = assertThrows(org.apache.http.ProtocolException.class, () -> strategy.getLocationURI(request, down, context));
+        assertTrue(e.getMessage().contains("may not drop to plain http"), e.getMessage());
+        var across = new org.apache.http.message.BasicHttpResponse(org.apache.http.HttpVersion.HTTP_1_1, 302, "Found");
+        across.addHeader("Location", "https://mirror.example/sparql");
+        assertEquals("https://mirror.example/sparql", strategy.getLocationURI(request, across, context).toString());
+    }
+
     @SuppressWarnings("unused")
     private static void silence(IOException ignored) { }
 }
