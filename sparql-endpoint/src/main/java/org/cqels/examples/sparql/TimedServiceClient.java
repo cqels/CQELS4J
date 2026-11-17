@@ -373,6 +373,10 @@ final class TimedServiceClient extends CloseableHttpClient {
             throws IOException {
         Budget budget = Budget.CURRENT.get();
         // read before anything is armed: nothing below needs cleaning up if it fails
+        if (queryParameters(request) > 1) {
+            throw trip(budget, new Refusal(400, "a SERVICE IRI may not carry a 'query' parameter of its own: "
+                    + "the query RDF4J sends would be a second one"));
+        }
         Boolean expectTuple = expectedForm(request);   // null: could not tell
         if (target == null || !("http".equalsIgnoreCase(target.getSchemeName())
                 || "https".equalsIgnoreCase(target.getSchemeName()))) {
@@ -835,9 +839,15 @@ final class TimedServiceClient extends CloseableHttpClient {
         expect(datatype == null || absoluteIri(datatype), "a datatype that is not an absolute IRI");
     }
 
-    private static boolean absoluteIri(String s) {
+    /**
+     * An absolute IRI. {@code java.net.URI}, not RDF4J's {@code ParsedIRI}: that refused the valid
+     * {@code http://127.0.0.1?x} and took {@code http://[not-an-ip]/a} (found in co-review of
+     * #129). {@code URI} takes non-ASCII characters as IRIs allow, and refuses spaces, unbalanced
+     * or malformed brackets and the like.
+     */
+    static boolean absoluteIri(String s) {
         try {
-            return new org.eclipse.rdf4j.common.net.ParsedIRI(s).isAbsolute();
+            return new java.net.URI(s).isAbsolute();
         } catch (java.net.URISyntaxException e) {
             return false;
         }
@@ -941,6 +951,40 @@ final class TimedServiceClient extends CloseableHttpClient {
             // cannot tell: either form is accepted
         }
         return null;
+    }
+
+    /**
+     * How many {@code query} parameters {@code request} carries, in its URL and form body
+     * together. RDF4J adds its own to whatever the SERVICE IRI already has, so an IRI ending in
+     * {@code ?query=ASK{}} sent two, and the form check read the IRI's (found in co-review of
+     * #129). More than one is refused before anything is sent.
+     */
+    static int queryParameters(HttpRequest request) {
+        int n = 0;
+        try {
+            String url = java.net.URI.create(request.getRequestLine().getUri()).getRawQuery();
+            if (url != null) {
+                n += count(url);
+            }
+            if (request instanceof org.apache.http.HttpEntityEnclosingRequest enclosing && enclosing.getEntity() != null
+                    && enclosing.getEntity().isRepeatable()) {
+                n += count(org.apache.http.util.EntityUtils.toString(enclosing.getEntity(), java.nio.charset.StandardCharsets.UTF_8));
+            }
+        } catch (IOException | RuntimeException e) {
+            // unreadable: counted as none here; the remote decides
+        }
+        return n;
+    }
+
+    private static int count(String params) {
+        int n = 0;
+        for (org.apache.http.NameValuePair pair : org.apache.http.client.utils.URLEncodedUtils.parse(params,
+                java.nio.charset.StandardCharsets.UTF_8)) {
+            if (pair.getName().equals("query")) {
+                n++;
+            }
+        }
+        return n;
     }
 
     /**

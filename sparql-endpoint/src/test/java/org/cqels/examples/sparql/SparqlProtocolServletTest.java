@@ -3113,6 +3113,59 @@ class SparqlProtocolServletTest {
                 row("{\"type\":\"uri\",\"value\":\"http://example.org/ä?q=1#f\"}").getBytes(StandardCharsets.UTF_8), null));
     }
 
+    // ---- co-review round 7 of #129 ----------------------------------------------------------------
+
+    /**
+     * SERVICE inside an ORDER BY key is refused: RDF4J sorts in parallel, and the sort's pool
+     * threads have no budget — 9,000 rows made 19 requests under a limit of 1. Ordering by a
+     * variable a SERVICE bound is fine.
+     */
+    @Test
+    void serviceInsideAnOrderingIsRefused() throws Exception {
+        var hits = new java.util.concurrent.atomic.AtomicInteger();
+        var remote = serve(java.util.Map.of("/rows", rowEcho(0, hits)));
+        try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true), 0)) {
+            String service = "http://127.0.0.1:" + remote.getAddress().getPort() + "/rows";
+            var refused = getCsv(fed.url(), "SELECT ?v WHERE { ?v <urn:ex:depot> ?d } ORDER BY (EXISTS { SERVICE <" + service
+                    + "> { <urn:s> <urn:p> <urn:o> } })");
+            assertEquals(400, refused.statusCode(), refused.body());
+            assertEquals(0, hits.get());
+            var fine = getCsv(fed.url(), "SELECT ?x WHERE { SERVICE <" + service + "> { ?s ?p ?x } } ORDER BY ?x");
+            assertEquals(200, fine.statusCode(), fine.body());
+        } finally {
+            remote.stop(0);
+        }
+        assertFalse(SparqlProtocolServlet.serviceInOrdering(org.eclipse.rdf4j.query.parser.QueryParserUtil.parseQuery(org.eclipse.rdf4j.query.QueryLanguage.SPARQL,
+                "SELECT * WHERE { SERVICE <http://r/> { ?s ?p ?o } } ORDER BY ?o", null).getTupleExpr()));
+    }
+
+    /** A SERVICE IRI carrying its own query parameter is refused: RDF4J's query became the second one, and the IRI's was checked. */
+    @Test
+    void aServiceIriWithItsOwnQueryParameterIsRefused() throws Exception {
+        var remote = serve(java.util.Map.of("/bool", respond(200, "application/sparql-results+json", "{\"head\":{},\"boolean\":false}", 0)));
+        try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true), 0)) {
+            String service = "http://127.0.0.1:" + remote.getAddress().getPort() + "/bool?query=ASK%7B%7D";
+            for (String silent : List.of("", "SILENT ")) {
+                var r = getCsv(fed.url(), "SELECT ?v WHERE { ?v <urn:ex:depot> ?d SERVICE " + silent + "<" + service + "> { ?y <urn:ex:q> ?x } }");
+                assertEquals(400, r.statusCode(), silent + r.body());
+                assertTrue(r.body().contains("'query' parameter of its own"), r.body());
+            }
+        } finally {
+            remote.stop(0);
+        }
+    }
+
+    /** IRIs by java.net.URI: ParsedIRI refused http://127.0.0.1?x and took http://[not-an-ip]/a. */
+    @Test
+    void iriCheckingFollowsTheGrammar() {
+        assertTrue(TimedServiceClient.absoluteIri("http://127.0.0.1?x"));
+        assertTrue(TimedServiceClient.absoluteIri("http://[::1]/a"));
+        assertTrue(TimedServiceClient.absoluteIri("urn:ex:a"));
+        assertFalse(TimedServiceClient.absoluteIri("http://[not-an-ip]/a"));
+        assertFalse(TimedServiceClient.absoluteIri("http://example.org/a b"));
+        assertFalse(TimedServiceClient.absoluteIri("relative/path"));
+    }
+
     @SuppressWarnings("unused")
     private static void silence(IOException ignored) { }
 }
