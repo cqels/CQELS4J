@@ -56,6 +56,8 @@ import java.util.function.Supplier;
  *   CQELS_SPARQL_UPDATE_ENABLED           false
  *   CQELS_SPARQL_FEDERATION_ENABLED       false       accept SERVICE and LOAD (outbound requests): http(s)
  *                                                     only, within the execution limit
+ *   CQELS_SPARQL_MAX_SERVICE_REQUESTS     100         SERVICE requests one query may make
+ *   CQELS_SPARQL_MAX_SERVICE_BYTES        16777216    SERVICE answers one query may take in all
  *   CQELS_SPARQL_METADATA_ENABLED         false       serve the engine's streams and status as the
  *                                                     graph cqels://endpoint/metadata (EngineMetadata)
  *   CQELS_SPARQL_STORE_PATH               (memory)    NativeStore directory for a durable graph
@@ -111,7 +113,11 @@ public final class SparqlEndpointLauncher {
                 .withUpdateToken(env("CQELS_SPARQL_UPDATE_TOKEN", null))
                 .withShutdownSeconds(Integer.parseInt(env("CQELS_SPARQL_SHUTDOWN_SECONDS",
                         Integer.toString(EndpointOptions.DEFAULT_SHUTDOWN_SECONDS))))
-                .withAccessLog(Boolean.parseBoolean(env("CQELS_SPARQL_ACCESS_LOG", "true")));
+                .withAccessLog(Boolean.parseBoolean(env("CQELS_SPARQL_ACCESS_LOG", "true")))
+                .withMaxServiceRequests(Integer.parseInt(env("CQELS_SPARQL_MAX_SERVICE_REQUESTS",
+                        Integer.toString(EndpointOptions.DEFAULT_MAX_SERVICE_REQUESTS))))
+                .withMaxServiceBytes(Long.parseLong(env("CQELS_SPARQL_MAX_SERVICE_BYTES",
+                        Long.toString(EndpointOptions.DEFAULT_MAX_SERVICE_BYTES))));
         String storePath = env("CQELS_SPARQL_STORE_PATH", null);
         boolean seedFleet = Boolean.parseBoolean(env("CQELS_SPARQL_SEED_FLEET", "false"));
         int maxThreads = Integer.parseInt(env("CQELS_SPARQL_MAX_THREADS", "200"));
@@ -197,7 +203,8 @@ public final class SparqlEndpointLauncher {
                                      int maxThreads, boolean virtualThreads) throws Exception {
         requireTokenForRemoteBind(host, options.authToken(), options.allowUnauthenticatedRemote());
         AutoCloseable outbound = options.federationEnabled()
-                ? limitOutboundRequests(engine.getRepository(), options.maxExecutionSeconds()) : () -> { };
+                ? limitOutboundRequests(engine.getRepository(), options.maxExecutionSeconds(), options.maxServiceBytes())
+                : () -> { };
         Server server = startServer(engine::getRepository, options.metadataEnabled() ? EngineMetadata.of(engine) : null,
                 engine::isRunning, host, port, options, maxThreads, virtualThreads);
         // Let the SERVICE client's connections go when Jetty stops; it stays installed and
@@ -260,13 +267,23 @@ public final class SparqlEndpointLauncher {
      *         is refused rather than run without its limits
      */
     public static AutoCloseable limitOutboundRequests(Repository repository, int timeoutSeconds) {
+        return limitOutboundRequests(repository, timeoutSeconds, EndpointOptions.DEFAULT_MAX_SERVICE_BYTES);
+    }
+
+    /**
+     * As {@link #limitOutboundRequests(Repository, int)}, with {@code maxResponseBytes} the most one
+     * SERVICE answer may be ({@code EndpointOptions.maxServiceBytes}); within a query the servlet
+     * also holds all of the query's answers together to it.
+     */
+    public static AutoCloseable limitOutboundRequests(Repository repository, int timeoutSeconds, long maxResponseBytes) {
         if (!(repository instanceof SailRepository sail)
                 || !(sail.getFederatedServiceResolver() instanceof org.eclipse.rdf4j.http.client.HttpClientDependent dependent)) {
             throw new IllegalStateException("federation is enabled but the repository ("
                     + (repository == null ? "null" : repository.getClass().getName()) + ") exposes no SERVICE HTTP client "
                     + "to limit; disable CQELS_SPARQL_FEDERATION_ENABLED");
         }
-        TimedServiceClient client = new TimedServiceClient((int) Math.min(Integer.MAX_VALUE, Math.max(0, timeoutSeconds) * 1000L));
+        TimedServiceClient client = new TimedServiceClient((int) Math.min(Integer.MAX_VALUE, Math.max(0, timeoutSeconds) * 1000L),
+                maxResponseBytes);
         dependent.setHttpClient(client);
         // A resolver given a session manager of its own ignores setHttpClient without a word:
         // the protections were then silently absent, and an XML answer read a local file again

@@ -582,7 +582,8 @@ public final class SparqlProtocolServlet extends HttpServlet {
     private void evaluate(HttpServletRequest req, HttpServletResponse resp, Repository target, String queryString,
                           String base, Dataset dataset) throws IOException {
         long started = System.nanoTime();
-        try (RepositoryConnection conn = target.getConnection()) {
+        try (TimedServiceClient.Budget budget = openBudget();
+             RepositoryConnection conn = target.getConnection()) {
             Query query;
             try {
                 query = conn.prepareQuery(QueryLanguage.SPARQL, queryString, base);
@@ -625,12 +626,18 @@ public final class SparqlProtocolServlet extends HttpServlet {
                     return;
                 }
                 boolean answer = bq.evaluate();   // evaluate BEFORE committing, so a timeout can still be a 503
+                if (serviceLimitTripped(resp)) {
+                    return;
+                }
                 BooleanQueryResultWriter writer = BooleanQueryResultWriterRegistry.getInstance()
                         .get(fmt.get().format()).orElseThrow().getWriter(begin(resp, fmt.get()));
                 writer.handleBoolean(answer);
             } else {
                 fail(resp, HttpServletResponse.SC_BAD_REQUEST, "unsupported query form");
             }
+            // A streamed result has been written by now: a limit SILENT swallowed aborts it
+            // (see fail()) rather than let it end as a complete-looking 200.
+            serviceLimitTripped(resp);
         } catch (IllegalArgumentException e) {
             fail(resp, HttpServletResponse.SC_BAD_REQUEST, e.getMessage());
         } catch (QueryInterruptedException e) {
@@ -646,6 +653,9 @@ public final class SparqlProtocolServlet extends HttpServlet {
                 fail(resp, HttpServletResponse.SC_GATEWAY_TIMEOUT, "a SERVICE endpoint did not answer in time");
                 return;
             }
+            if (serviceFailed(resp, e)) {
+                return;
+            }
             if (pastLimit(started)) {
                 fail(resp, HttpServletResponse.SC_SERVICE_UNAVAILABLE,
                         "query exceeded the execution limit of " + options.maxExecutionSeconds() + " s");
@@ -658,6 +668,9 @@ public final class SparqlProtocolServlet extends HttpServlet {
             // exception; fail() turns any of these into an aborted response once committed.
             if (outboundTimedOut(e)) {
                 fail(resp, HttpServletResponse.SC_GATEWAY_TIMEOUT, "a SERVICE endpoint did not answer in time");
+                return;
+            }
+            if (serviceFailed(resp, e)) {
                 return;
             }
             if (pastLimit(started)) {
@@ -709,6 +722,9 @@ public final class SparqlProtocolServlet extends HttpServlet {
                 bytes += size;
                 rows.add(row);
             }
+        }
+        if (serviceLimitTripped(resp)) {
+            return;
         }
         if (truncated) {
             resp.setHeader(TRUNCATED_HEADER, "true");
@@ -774,6 +790,9 @@ public final class SparqlProtocolServlet extends HttpServlet {
             }
             namespaces = result.getNamespaces();
         }
+        if (serviceLimitTripped(resp)) {
+            return;
+        }
         if (tooBig) {
             fail(resp, HttpServletResponse.SC_SERVICE_UNAVAILABLE, "the result exceeds " + options.maxBufferedBytes()
                     + " bytes, the most this endpoint holds to write " + fmt.mediaType()
@@ -830,7 +849,8 @@ public final class SparqlProtocolServlet extends HttpServlet {
 
     private void executeUpdate(HttpServletRequest req, HttpServletResponse resp, Params params, String updateString)
             throws IOException {
-        try (RepositoryConnection conn = repository.get().getConnection()) {
+        try (TimedServiceClient.Budget budget = openBudget();
+             RepositoryConnection conn = repository.get().getConnection()) {
             String base = baseIri(req);
             Dataset dataset = dataset(params, "using-graph-uri", "using-named-graph-uri");
             Update update;
@@ -897,6 +917,9 @@ public final class SparqlProtocolServlet extends HttpServlet {
                 fail(resp, HttpServletResponse.SC_GATEWAY_TIMEOUT, "a SERVICE or LOAD target did not answer in time");
                 return;
             }
+            if (serviceFailed(resp, e)) {
+                return;
+            }
             log.warn("update failed: {}", e.toString());
             fail(resp, HttpServletResponse.SC_INTERNAL_SERVER_ERROR, "update failed: " + e.getMessage());
         }
@@ -914,6 +937,13 @@ public final class SparqlProtocolServlet extends HttpServlet {
         conn.begin();
         try {
             work.run();
+            // a SERVICE limit that SILENT swallowed would otherwise commit a partial update
+            TimedServiceClient.Budget budget = TimedServiceClient.Budget.CURRENT.get();
+            if (budget != null && budget.tripped() != null) {
+                conn.rollback();
+                fail(resp, budget.tripped().status, budget.tripped().getMessage() + "; nothing was changed");
+                return false;
+            }
             if (conn.hasStatement(null, null, null, false, METADATA_GRAPH)) {
                 conn.rollback();
                 fail(resp, HttpServletResponse.SC_FORBIDDEN, "the graph <" + METADATA_GRAPH + "> is reserved "
@@ -1485,6 +1515,57 @@ public final class SparqlProtocolServlet extends HttpServlet {
      * {@code SERVICE} endpoint that did not answer within the deadline
      * {@link SparqlEndpointLauncher#limitOutboundRequests} gives its client.
      */
+    /** The query's SERVICE budget: one deadline, request count and byte total for all its SERVICE calls. */
+    private TimedServiceClient.Budget openBudget() {
+        return TimedServiceClient.Budget.open(options.maxExecutionSeconds(), options.maxServiceRequests(),
+                options.maxServiceBytes());
+    }
+
+    /**
+     * Answers the SERVICE limit this query ran into, if one tripped though evaluation went on —
+     * which {@code SERVICE SILENT} makes it do, with fewer rows — and returns whether it did.
+     */
+    private static boolean serviceLimitTripped(HttpServletResponse resp) throws IOException {
+        TimedServiceClient.Budget budget = TimedServiceClient.Budget.CURRENT.get();
+        TimedServiceClient.Refusal limit = budget == null ? null : budget.tripped();
+        if (limit == null) {
+            return false;
+        }
+        fail(resp, limit.status, limit.getMessage());
+        return true;
+    }
+
+    /**
+     * Answers a SERVICE call that failed, if {@code e} is one, and returns whether it was: the
+     * status a {@link TimedServiceClient.Refusal} carries (403 a non-http endpoint, 502 an answer
+     * too large, 503 too many requests, 504 the query's deadline), and 502 for a remote that
+     * failed or could not be reached. Every such failure was a 500 "query evaluation failed"
+     * before the SERVICE audit after #128, which said the fault was here, not upstream.
+     */
+    private static boolean serviceFailed(HttpServletResponse resp, Throwable e) throws IOException {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            if (t instanceof TimedServiceClient.Refusal r) {
+                fail(resp, r.status, r.getMessage());
+                return true;
+            }
+            if (t instanceof TimedServiceClient.RemoteFailure) {
+                fail(resp, HttpServletResponse.SC_BAD_GATEWAY, t.getMessage());
+                return true;
+            }
+            if (t instanceof java.net.ConnectException || t instanceof java.net.NoRouteToHostException
+                    || t instanceof java.net.UnknownHostException || t instanceof org.apache.http.NoHttpResponseException
+                    || t instanceof javax.net.ssl.SSLException || t instanceof org.apache.http.client.ClientProtocolException) {
+                Throwable reason = t.getCause() != null && t.getCause().getMessage() != null ? t.getCause() : t;
+                fail(resp, HttpServletResponse.SC_BAD_GATEWAY, "a SERVICE endpoint could not be reached: " + reason.getMessage());
+                return true;
+            }
+            if (t.getCause() == t) {
+                break;
+            }
+        }
+        return false;
+    }
+
     private static boolean outboundTimedOut(Throwable e) {
         for (Throwable t = e; t != null; t = t.getCause()) {
             if (t instanceof java.net.SocketTimeoutException   // TimedServiceClient's deadline reports as one
@@ -1561,7 +1642,33 @@ public final class SparqlProtocolServlet extends HttpServlet {
         }
         resp.setStatus(HttpServletResponse.SC_OK);
         resp.setContentType(type);
-        return resp.getOutputStream();
+        // RDF4J's writers flush as they go — the CSV writer right after its header row — and a
+        // flush commits the response: a SERVICE limit or a timeout a few rows later could then only
+        // abort it, never answer its status (found in the SERVICE audit after #128). Their flushes
+        // are ignored here; Jetty sends when its own buffer fills and when the response ends, so a
+        // failure within the first buffer is still a clean status.
+        OutputStream out = resp.getOutputStream();
+        return new OutputStream() {
+            @Override
+            public void write(int b) throws IOException {
+                out.write(b);
+            }
+
+            @Override
+            public void write(byte[] b, int off, int len) throws IOException {
+                out.write(b, off, len);
+            }
+
+            @Override
+            public void flush() {
+                // see above
+            }
+
+            @Override
+            public void close() throws IOException {
+                out.close();
+            }
+        };
     }
 
     /** A negotiated writer format and the media type to label the response with. */

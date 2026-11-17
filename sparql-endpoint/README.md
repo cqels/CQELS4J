@@ -113,7 +113,9 @@ All settings are environment variables, named like the MCP server's `CQELS_MCP_H
 | `CQELS_SPARQL_MAX_ROWS` | `0` | SELECT rows, or CONSTRUCT / DESCRIBE statements, beyond this are dropped and `X-CQELS-Truncated: true` is set. `0` = unlimited, streamed. |
 | `CQELS_SPARQL_MAX_BUFFERED_BYTES` | `33554432` | With `MAX_ROWS` set the result is held before it is sent; this bounds what is held (estimated from the values' lengths), truncating the same way. See *Memory*. |
 | `CQELS_SPARQL_UPDATE_ENABLED` | `false` | Accept SPARQL Update. |
-| `CQELS_SPARQL_FEDERATION_ENABLED` | `false` | Accept `SERVICE` (in queries and updates) and `LOAD`. Both make the endpoint itself send requests to a URL the client names; only `http` and `https` IRIs are accepted (redirects too), and both give up after `MAX_EXECUTION_SECONDS`. `LOAD` must be the only operation in its request. See *Security*. |
+| `CQELS_SPARQL_FEDERATION_ENABLED` | `false` | Accept `SERVICE` (in queries and updates) and `LOAD`. Both make the endpoint itself send requests to a URL the client names; only `http` and `https` are reached (redirects and endpoints bound at run time too), all of one query's `SERVICE` calls together must finish within `MAX_EXECUTION_SECONDS`, and `LOAD` must be the only operation in its request. See *Federation*. |
+| `CQELS_SPARQL_MAX_SERVICE_REQUESTS` | `100` | The most `SERVICE` requests one query or update makes (RDF4J joins in batches of 15 rows); beyond it, `503`. |
+| `CQELS_SPARQL_MAX_SERVICE_BYTES` | `16777216` | The most one query or update takes from `SERVICE` answers in all, decoded; beyond it, `502`. Each answer is held whole while it is checked, so this is also what one query may hold. |
 | `CQELS_SPARQL_METADATA_ENABLED` | `false` | Serve the engine's streams and status as the read-only graph `cqels://endpoint/metadata`; see *The metadata graph*. |
 | `CQELS_SPARQL_STORE_PATH` | unset | NativeStore directory for a graph that survives restarts; unset = memory store. |
 | `CQELS_SPARQL_SEED_FLEET` | `false` | Seed the fleet world. |
@@ -144,7 +146,7 @@ All settings are environment variables, named like the MCP server's `CQELS_MCP_H
 |---|---|
 | `400` | malformed query or update, graph parameter that is not an absolute IRI, missing `query`, `query` or `update` given more than once (or in the URL of a direct POST), update dataset parameters plus `USING`/`WITH`, malformed percent-encoding, bytes not valid in the declared charset, a request nested too deeply to parse (thousands of parentheses) |
 | `401` | token set and missing or wrong |
-| `403` | update while `CQELS_SPARQL_UPDATE_ENABLED` is false; update without the update token when `CQELS_SPARQL_UPDATE_TOKEN` is set (with `WWW-Authenticate: Bearer error="insufficient_scope"`); `SERVICE` or `LOAD` while `CQELS_SPARQL_FEDERATION_ENABLED` is false, or naming anything but an `http`/`https` IRI while it is true; `Host` not in `CQELS_SPARQL_ALLOWED_HOSTS` (checked when no read token is set, or when the list is given); `Origin` not in `CQELS_SPARQL_ALLOWED_ORIGINS`; a browser request marked `Sec-Fetch-Site: cross-site` or `same-site` with no allowed `Origin` |
+| `403` | update while `CQELS_SPARQL_UPDATE_ENABLED` is false; update without the update token when `CQELS_SPARQL_UPDATE_TOKEN` is set (with `WWW-Authenticate: Bearer error="insufficient_scope"`); `SERVICE` or `LOAD` while `CQELS_SPARQL_FEDERATION_ENABLED` is false, or naming anything but an `http`/`https` IRI while it is true (a `SERVICE ?var` bound at run time included, `SILENT` or not); `Host` not in `CQELS_SPARQL_ALLOWED_HOSTS` (checked when no read token is set, or when the list is given); `Origin` not in `CQELS_SPARQL_ALLOWED_ORIGINS`; a browser request marked `Sec-Fetch-Site: cross-site` or `same-site` with no allowed `Origin` |
 | `405` | update sent via GET; any method but GET, HEAD, POST, OPTIONS. Always with `Allow` |
 | `406` | nothing in `Accept` matches a registered writer |
 | `408` | body not received within `CQELS_SPARQL_MAX_UPLOAD_SECONDS` |
@@ -152,9 +154,9 @@ All settings are environment variables, named like the MCP server's `CQELS_MCP_H
 | `414` | a GET whose request line is over 8 KB (Jetty's limit); POST the query instead |
 | `415` | unknown POST `Content-Type` or charset |
 | `500` | evaluation failed, or the request ran out of heap (see *Memory*) |
-| `503` | execution limit exceeded by a query or an update (as Fuseki answers), a request arriving while the endpoint stops, every query slot busy (then with `Retry-After: 1`), a JSON-LD / NDJSON-LD result larger than `CQELS_SPARQL_MAX_BUFFERED_BYTES` with no `MAX_ROWS` set (with one, it is truncated instead), or `SERVICE` while the repository's `SERVICE` client lacks the endpoint's limits (an embedding that skipped `limitOutboundRequests`) |
-| `502` | a `LOAD` source failed: an HTTP error, a redirect to anything but `http`/`https`, a body over `CQELS_SPARQL_MAX_BUFFERED_BYTES`, or no parseable RDF (`LOAD SILENT`: `204`, nothing changed) |
-| `504` | a `SERVICE` or `LOAD` target did not answer within `CQELS_SPARQL_MAX_EXECUTION_SECONDS` |
+| `503` | execution limit exceeded by a query or an update (as Fuseki answers), a request arriving while the endpoint stops, every query slot busy (then with `Retry-After: 1`), a JSON-LD / NDJSON-LD result larger than `CQELS_SPARQL_MAX_BUFFERED_BYTES` with no `MAX_ROWS` set (with one, it is truncated instead), `SERVICE` while the repository's `SERVICE` client lacks the endpoint's limits (an embedding that skipped `limitOutboundRequests`), or a query needing more than `CQELS_SPARQL_MAX_SERVICE_REQUESTS` `SERVICE` requests |
+| `502` | a `LOAD` source failed: an HTTP error, a redirect to anything but `http`/`https`, a body over `CQELS_SPARQL_MAX_BUFFERED_BYTES`, or no parseable RDF (`LOAD SILENT`: `204`, nothing changed); a `SERVICE` endpoint failed: unreachable, an HTTP error (quoted: `answered HTTP 403: …`), a format other than SPARQL JSON or TSV, a malformed result, a redirect off `http`/`https` or from `https` to `http`, or answers over `CQELS_SPARQL_MAX_SERVICE_BYTES` |
+| `504` | a `SERVICE` or `LOAD` target did not answer within `CQELS_SPARQL_MAX_EXECUTION_SECONDS` — for `SERVICE`, counted from the start of the query, for all its calls together |
 
 A result streams as it is produced, so the status is sent with the first buffer. If the
 execution limit trips **after** that, the response is aborted — the connection closes without
@@ -320,6 +322,57 @@ The planned third route is this servlet **mounted into the MCP server's own Jett
 and MCP share one port, one token and one engine. That needs a mount point in `cqels-mcp`,
 requested upstream as cqels/claude#1387; the Jetty version here is pinned to the one
 `cqels-mcp` embeds so the mount will not split across two Jettys. Tracking: cqels/CQELS4J#104.
+Mounted there, the servlet could not federate: `cqels-mcp` refuses `SERVICE` by replacing the
+engine repository's federated-service resolver with one that refuses every call, so
+`limitOutboundRequests` has no client to install and start-up with federation on fails. That is
+safe (nothing leaves), but federation beside MCP needs `cqels-mcp` to refuse per query instead.
+
+A CQELS-QL continuous query cannot use `SERVICE` at all: the language has no `SERVICE` clause, and
+`registerCqelsQuery` rejects one as a syntax error. Its static patterns are looked up in the
+engine's own repository only.
+
+## Federation
+
+With `CQELS_SPARQL_FEDERATION_ENABLED=true`, `SERVICE` works as SPARQL 1.1 Federated Query
+describes, through RDF4J: a plain join, `SERVICE SILENT`, an endpoint taken from a variable
+(`SERVICE ?e`), nested `SERVICE` (the inner one runs on the remote), and `SERVICE` inside an
+update's `WHERE`. Measured against a second endpoint, the results are the ones a local join gives.
+How the work is shared is RDF4J's choice: with few local rows it sends them along in batches of
+15 (a `VALUES` block per request); with many, it may fetch every match of the remote pattern once
+and join here, so a broad pattern against a large public endpoint fetches a large answer.
+
+What the endpoint holds federation to — all measured in the SERVICE audit after #128, where each
+was missing:
+
+| | |
+|---|---|
+| **One deadline per query** | All of a query's `SERVICE` requests share `CQELS_SPARQL_MAX_EXECUTION_SECONDS`, counted from the start of the query: `504` when it runs out. Each request had the whole limit to itself before, so 20 batches against a remote taking 1.5 s each ran a query for 30 s under a 2 s limit and answered `200`. |
+| **Requests per query** | At most `CQELS_SPARQL_MAX_SERVICE_REQUESTS` (`503` beyond). There was no limit: 10,000 rows would have been some 670 requests to someone else's server from one client query. |
+| **Bytes per query** | At most `CQELS_SPARQL_MAX_SERVICE_BYTES` of answers in all, counted after `gzip` / `deflate` are undone (`502` beyond, at once). Before, an answer was bounded only by deadline × bandwidth: 1.1 GB in 5 s. |
+| **Answers read whole, and checked** | Each answer is read to its end and parsed once before RDF4J sees it. That is what makes `SERVICE SILENT` keep the query's own rows when a remote's answer breaks off or is malformed, as the standard says; RDF4J dropped every row then, so a query answered `200` with nothing and an update `204` having written nothing. |
+| **Failures say whose they are** | A remote that is unreachable, answers an HTTP error, or answers in a refused format is a `502` that quotes it (`answered HTTP 403: …`). It was a `500` "query evaluation failed", and a remote's own plain-text reason was reported as a refused `Content-Type`. |
+| **`http` and `https` only, everywhere** | Checked in the HTTP client itself, so it holds for `SERVICE ?e` bound at run time (which skipped the check of constant IRIs) and through a JVM proxy (which Apache would route `ftp://…` through). Redirects are followed only to `http`/`https`, never from `https` down to `http`. With `SILENT`, a refused endpoint is still a `403`, not an empty match. |
+| **Formats** | SPARQL JSON and TSV, which keep every term as it was. Not CSV — RDF4J re-types what it reads from it (`"001"` became an integer, language tags were lost, an empty string read as unbound), so joins over it gave different answers. Not SPARQL XML or RDF4J's binary format: see *Security*. |
+| **Limits under `SILENT`** | A limit of the endpoint's own — deadline, request count, bytes, scheme — is answered with its status even under `SERVICE SILENT`, and an update that ran into one is rolled back: `SILENT` excuses a remote's failure, not the endpoint's limits. |
+
+Still true, and worth knowing before enabling it:
+
+- **There is no allow-list of destinations.** Any `http`/`https` URL a client names is reached,
+  internal addresses included, and the bindings `SERVICE` sends go with the request — usually in
+  the URL (RDF4J uses GET up to about 4 KB), where the remote's and any proxy's logs keep them.
+  A read token is enough to send `SERVICE`; see *Security*.
+- **No credentials go to a remote.** The client's own token and cookies are never forwarded, and
+  there is no setting for a remote's credentials; a `user:pass@` in the URL is not sent up front
+  (measured), and a remote that needs a bearer token cannot be queried.
+- **The JVM's proxy settings apply** (`http.proxyHost`, `https.proxyHost`, `http.nonProxyHosts`).
+- **RDF4J keeps one small object per distinct endpoint URL** it has called, for the repository's
+  lifetime; with `SERVICE ?e`, clients choose how many.
+- **Calling this endpoint from itself** takes one more query slot per nesting level, and behind a
+  token it fails with the remote's `401`, since no token is forwarded.
+- **An embedding that registers its own `FederatedService`** on the resolver bypasses these limits:
+  `limitOutboundRequests` replaces the HTTP client RDF4J creates services with, not services
+  registered by hand.
+- With `CQELS_SPARQL_MAX_EXECUTION_SECONDS=0` there is no deadline at all.
 
 ## Security
 
@@ -351,15 +404,17 @@ requested upstream as cqels/claude#1387; the Jetty version here is pinned to the
   (`SparqlEndpointLauncher.limitOutboundRequests`). The deadline is absolute: a request still
   running at it is aborted, so a remote that trickles its headers or body a byte at a time
   cannot hold the slot; the host name lookup is held to it too, on a small pool of its own,
-  since an abort cannot interrupt one. The client stays installed for the repository's lifetime, so the
-  engine's own `SERVICE` calls get the deadline too (with `MAX_EXECUTION_SECONDS=0` it is
+  since an abort cannot interrupt one. The client stays installed for the repository's lifetime, so
+  direct RDF4J queries on `engine.getRepository()` get the deadline too, one request at a time (the
+  per-query budget of *Federation* is the servlet's; with `MAX_EXECUTION_SECONDS=0` the client is
   installed with no deadline, for the format rule below); its connections are released when Jetty
-  stops and reopen if it is used again. A `SERVICE` endpoint must answer SPARQL JSON, TSV or
-  CSV, in exactly one `Content-Type` header (an allow-list, not a deny-list: an empty header
-  followed by an XML one got past a check of the first): SPARQL XML is refused, because RDF4J parses it with settings under which an XML entity
-  read a local file into the results, and so is RDF4J's binary format, whose parser sizes arrays
-  from counts in the stream (a 12-byte answer ran it out of heap, and the query then reported an
-  empty result). Nothing is set JVM-wide.
+  stops and reopen if it is used again. A `SERVICE` endpoint must answer SPARQL JSON or TSV, in
+  exactly one `Content-Type` header (an allow-list, not a deny-list: an empty header followed by an
+  XML one got past a check of the first): SPARQL XML is refused, because RDF4J parses it with
+  settings under which an XML entity read a local file into the results, and so is RDF4J's binary
+  format, whose parser sizes arrays from counts in the stream (a 12-byte answer ran it out of heap,
+  and the query then reported an empty result). Nothing is set JVM-wide. *Federation* has the
+  rest of what `SERVICE` is held to.
 - **Browser requests from other origins are refused (`403`).** Loopback is not a boundary
   against a browser: any page the user visits can submit a cross-origin form POST — a CORS
   "simple" request, sent without a preflight — to `127.0.0.1:8089`. Withholding CORS headers

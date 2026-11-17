@@ -291,6 +291,11 @@ with a plain static pattern: write the pattern inside `GRAPH <g> { … }`, or de
 Because the lookup re-reads the static store per element, updates to background facts are reflected on the
 next matching element.
 
+**No `SERVICE`.** Static patterns are looked up in the engine's own repository only. CQELS-QL has no
+SPARQL 1.1 `SERVICE` clause, and registering a query that uses one fails with a syntax error
+(`extraneous input 'SERVICE'`). For federated one-shot SPARQL over the same background graph, see
+the SPARQL endpoint's *Federation* section (`sparql-endpoint/README.md`).
+
 **Elimination semantics.** A static pattern is a *required* join, exactly as in SPARQL 1.1: if the
 lookup finds no match, the row is eliminated. This is what lets a static pattern act as a **guard** —
 "only vehicles in this fleet", "only signals the model declares" — and not merely as enrichment.
