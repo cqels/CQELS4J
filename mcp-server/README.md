@@ -53,7 +53,7 @@ Enumerated from a live `tools/list` against this jar.
 | `save_procedure` | Procedural memory: save a named, runnable procedure (ASP/SHACL/SPARQL/CQELS-QL/Cypher/CEP) with `{{param}}` placeholders. |
 | `list_procedures` | List saved procedures with kind and description. |
 | `run_procedure` | Run a saved procedure by name, binding `{{param}}` values. |
-| `assemble_context` | Working memory: a ranked, budget-bounded context bundle for a task — relevant facts (with KG neighborhood) plus matching procedures. |
+| `assemble_context` | Working memory: a context bundle for a task — relevant facts (with KG neighborhood) and matching procedures, ranked and cut to a budget, plus the most recent events. |
 
 **Query + streaming:**
 

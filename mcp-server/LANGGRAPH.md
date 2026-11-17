@@ -399,8 +399,8 @@ await t["recall_memory"].ainvoke({"pattern": {"subject": "ex:Alice"}, "role": "e
 
 > **Setting a policy locks the server down, and it cannot be undone.** Once any policy exists, the
 > only read left is `recall_memory` with a `pattern` and a `role`. Writes still work (`store_memory`,
-> `record_event`, `save_procedure`, `forget_memory`), as do `validate_stream_query` and
-> `forget_stream_query`. Everything else is denied rather than allowed to leak: text, SPARQL and
+> `record_event`, `save_procedure`, and `forget_memory` by `facts` or `graph` but not by `sparql`),
+> as do `validate_stream_query` and `forget_stream_query`. Everything else is denied rather than allowed to leak: text, SPARQL and
 > metadata recall, `query`, `assemble_context`, `reason`, `validate`, `solve`, episodic and decision
 > recall, listing and running procedures, `register_reasoning`, `register_rules`, `watch_invariant`,
 > and creating, feeding, removing or querying streams. `entail` with a `role` works only if
@@ -409,25 +409,39 @@ await t["recall_memory"].ainvoke({"pattern": {"subject": "ex:Alice"}, "role": "e
 > watches.
 
 The `role` must be set by your application from an authenticated identity, never taken from the
-model or the end user: a caller that can choose its `role` can read as anyone. The server cannot tell
-who filled in `role`, so on a governed server do not hand the model `recall_memory` itself. Give it a
-tool of your own that fixes the role, and leave out the administrative tools:
+model or the end user: a caller that can choose its `role` can read as anyone. Access labels need the
+same care. A store adds a label to an unlabelled fact but never replaces one, so a caller that can
+write labels can expose an unlabelled fact to a role of its choosing. The server cannot tell who
+filled in these arguments, so on a governed server do not hand the model the server's tools at all.
+Give it tools of your own that fix the role, the graph and the label:
 
 ```python
 from langchain_core.tools import tool
 
 
-def recall_as(role):
+def memory_tools(user, role, label):  # all three from your authenticated session
+    @tool
+    async def remember(subject: str, predicate: str, object: str):
+        """Save a fact."""
+        return await t["store_memory"].ainvoke({
+            "graph": f"cqels://memory/user/{user}",
+            "facts": [{"subject": subject, "predicate": predicate, "object": object}],
+            "meta": {"accessLabel": label}})
+
     @tool
     async def recall(subject: str):
         """Recall what is known about a subject."""
         return await t["recall_memory"].ainvoke({"pattern": {"subject": subject}, "role": role})
-    return recall
+
+    return [remember, recall]
 
 
-HIDDEN = {"recall_memory", "set_access_policy", "forget_memory"}
-agent_tools = [x for x in tools if x.name not in HIDDEN] + [recall_as("hr")]  # role from your auth
+agent_tools = memory_tools("alice", role="hr", label="hr")
 ```
+
+Pass `agent_tools` instead of `tools` to `create_agent` (section 2), or to both `bind_tools` and
+`ToolNode` (section 7). Label every fact you store on a governed server, so that none is left for a
+later write to claim.
 
 ---
 
