@@ -112,7 +112,7 @@ import org.snakeyaml.engine.v2.schema.CoreSchema;
  *       rejected by jsonld-java itself. Input that JSON-LD 1.0 and 1.1 read differently is read
  *       with the 1.0 meaning, without an error: any term acts as a prefix (1.1 needs a
  *       gen-delim at the end of a plain-string definition, or {@code @prefix}), a whole-valued
- *       number written with a fraction or exponent ({@code 1.0}, {@code 1e2}) is an
+ *       number below 10^21 written with a fraction or exponent ({@code 1.0}, {@code 1e2}) is an
  *       {@code xsd:double} (1.1: integer) and an integer of 10^21 or more an {@code xsd:integer}
  *       (1.1: double); see RDF_MESSAGES_MAPPING.md §4.3. Otherwise numbers are typed as RDF4J
  *       types them directly; a floating-point number beyond {@code xsd:double} is refused.</li>

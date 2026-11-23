@@ -68,9 +68,9 @@ import org.eclipse.rdf4j.rio.Rio;
  * every graph (characters XML 1.0 forbids, an ill-formed {@code rdf:XMLLiteral}, {@code rdf:li},
  * which reads back as {@code rdf:_1}, a predicate with no XML name), and RDF4J writes some of these
  * anyway. The comparison is linear (see {@link #sameUpToBlankNodeNames}). {@code rdf:version}, an
- * RDF 1.2 XML syntax term, is refused as a predicate by the writer, and by the reader as an
- * element and as an attribute anywhere but {@code <rdf:RDF>} (RDF4J would read the attribute as a
- * triple).
+ * RDF 1.2 XML syntax term, is refused as a predicate by the writer, and by the reader, outside the
+ * content of an XML literal, as an element and as an attribute anywhere but {@code <rdf:RDF>}
+ * (RDF4J would read the attribute as a triple, or reject it).
  *
  * <p>Note that each message is handed to a fresh RDF4J parser; the log itself is read once, as
  * one continuous stream, which is what the companion tests ask for.
@@ -380,7 +380,7 @@ public final class RdfXmlMessageLog {
         if (!element.getName().equals(RDF_RDF) && element.getAttributeByName(RDF_VERSION) != null) {
             throw new IllegalArgumentException("message " + n + " has an rdf:version attribute at "
                     + where(element) + ", which RDF 1.2 reads as a version announcement and RDF4J 4.3.8"
-                    + " as an extra rdf:version triple (#133)");
+                    + " would read as an extra rdf:version triple or reject (#133)");
         }
         Attribute parseType = element.getAttributeByName(RDF_PARSE_TYPE);
         String found = parseType != null && parseType.getValue().equals("Triple") ? "rdf:parseType=\"Triple\""
