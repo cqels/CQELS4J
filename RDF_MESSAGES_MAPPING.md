@@ -262,8 +262,8 @@ normalisation leave them as they were.
   only change to blank-node structure is merging two blank nodes whose IDs it mangles to the same
   name, which lowers the blank-node count, and the comparison refuses that. A review fuzzed
   100,000 messages against an exact isomorphism check and found no wrong acceptance.
-- **`rdf:version`** is refused as a predicate (writer), and by the reader as an element and as an
-  attribute anywhere but `<rdf:RDF>`. RDF 1.2 XML makes it a syntax term; RDF4J 4.3.8 would read
+- **`rdf:version`** is refused as a predicate (writer), and by the reader, outside the content of
+  an XML literal, as an element and as an attribute anywhere but `<rdf:RDF>`. RDF 1.2 XML makes it a syntax term; RDF4J 4.3.8 would read
   `<rdf:Description rdf:version="1.2">` as an extra `rdf:version` triple, and write and read the
   predicate as an ordinary property.
 
