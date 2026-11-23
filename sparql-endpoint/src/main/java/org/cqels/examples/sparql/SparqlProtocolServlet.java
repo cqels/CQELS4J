@@ -2002,8 +2002,8 @@ public final class SparqlProtocolServlet extends HttpServlet {
      * form, or a declaration it cannot read so — the scan stops, and what it has not read is left
      * to RDF4J as it was. Any backslash inside a comment leaves the whole text as it was: RDF4J
      * decodes {@code \\uXXXX} escapes before it tokenizes, and an escaped line break ends a
-     * comment there. A declaration it would drop whose IRI RDF4J refuses
-     * ({@code ParsedIRI.create}, the check RDF4J's resolver runs) leaves the text as it was too. So it never turns text RDF4J would refuse as malformed into text it accepts (found
+     * comment there. A declaration it would drop is dropped only when RDF4J could not refuse its IRI
+     * ({@link #droppable}); otherwise the text is left as it was too. So it never turns text RDF4J would refuse as malformed into text it accepts (found
      * in the Opus co-review of #135: a comment ended by a bare CR or an escaped line break ran the
      * scan into a string literal and blanked part of it; Unicode spaces, a dotless ı and
      * {@code { }} inside an IRI were read as if valid; a dropped IRI went unchecked).
@@ -2077,14 +2077,7 @@ public final class SparqlProtocolServlet extends HttpServlet {
         }
         for (int k = 0; k < names.size(); k++) {
             if (last.get(names.get(k)) != k) {
-                try {
-                    // RDF4J checks every declared IRI, a dropped one too: one it refuses
-                    // (<http://a:b:c/>) must still be refused, not blanked away (found in the Opus
-                    // co-review of #135). ParsedIRI.create, not the constructor: create is what
-                    // RDF4J's resolver runs, and it accepts what the constructor refuses
-                    // (<http://x/%zz>), so the constructor kept such a query a 400 for nothing.
-                    ParsedIRI.create(text.substring(spans.get(k)[2], spans.get(k)[3]));
-                } catch (RuntimeException e) {
+                if (!droppable(iriOf(text, spans.get(k)), iriOf(text, spans.get(last.get(names.get(k)))))) {
                     return text;
                 }
             }
@@ -2100,6 +2093,33 @@ public final class SparqlProtocolServlet extends HttpServlet {
             }
         }
         return new String(out);
+    }
+
+    private static String iriOf(String text, int[] span) {
+        return text.substring(span[2], span[3]);
+    }
+
+    /**
+     * Whether a declaration with IRI {@code dropped} may be blanked in favour of a later one with
+     * {@code kept}: RDF4J checks every declared IRI, a dropped one too, so one it would refuse must
+     * still be refused, not blanked away. Which IRIs it refuses depends on where they are used — a
+     * query's resolver runs the lenient {@code ParsedIRI.create}, while an INSERT DATA or DELETE
+     * DATA block is parsed with no base and wants a strictly valid, absolute IRI (both found in the
+     * Opus co-review of #135: {@code <http://a:b:c/>} and then {@code <http://x/%zz>} and
+     * {@code <rel/>} in an INSERT DATA went from 400 to 204). So it holds in every place:
+     * the same IRI as the kept declaration's — rdflib's own case, which RDF4J judges exactly as the
+     * kept one — or an absolute IRI that parses strictly, which every one of RDF4J's paths accepts.
+     * Anything else leaves the request as sent, still a 400.
+     */
+    private static boolean droppable(String dropped, String kept) {
+        if (dropped.equals(kept)) {
+            return true;
+        }
+        try {
+            return new ParsedIRI(dropped).isAbsolute();
+        } catch (URISyntaxException | RuntimeException e) {
+            return false;
+        }
     }
 
     /** SPARQL's whitespace (§19.8, WS): space, tab, CR, LF — nothing else Java calls whitespace. */

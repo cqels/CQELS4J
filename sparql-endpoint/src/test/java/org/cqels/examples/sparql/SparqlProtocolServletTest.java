@@ -3601,12 +3601,17 @@ class SparqlProtocolServletTest {
                 + "SELECT ?d WHERE { ex:EV-7Q2 ex:depot ?d }");
         assertEquals(200, last.statusCode(), last.body());
         assertTrue(last.body().contains("urn:ex:North"), last.body());
-        var badIri = getCsv(shared.url(), "PREFIX ex: <http://a:b:c/>\nPREFIX ex: <urn:ex:>\nASK {}");
+        var badIri = get(shared.url(), "PREFIX ex: <http://a:b:c/>\nPREFIX ex: <urn:ex:>\nASK {}", null);
         assertEquals(400, badIri.statusCode(), "a dropped IRI RDF4J refuses is still refused: " + badIri.body());
-        // one RDF4J accepts, though a strict parse would not, is dropped like any other
-        var lenientIri = get(shared.url(), "PREFIX ex: <http://x/%zz>\nPREFIX ex: <urn:ex:>\nASK { ex:EV-7Q2 ex:depot ?d }", null);
-        assertEquals(200, lenientIri.statusCode(), lenientIri.body());
-        assertTrue(lenientIri.body().contains("true"), lenientIri.body());
+        // the same IRI twice is dropped whatever it is: RDF4J judges it as it judges the kept one
+        var sameOdd = get(shared.url(), "PREFIX od: <http://x/%zz>\nPREFIX od: <http://x/%zz>\nPREFIX ex: <urn:ex:>\n"
+                + "ASK { ex:EV-7Q2 ex:depot ?d }", null);
+        assertEquals(200, sameOdd.statusCode(), sameOdd.body());
+        assertTrue(sameOdd.body().contains("true"), sameOdd.body());
+        // another IRI only when it is absolute and strictly valid: a query's resolver would take
+        // <http://x/%zz>, an INSERT DATA block would not, so it is left to RDF4J everywhere
+        var oddFirst = get(shared.url(), "PREFIX ex: <http://x/%zz>\nPREFIX ex: <urn:ex:>\nASK { ex:EV-7Q2 ex:depot ?d }", null);
+        assertEquals(400, oddFirst.statusCode(), oddFirst.body());
         // an error further on still names its own line
         var broken = getCsv(shared.url(), "PREFIX ex: <urn:a:>\nPREFIX ex: <urn:ex:>\nSELECT * WHERE { ?s ?p }");
         assertEquals(400, broken.statusCode(), broken.body());
@@ -3617,6 +3622,13 @@ class SparqlProtocolServletTest {
             assertEquals(204, u.statusCode(), u.body());
             var q = getCsv(rw.url(), "SELECT ?d WHERE { <urn:ex:EV-9> <urn:ex:depot> ?d }");
             assertTrue(q.body().contains("urn:ex:South"), q.body());
+            // an INSERT DATA block wants strictly valid, absolute IRIs, a dropped one's too
+            for (String odd : List.of("http://x/%zz", "rel/")) {
+                var refused = post(rw.url(), "application/sparql-update", "PREFIX ex: <" + odd + ">\nPREFIX ex: <urn:ex:>\n"
+                        + "INSERT DATA { ex:EV-10 ex:depot ex:East }", null);
+                assertEquals(400, refused.statusCode(), odd + ": " + refused.body());
+            }
+            assertFalse(getCsv(rw.url(), "SELECT ?d WHERE { <urn:ex:EV-10> ?p ?d }").body().contains("East"));
         }
     }
 
