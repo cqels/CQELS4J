@@ -48,7 +48,11 @@ import org.eclipse.rdf4j.rio.RDFFormat;
  *   <li>{@code supplement.ttl} — per field, its description ({@code skos:definition}), the default
  *       of its {@code unit} argument ({@code s2x:defaultUnit}, e.g.
  *       {@code trailer:Pressure_Unit_Enum.KILOPASCAL}), and whether it carries
- *       {@code @instanceTag} ({@code s2x:instanceTag}).</li>
+ *       {@code @instanceTag} ({@code s2x:instanceTag});</li>
+ *   <li>{@code units.ttl} — not s2dm output either ({@code scripts/s2dm/units.py}): each unit enum
+ *       value linked to its QUDT unit ({@code s2x:qudtUnit}), and the conversions between them
+ *       derived from QUDT's multipliers and offsets
+ *       ({@code s2x:conversion [ s2x:to; s2x:factor; s2x:offset ]}).</li>
  * </ul>
  *
  * <p><strong>The stream encoding is this demo's, not s2dm's.</strong> s2dm defines the model but
@@ -78,17 +82,19 @@ import org.eclipse.rdf4j.rio.RDFFormat;
  *       {@code isHealthy}, would raise a false alarm, and the model has no marking that tells the
  *       two kinds apart.</li>
  *   <li><em>Lowest tire pressure per trailer and axle.</em> A windowed {@code GROUP BY} over the
- *       instance tags, restricted to the tire-pressure field and to readings sent in the unit the
- *       schema declares for it. It prints its current groups on every arrival, including readings
- *       it filters out, so the same {@code [lowest]} line repeats; see "Reading the output" in
+ *       instance tags, restricted to the tire-pressure field, in the unit the schema declares for
+ *       it: each reading is converted from the unit it was sent in with a factor joined from
+ *       {@code units.ttl} and a {@code BIND}. A 32 PSI reading counts as 220.63 kPa and becomes its
+ *       axle's lowest; taken as kPa it would have shown 32, and left out the lowest would have
+ *       stayed 455. The query prints its current groups on every arrival, including readings it
+ *       does not count, so the same {@code [lowest]} line repeats; see "Reading the output" in
  *       {@code examples/README.md}.</li>
- *   <li><em>A reading in the wrong unit.</em> A reading whose unit differs from its field's
- *       declared unit is flagged with the field's description: a 32 PSI tire pressure comes back
- *       against {@code KILOPASCAL}, "Tire pressure in kilo-Pascal." Counted as kPa, 32 would have
- *       become that axle's lowest pressure; query 3 leaves it out instead. The declared unit is the
- *       schema's default for the field's {@code unit} argument; treating it as the unit a streamed
- *       reading must be in is this demo's rule, and the schema has no conversion factors, so the
- *       reading is flagged rather than converted.</li>
+ *   <li><em>Readings in another unit.</em> {@code UnitConverted} lists a reading sent in another
+ *       unit than its field declares, with its value in the declared unit. {@code UnitMismatch}
+ *       flags one whose unit has no conversion to the declared one, with the field's description:
+ *       a tire pressure sent in percent comes back against {@code KILOPASCAL}, "Tire pressure in
+ *       kilo-Pascal.", and query 3 does not count it. The declared unit is the schema's default
+ *       for the field's {@code unit} argument; comparing readings in it is this demo's rule.</li>
  * </ol>
  *
  * <p>Query 1 places only fields whose owning type fills a slot of another type and has a
@@ -106,7 +112,8 @@ import org.eclipse.rdf4j.rio.RDFFormat;
  * (only types get a {@code skos:definition}). s2dm's VSPEC, LinkML and JSON Schema exporters carry
  * some of these, but at the pinned commit all three reject this same trailer schema. So the
  * supplement takes them from the schema directly: descriptions, units and instance-tag fields (the
- * trailer schema puts {@code @range} on no field). Queries 3 and 4 depend on it; queries 1 and 2
+ * trailer schema puts {@code @range} on no field). The schema has no conversion factors either:
+ * {@code units.ttl} takes them from QUDT. Queries 3 and 4 depend on both files; queries 1 and 2
  * use the export alone. See {@code S2DM_MAPPING.md} §5–§6.
  *
  * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.examples.s2dm.TrailerHealthMonitor}
@@ -154,7 +161,7 @@ public class TrailerHealthMonitor {
 
             long triples = loadModel(engine);
             System.out.println("loaded the s2dm trailer model: " + triples + " triples"
-                    + " (skos.ttl + data_graph.ttl as exported, plus supplement.ttl)");
+                    + " (skos.ttl + data_graph.ttl as exported, plus supplement.ttl and units.ttl)");
 
             DataStream wheels = engine.createStream("Wheels");
 
@@ -194,25 +201,49 @@ public class TrailerHealthMonitor {
                     """;
             engine.registerCqelsQuery(alarms, row -> System.out.println("  [ALARM] " + brief(row)));
 
-            // 3 — lowest tire pressure per trailer and axle over the last 10 s, counting only
-            // readings sent in the unit the schema declares for the field (from supplement.ttl).
+            // 3 — lowest tire pressure per trailer and axle over the last 10 s, in the unit the
+            // schema declares for the field (supplement.ttl): a reading sent in another unit is
+            // converted with the factor units.ttl derives from QUDT; one with no conversion is
+            // left out.
             String lowest = PREFIXES + """
                     REGISTER QUERY LowestPressure AS
-                    SELECT ?trailer ?axle (MIN(?p) AS ?lowest) (COUNT(*) AS ?readings)
+                    SELECT ?trailer ?axle (MIN(?inDeclared) AS ?lowest) (COUNT(*) AS ?readings)
                     FROM STREAM Wheels [RANGE 10s]
                     WHERE {
                       STREAM Wheels {
                         ?r ex:field trailer:TrailerWheelTire.pressure ; ex:trailer ?trailer ;
-                           ex:axle ?axle ; ex:unit ?unit ; sosa:hasSimpleResult ?p .
+                           ex:axle ?axle ; ex:unit ?sent ; sosa:hasSimpleResult ?p .
                       }
-                      trailer:TrailerWheelTire.pressure s2x:defaultUnit ?unit .
+                      trailer:TrailerWheelTire.pressure s2x:defaultUnit ?declared .
+                      ?sent s2x:conversion ?c .
+                      ?c s2x:to ?declared ; s2x:factor ?f ; s2x:offset ?o .
+                      BIND(?p * ?f + ?o AS ?inDeclared)
                     }
                     GROUP BY ?trailer ?axle
                     """;
             engine.registerCqelsQuery(lowest, row -> System.out.println("  [lowest] " + brief(row)));
 
-            // 4 — a reading sent in a different unit from the one the schema declares for its
-            // field, with the field's own description (both from supplement.ttl).
+            // 4a — a reading sent in another unit than its field declares, converted.
+            String converted = PREFIXES + """
+                    REGISTER QUERY UnitConverted AS
+                    SELECT ?trailer ?axle ?side ?field ?value ?sent ?inDeclared ?declared
+                    FROM STREAM Wheels [TRIPLES 1]
+                    WHERE {
+                      STREAM Wheels {
+                        ?r ex:field ?field ; ex:trailer ?trailer ; ex:axle ?axle ; ex:side ?side ;
+                           ex:unit ?sent ; sosa:hasSimpleResult ?value .
+                      }
+                      ?field s2x:defaultUnit ?declared .
+                      ?sent s2x:conversion ?c .
+                      ?c s2x:to ?declared ; s2x:factor ?f ; s2x:offset ?o .
+                      FILTER(?sent != ?declared)
+                      BIND(?value * ?f + ?o AS ?inDeclared)
+                    }
+                    """;
+            engine.registerCqelsQuery(converted, row -> System.out.println("  [CONVERTED] " + brief(row)));
+
+            // 4b — a reading in a unit that does not convert to its field's declared unit, with the
+            // field's own description (supplement.ttl).
             String units = PREFIXES + """
                     REGISTER QUERY UnitMismatch AS
                     SELECT ?vehicle ?trailer ?axle ?side ?field ?value ?sent ?declared ?about
@@ -224,7 +255,8 @@ public class TrailerHealthMonitor {
                            sosa:hasSimpleResult ?value .
                       }
                       ?field s2x:defaultUnit ?declared ; skos:definition ?about .
-                      FILTER(?sent != ?declared)
+                      OPTIONAL { ?sent s2x:conversion ?c . ?c s2x:to ?declared . }
+                      FILTER(!BOUND(?c))
                     }
                     """;
             engine.registerCqelsQuery(units, row -> System.out.println("  [UNIT] " + brief(row)));
@@ -266,12 +298,19 @@ public class TrailerHealthMonitor {
                     "_1ST", null, VF.createLiteral(true));
             Thread.sleep(700);
 
-            // A gateway that reports pressure in PSI. 32 is a low number in kPa; counted as kPa it
-            // would become trailer 1 axle 2's [lowest]. The schema says kPa, so it is flagged
-            // instead and LowestPressure leaves it out.
+            // A gateway that reports pressure in PSI. 32 PSI is 220.6 kPa: converted with QUDT's
+            // factor, it becomes trailer 1 axle 2's lowest pressure, which a reading taken as kPa
+            // (32) or left out (455) would both have got wrong.
             System.out.println("\npush: trailer 1, axle 2, left — tire pressure 32 PSI   (the schema"
-                    + " declares kPa: [UNIT], and not counted in [lowest])");
+                    + " declares kPa: [CONVERTED] to 220.6 kPa, and the new [lowest])");
             push(wheels, truck, TIRE_PRESSURE, "TRAILER_1", "POSITION_2", "LEFT", "_1ST", PSI, VF.createLiteral(32));
+            Thread.sleep(700);
+
+            // A pressure sent in percent: no conversion to kPa exists (another dimension), so it is
+            // flagged and left out of [lowest].
+            System.out.println("\npush: trailer 1, axle 3, left — tire pressure 85 PERCENT   (no conversion"
+                    + " to kPa: [UNIT], and not counted in [lowest])");
+            push(wheels, truck, TIRE_PRESSURE, "TRAILER_1", "POSITION_3", "LEFT", "_1ST", PERCENT, VF.createLiteral(85));
             Thread.sleep(700);
 
             System.out.println("\npush: trailer 2, axle 1, left — tire pressure 598 kPa");
@@ -289,7 +328,7 @@ public class TrailerHealthMonitor {
     /** Load the two exported Turtle files and the supplement into the engine's static store. */
     static long loadModel(CQELSEngine engine) throws IOException {
         try (RepositoryConnection conn = engine.getRepository().getConnection()) {
-            for (String file : List.of("skos.ttl", "data_graph.ttl", "supplement.ttl")) {
+            for (String file : List.of("skos.ttl", "data_graph.ttl", "supplement.ttl", "units.ttl")) {
                 try (InputStream in = TrailerHealthMonitor.class
                         .getResourceAsStream("/s2dm/trailer/" + file)) {
                     if (in == null) {

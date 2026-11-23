@@ -38,11 +38,11 @@ Everything below was measured against s2dm commit
 (`examples/trailer/full_schema.graphl`) and writes the result to
 [`examples/src/main/resources/s2dm/trailer/`](examples/src/main/resources/s2dm/trailer/). Two
 of the files there, `skos.ttl` and `data_graph.ttl`, are committed exactly as s2dm wrote them. The
-third, `supplement.ttl`, is not s2dm output: the same script writes it with this repository's own
-extraction (§6).
+other two are not s2dm output: the same script writes `supplement.ttl` and `units.ttl` with this
+repository's own extractions (§6).
 
 s2dm runs in Docker ([`scripts/s2dm/Dockerfile`](scripts/s2dm/Dockerfile)). Fetching the pinned
-s2dm commit and building the image need network access. The export itself runs in a throwaway
+s2dm commit and the pinned QUDT release, and building the image, need network access. The export itself runs in a throwaway
 container with no network, a read-only root filesystem, the caller's uid, and only the input
 schema (read-only) and the output folder mounted.
 
@@ -113,7 +113,7 @@ The `s2dm:` terms live at `https://covesa.global/models/s2dm#`. The concepts liv
 ## 4. The worked example
 
 [`TrailerHealthMonitor`](examples/src/main/java/org/cqels/examples/s2dm/TrailerHealthMonitor.java)
-loads both exported files and the supplement (§6) as background data and streams wheel readings
+loads both exported files, the supplement and the unit conversions (§6) as background data and streams wheel readings
 from a truck with trailers. Each reading is one atomic element: the s2dm field it reports, the
 vehicle, the value, the four instance tags the schema declares for a wheel (trailer; and axle,
 side and position from the outside in, which tells twin tires apart), and, for a field with a
@@ -124,8 +124,9 @@ That encoding is the demo's own: s2dm defines the model, not an RDF form for ins
 |---|---|---|
 | `PlacedReading` | the field's owning type, the slot that type fills, the slot's owner, and the owning type's definition | a tire pressure reading is placed as `VehicleTrailerWheel.tire` → `TrailerWheelTire`, "Tire signals for wheel."; a brake reading as `VehicleTrailerWheel.brake` → `TrailerWheelBrake` |
 | `BooleanAlarm` | which fields return `s2dm:Boolean` | `isPressureLow = true` and `isBrakesWorn = true` raise alarms; `isBrakesWorn = false` and numeric readings do not; none of the three boolean fields is named in the query. This treats every `true` boolean as an alarm, which holds for this schema's three boolean fields; a boolean where `true` is good news (an `isHealthy`) would raise a false alarm |
-| `LowestPressure` | the unit the schema declares for tire pressure (supplement) | lowest tire pressure per trailer and axle over 10 s, counting only readings sent in kPa: trailer 1 axle 2 stays at 455 kPa after a 32 PSI reading arrives for it |
-| `UnitMismatch` | each field's declared unit and its description (supplement) | the 32 PSI reading is flagged against `KILOPASCAL`, with "Tire pressure in kilo-Pascal."; readings in kPa or percent, and booleans (no unit), are not |
+| `LowestPressure` | the unit the schema declares for tire pressure (supplement), and the conversion from the sender's unit (`units.ttl`) | lowest tire pressure per trailer and axle over 10 s, in kPa. The 32 PSI reading is converted to 220.63 kPa and becomes trailer 1 axle 2's lowest, below the inner twin's 455 kPa. Read as kPa it would have shown 32; left out, the lowest would have stayed 455. A pressure sent in percent has no conversion and is not counted |
+| `UnitConverted` | each field's declared unit, and the conversion from the sender's unit | the 32 PSI reading, as 220.63223338138755 `KILOPASCAL`; readings already in their field's unit are not listed |
+| `UnitMismatch` | each field's declared unit and its description (supplement); whether a conversion exists (`units.ttl`) | the tire pressure sent as 85 `PERCENT` is flagged against `KILOPASCAL`, with "Tire pressure in kilo-Pascal."; readings in kPa or PSI, the brake wear in percent (its field's unit), and booleans (no unit) are not |
 
 One reading is deliberately wrong: `TrailerWheelTire.isPresureLow = true`, a misspelled field. It
 produces neither a placement nor an alarm, because the model does not contain that field. With
@@ -135,7 +136,7 @@ what rejects it, not the filter on the value.
 ## 5. What the export does not carry
 
 - **Units.** The export drops field arguments, so `unit: Pressure_Unit_Enum = KILOPASCAL` is lost.
-  A query cannot convert or check units from the RDF.
+  A query cannot convert or check units from the RDF; §6 supplies both.
 - **`@range`.** Not exported. A range check (reading outside min/max) has nothing to join
   against. (The trailer schema declares the directive but uses it on no field.)
 - **Which fields are instance tags.** `@instanceTag` is not exported, so a query cannot ask the
@@ -162,7 +163,9 @@ in the shape of the older SKOS exporter, over a vocabulary partly taken from s2d
 Units, `@range` and instances are written by other s2dm exporters (§2, item 3), but none of
 those accepts the trailer schema at this commit. §6 takes them from the schema instead.
 
-## 6. Filling the gaps: `supplement.ttl`
+## 6. Filling the gaps: `supplement.ttl` and `units.ttl`
+
+### 6.1 `supplement.ttl`
 
 The export is not the only thing that can read the schema. [`scripts/s2dm/supplement.py`](scripts/s2dm/supplement.py)
 parses the same GraphQL file with graphql-core, inside the same container and also offline, and
@@ -182,18 +185,59 @@ supplement joins `skos.ttl` and `data_graph.ttl` with no mapping. For the traile
 
 What it is not:
 
-- **Not s2dm's semantics.** It reads GraphQL syntax. It does not check the schema, merge several
-  files, or know s2dm's unit catalogue (QUDT); a unit is just the enum value the schema wrote.
+- **Not s2dm's semantics.** It reads GraphQL syntax. It does not check the schema or merge several
+  files; a unit is just the enum value the schema wrote (`units.ttl` links it to QUDT).
 - **A default, not a fixed unit.** In s2dm the unit is a field argument, so a client may ask for
-  the value in another unit. `UnitMismatch` treats the default as the unit a reading must be in
-  when it is streamed, which is this demo's rule. The schema carries no conversion factors, so
-  the demo flags a reading in another unit rather than converting it.
+  the value in another unit. The demo treats the default as the unit a reading is compared in:
+  `LowestPressure` converts every reading to it, and `UnitMismatch` flags a reading that cannot
+  be converted. That is this demo's rule.
 - **Instance tags as written.** The trailer schema puts `@instanceTag` on the fields that hold the
   tags; s2dm's current check wants it on the type those fields return, which is why the VSPEC,
   LinkML and JSON Schema exporters reject the schema (§2, item 3). The supplement records the
   marking where the schema put it. No query in the demo reads it yet.
 
 If a later s2dm export carries any of these, that part of the supplement should go.
+
+### 6.2 `units.ttl`: converting with QUDT
+
+The schema names units as enum values (`POUNDS_PER_SQUARE_INCH`) with no factors.
+[`scripts/s2dm/units.py`](scripts/s2dm/units.py) links them to [QUDT](https://qudt.org/), the unit
+vocabulary s2dm itself builds on (`s2dm units sync` generates unit enums from QUDT, each value
+marked `@reference(uri: "http://qudt.org/vocab/unit/...")`), and derives the conversions. It runs
+in the same container, offline, on the QUDT units file of a pinned release (v3.5.3, CC BY 4.0).
+
+How a value is linked to a QUDT unit, in order:
+1. an `@reference(uri: ...)` on the value, as s2dm's current unit enums carry (the trailer
+   schema's enums predate them and have none);
+2. a table in the script, for names that are not a QUDT label: `POUNDS_PER_SQUARE_INCH` → `PSI`,
+   `INCH` → `IN` (the label "Inch" is also QUDT's `ZOLL`), `POUND` → `LB`,
+   `RADIANS_PER_SECOND` → `RAD-PER-SEC`, `METERS_PER_SECOND` → `M-PER-SEC`;
+3. otherwise, the QUDT unit whose label, upper-cased with spaces as `_`, is the value's name
+   (`KILOPASCAL` is "Kilopascal"), skipping deprecated units.
+
+For the trailer schema, 21 of the 23 values of its unit enums are linked. `RATIO` and
+`NANO_METER_PER_KILOMETER` have no QUDT unit by these rules and get no link.
+
+What the file holds:
+- each link, `trailer:Pressure_Unit_Enum.KILOPASCAL s2x:qudtUnit unit:KiloPA`;
+- what QUDT says about each linked unit, copied as published: label, conversion multiplier and
+  offset, quantity kinds and dimension vector;
+- 65 conversions, `[ s2x:to <unit> ; s2x:factor f ; s2x:offset o ]`. A value v in the first unit
+  is `v * f + o` in the second.
+
+Rules for the conversions:
+- **Identity.** Every enum value converts to itself (factor 1), linked or not.
+- **Between two values,** a conversion exists only if both are linked to units with the same
+  dimension vector, a shared quantity kind, and a non-zero multiplier. The dimension vector alone
+  would let percent convert to decibels, both dimensionless. QUDT gives the decibel, a
+  logarithmic unit, the multiplier 0.
+- **Arithmetic.** The factors are computed in decimal arithmetic from QUDT's multipliers and
+  offsets, rounded to QUDT's 34 significant digits (`POUNDS_PER_SQUARE_INCH` → `KILOPASCAL` is
+  6.894757293168361336722673445346887). The engine then multiplies in double precision, so
+  32 PSI comes out as 220.63223338138755 kPa.
+
+What it is not: s2dm's own linking. A schema built on s2dm's QUDT-generated enums would carry the
+`@reference` links itself, and only step 1 would apply.
 
 ## 7. CQELS limits this runs into
 
@@ -219,7 +263,8 @@ scripts/s2dm/export-trailer.sh
 docker rmi cqels4j-s2dm:d97b449
 ```
 
-The first command needs `git` and `docker` and rewrites the three files in
-`examples/src/main/resources/s2dm/trailer/`. The second removes the image afterwards. To move to a
+The first command needs `git`, `curl` and `docker` and rewrites the four files in
+`examples/src/main/resources/s2dm/trailer/`. QUDT's release is pinned by `QUDT_TAG` in the same
+script. The second removes the image afterwards. To move to a
 newer s2dm, change `S2DM_COMMIT` in the script, re-run it, and re-check §2–§6 against the new
 output.

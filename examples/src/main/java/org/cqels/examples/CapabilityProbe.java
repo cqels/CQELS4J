@@ -146,6 +146,10 @@ public class CapabilityProbe {
         capability("CypherQL: FROM STREAM before MATCH registers; MATCH first is a syntax error",
                 cypherClauseOrder());
         capability("warm parse-cache ASP backend reachable via registerQuery", warmBackendReachable());
+        capability("BIND arithmetic over a static join feeds a windowed MIN (TrailerHealthMonitor unit conversion)",
+                convertedValueFeedsWindowedMin());
+        capability("OPTIONAL over static data with FILTER(!BOUND) keeps only unmatched elements (TrailerHealthMonitor UnitMismatch)",
+                optionalStaticUnboundFilter());
 
         System.out.println("\n" + "-".repeat(72));
         if (DIVERGENCES.isEmpty()) {
@@ -1456,6 +1460,77 @@ public class CapabilityProbe {
             """.formatted(C, C),
                 s -> s.pushTriple(C + "o1", C + "of", C + "a"));
         return exactRows(rows, List.of(row("o", iri("o1"), "label", "Alpha")));
+    }
+
+    /** One atomic element from (predicate local name, object) pairs about {@code C + subject}. */
+    private static List<Statement> element(String subject, Object... po) {
+        List<Statement> statements = new ArrayList<>();
+        for (int i = 0; i < po.length; i += 2) {
+            org.eclipse.rdf4j.model.Value o = po[i + 1] instanceof Number n
+                    ? VF.createLiteral(n.toString(), org.eclipse.rdf4j.model.vocabulary.XSD.INTEGER)
+                    : VF.createIRI(C + po[i + 1]);
+            statements.add(VF.createStatement(VF.createIRI(C + subject), VF.createIRI(C + po[i]), o));
+        }
+        return statements;
+    }
+
+    /** A static conversion (blank node: to, factor, offset) from unit {@code from} to {@code to}. */
+    private static void addConversion(RepositoryConnection conn, String from, String to, String factor, String offset) {
+        org.eclipse.rdf4j.model.BNode c = VF.createBNode();
+        conn.add(VF.createIRI(C + from), VF.createIRI(C + "conversion"), c);
+        conn.add(c, VF.createIRI(C + "to"), VF.createIRI(C + to));
+        conn.add(c, VF.createIRI(C + "factor"), VF.createLiteral(new java.math.BigDecimal(factor)));
+        conn.add(c, VF.createIRI(C + "offset"), VF.createLiteral(new java.math.BigDecimal(offset)));
+    }
+
+    /**
+     * What TrailerHealthMonitor's LowestPressure relies on: each element's value converted with a
+     * factor and offset found by a static join, then MIN per group over a [RANGE] window. 4 in u1
+     * is 4 * 2.5 + 1 = 11 in u2, below the 20 sent in u2, so the last report must be MIN 11 over 2.
+     */
+    private static boolean convertedValueFeedsWindowedMin() throws Exception {
+        List<Object> rows = run(engine -> {
+            try (RepositoryConnection conn = engine.getRepository().getConnection()) {
+                addConversion(conn, "u1", "u2", "2.5", "1.0");
+                addConversion(conn, "u2", "u2", "1.0", "0.0");
+            }
+        }, """
+            SELECT ?g (MIN(?x) AS ?lowest) (COUNT(*) AS ?n) FROM STREAM S [RANGE 10s]
+            WHERE { STREAM S { ?r <%1$sval> ?v ; <%1$sunit> ?u ; <%1$sgrp> ?g . }
+                    ?u <%1$sconversion> ?c . ?c <%1$sto> <%1$su2> ; <%1$sfactor> ?f ; <%1$soffset> ?o .
+                    BIND(?v * ?f + ?o AS ?x) }
+            GROUP BY ?g
+            """.formatted(C),
+                s -> {
+                    s.push(element("r1", "val", 20, "unit", "u2", "grp", "g"));
+                    Thread.sleep(300);
+                    s.push(element("r2", "val", 4, "unit", "u1", "grp", "g"));
+                });
+        return !rows.isEmpty() && exactRows(List.of(rows.get(rows.size() - 1)),
+                List.of(row("g", iri("g"), "lowest", num(11.0), "n", num(2))));
+    }
+
+    /**
+     * What TrailerHealthMonitor's UnitMismatch relies on: OPTIONAL over the static store, then
+     * FILTER(!BOUND) keeps only the element with no conversion (r2's unit u3), not r1's (u1).
+     */
+    private static boolean optionalStaticUnboundFilter() throws Exception {
+        List<Object> rows = run(engine -> {
+            try (RepositoryConnection conn = engine.getRepository().getConnection()) {
+                addConversion(conn, "u1", "u2", "2.5", "1.0");
+            }
+        }, """
+            SELECT ?r FROM STREAM S [TRIPLES 1]
+            WHERE { STREAM S { ?r <%1$sunit> ?u ; <%1$swant> ?w . }
+                    OPTIONAL { ?u <%1$sconversion> ?c . ?c <%1$sto> ?w . }
+                    FILTER(!BOUND(?c)) }
+            """.formatted(C),
+                s -> {
+                    s.push(element("r1", "unit", "u1", "want", "u2"));
+                    Thread.sleep(300);
+                    s.push(element("r2", "unit", "u3", "want", "u2"));
+                });
+        return exactRows(rows, List.of(row("r", iri("r2"))));
     }
 
     private static boolean builtinsWork() throws Exception {
