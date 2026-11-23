@@ -81,8 +81,9 @@ def conversion(m_from, o_from, m_to, o_to):
 
 def check_convention(qudt):
     """Fail unless conversion() on QUDT's own degC, degF and K facts gives 0 degC = 32 degF,
-    32 degF = 0 degC and 0 degC = 273.15 K, so neither a change in QUDT's convention nor a slip in
-    conversion() can pass silently."""
+    32 degF = 0 degC, 0 degC = 273.15 K and 373.15 K = 212 degF, so neither a change in QUDT's
+    convention nor a slip in conversion() can pass silently. It checks conversion() only, not the
+    code in main() that reads the facts and passes them to it."""
     def facts(unit):
         m = Decimal(str(next(qudt.objects(URIRef(UNIT + unit), QUDT.conversionMultiplier))))
         o = Decimal(str(next(qudt.objects(URIRef(UNIT + unit), QUDT.conversionOffset), Literal("0"))))

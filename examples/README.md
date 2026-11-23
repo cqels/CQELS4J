@@ -202,7 +202,7 @@ fields that the export drops, read from the same schema by this repository's
 enum values linked to QUDT units with the conversions between them
 ([`scripts/s2dm/units.py`](../scripts/s2dm/units.py)).
 [S2DM_MAPPING.md](../S2DM_MAPPING.md) explains what the export contains, what it leaves out, and
-what the supplement adds.
+what the supplement and `units.ttl` add.
 
 | Class | CQELS feature | Scenario |
 |-------|---------------|----------|

@@ -32,11 +32,12 @@ import org.eclipse.rdf4j.rio.RDFFormat;
  * They are committed exactly as the tool wrote them; {@code scripts/s2dm/export-trailer.sh}
  * regenerates them in Docker. Nothing in them is hand-written, which is the difference from the
  * {@code org.cqels.examples.cdsp.S2dm*} demos, whose concept graph is hand-built in the
- * exporter's shape. Next to them, {@code supplement.ttl} is <em>not</em> s2dm output: the same
- * script writes it with this repository's {@code scripts/s2dm/supplement.py}, which reads the same
- * schema for what the export drops (see below).
+ * exporter's shape. Next to them, {@code supplement.ttl} and {@code units.ttl} are <em>not</em>
+ * s2dm output: the same script writes them with this repository's
+ * {@code scripts/s2dm/supplement.py}, which reads the same schema for what the export drops, and
+ * {@code scripts/s2dm/units.py}, which links the schema's units to QUDT (see below).
  *
- * <p>The two files describe the <em>schema</em>, not any vehicle:
+ * <p>The four files describe the <em>schema</em> and its units, not any vehicle:
  * <ul>
  *   <li>{@code data_graph.ttl} — each GraphQL type ({@code s2dm:ObjectType}), its fields
  *       ({@code s2dm:hasField}), what each field returns ({@code s2dm:hasOutputType}: another

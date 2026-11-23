@@ -233,6 +233,9 @@ What the file holds:
 
 Rules for the conversions:
 - **Identity.** Every enum value converts to itself (factor 1), linked or not.
+- **Dimensionless ratios** all convert into each other: `PERCENT`, `RATIO` and
+  `NANO_METER_PER_KILOMETER` share QUDT's `DimensionlessRatio`. A brake-wear reading declared in
+  percent but sent in nm/km is therefore converted (by 10⁻¹⁰), not flagged.
 - **Between two values,** a conversion exists only if both are linked to units with the same
   dimension vector, a shared quantity kind, and a non-zero multiplier. The dimension vector alone
   would let percent convert to decibels, both dimensionless. QUDT gives the decibel, a
@@ -241,8 +244,8 @@ Rules for the conversions:
   the SI unit (32 °F is `(32 + 459.67) * 5/9` = 273.15 K). So `f = m_from / m_to` and
   `o = o_from * m_from / m_to - o_to`, written in one function. The script refuses to run unless
   that function, applied to QUDT's own °C, °F and K, gives 0 °C → 32 °F, 32 °F → 0 °C,
-  0 °C → 273.15 K and 373.15 K → 212 °F: a slip in the formula or a change in QUDT's convention
-  stops it. Only the trailer's °C enum has an offset, so its
+  0 °C → 273.15 K and 373.15 K → 212 °F: a slip in that function or a change in QUDT's
+  convention stops it. (It does not check the code that reads QUDT's facts and passes them in.) Only the trailer's °C enum has an offset, so its
   file does not exercise this; a toy schema with °C, °F and K gives 0 °C → 32 °F and 32 °F → 0 °C.
 - **Arithmetic.** The factors are computed in decimal arithmetic from QUDT's multipliers and
   offsets, rounded to QUDT's 34 significant digits (`POUNDS_PER_SQUARE_INCH` → `KILOPASCAL` is
@@ -277,7 +280,7 @@ docker rmi cqels4j-s2dm:d97b449
 ```
 
 The first command needs `git`, `curl` and `docker` and rewrites the four files in
-`examples/src/main/resources/s2dm/trailer/`. QUDT's release is pinned by `QUDT_TAG` in the same
-script. The second removes the image afterwards. To move to a
+`examples/src/main/resources/s2dm/trailer/`. QUDT's release is pinned by `QUDT_TAG` and the
+downloaded file's `QUDT_SHA256` in the same script; to move to another release, change both. The second removes the image afterwards. To move to a
 newer s2dm, change `S2DM_COMMIT` in the script, re-run it, and re-check §2–§6 against the new
 output.
