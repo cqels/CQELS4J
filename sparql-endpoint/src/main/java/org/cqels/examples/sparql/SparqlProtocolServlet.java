@@ -1985,21 +1985,32 @@ public final class SparqlProtocolServlet extends HttpServlet {
 
     /**
      * {@code text} with every {@code PREFIX} declaration of its leading prologue blanked out that
-     * a later one in the same prologue declares again, so the last declaration of a prefix wins —
-     * what Jena and Virtuoso do. RDF4J refuses the request instead ("Multiple prefix declarations
-     * for prefix"), and rdflib's {@code SPARQLStore} prepends some 30 namespaces to every query,
-     * so a query declaring {@code skos:} itself was a 400 from here and a 200 elsewhere (cqels/CQELS4J#115).
+     * a later one in the same prologue declares again, so the last declaration of a prefix wins.
      *
-     * <p>Only the prologue is read, and only as far as it is plain: whitespace, {@code #}
-     * comments, {@code BASE <iri>} and {@code PREFIX name: <iri>}, keywords in any case. At the
-     * first token that is anything else — the query's form, or a declaration it cannot read with
-     * certainty (a comment inside one, say) — the scan stops, and what it has not read is left to
-     * RDF4J as it was. Removing an earlier declaration changes no meaning: every use of a prefix
-     * comes after the whole prologue, where the last declaration is the one in force, and a
-     * {@code BASE} between them resolves the kept declaration's IRI as before. A blanked
-     * declaration becomes spaces, its line breaks kept, so the line and column RDF4J reports
-     * for a later error are still those of the request. In an update, only the prologue before
-     * the first operation is read.
+     * <p><strong>A deliberate leniency.</strong> SPARQL 1.1 Query §19.5 says a prefix "may not be
+     * re-declared in the same query", and RDF4J refuses it ("Multiple prefix declarations for
+     * prefix"); Jena and Virtuoso accept it, the last declaration winning. rdflib's
+     * {@code SPARQLStore} prepends some 30 namespaces to every query, so a query declaring
+     * {@code skos:} itself was a 400 here and a 200 there (cqels/CQELS4J#115). This endpoint sides
+     * with Jena for that case.
+     *
+     * <p><strong>Only what it reads with certainty.</strong> Only the leading prologue is read,
+     * and only while it follows the grammar exactly: whitespace as SPARQL defines it (space, tab,
+     * CR, LF), {@code #} comments ending at CR or LF (§19.4), {@code BASE} and {@code PREFIX} in
+     * any ASCII case, prefix names of ASCII PN_PREFIX characters, and IRIREFs without the
+     * characters production [139] excludes. At the first token that is anything else — the query's
+     * form, or a declaration it cannot read so — the scan stops, and what it has not read is left
+     * to RDF4J as it was; so it never turns text RDF4J would refuse as malformed into text it
+     * accepts (found in the Opus co-review of #135: a comment ended by a bare CR ran the scan into
+     * a string literal and blanked part of it; Unicode spaces, a dotless ı and {@code { }} inside
+     * an IRI were read as if valid).
+     *
+     * <p>Removing an earlier declaration changes no other meaning: every use of a prefix comes
+     * after the whole prologue, where the last declaration is the one in force, and a {@code BASE}
+     * between them resolves the kept declaration's IRI as before. A blanked declaration becomes
+     * spaces, its line breaks kept, so the line and column RDF4J reports for a later error are
+     * those of the request. In an update, only the prologue before the first operation is read.
+     * One pass, linear in the text: it runs inside a query slot, before any execution limit.
      */
     static String withoutRepeatedPrefixes(String text) {
         int n = text.length();
@@ -2008,30 +2019,30 @@ public final class SparqlProtocolServlet extends HttpServlet {
         int i = 0;
         while (i < n) {
             char c = text.charAt(i);
-            if (Character.isWhitespace(c)) {
+            if (sparqlSpace(c)) {
                 i++;
             } else if (c == '#') {
-                int end = text.indexOf('\n', i);
-                if (end < 0) {
+                int end = i + 1;
+                while (end < n && text.charAt(end) != '\n' && text.charAt(end) != '\r') {
+                    end++;
+                }
+                if (end >= n) {
                     break;
                 }
-                i = end + 1;
-            } else if (prologueKeyword(text, i, "BASE")) {
+                i = end;
+            } else if (prologueKeyword(text, i, "base")) {
                 int end = iriRef(text, i + 4);
                 if (end < 0) {
                     break;
                 }
                 i = end;
-            } else if (prologueKeyword(text, i, "PREFIX")) {
+            } else if (prologueKeyword(text, i, "prefix")) {
                 int j = i + 6;
-                while (j < n && Character.isWhitespace(text.charAt(j))) {
+                while (j < n && sparqlSpace(text.charAt(j))) {
                     j++;
                 }
-                int colon = j;
-                while (colon < n && text.charAt(colon) != ':' && pnChar(text.charAt(colon))) {
-                    colon++;
-                }
-                if (colon >= n || text.charAt(colon) != ':') {
+                int colon = text.indexOf(':', j);
+                if (colon < 0 || !pnPrefix(text, j, colon)) {
                     break;
                 }
                 int end = iriRef(text, colon + 1);
@@ -2045,12 +2056,18 @@ public final class SparqlProtocolServlet extends HttpServlet {
                 break;
             }
         }
-        char[] out = null;
+        // one pass: the last declaration of each name, then every other one blanked (a list
+        // searched per declaration took 4.4 s for a 1 MB body of declarations — Opus co-review of #135)
+        Map<String, Integer> last = new java.util.HashMap<>();
         for (int k = 0; k < names.size(); k++) {
-            if (names.subList(k + 1, names.size()).contains(names.get(k))) {
-                if (out == null) {
-                    out = text.toCharArray();
-                }
+            last.put(names.get(k), k);
+        }
+        if (last.size() == names.size()) {
+            return text;
+        }
+        char[] out = text.toCharArray();
+        for (int k = 0; k < names.size(); k++) {
+            if (last.get(names.get(k)) != k) {
                 for (int p = spans.get(k)[0]; p < spans.get(k)[1]; p++) {
                     if (out[p] != '\n' && out[p] != '\r') {
                         out[p] = ' ';
@@ -2058,29 +2075,67 @@ public final class SparqlProtocolServlet extends HttpServlet {
                 }
             }
         }
-        return out == null ? text : new String(out);
+        return new String(out);
     }
 
-    /** Whether {@code word} starts at {@code at}, in any case, and is not the start of a longer name. */
-    private static boolean prologueKeyword(String text, int at, String word) {
-        int end = at + word.length();
-        return text.regionMatches(true, at, word, 0, word.length())
-                && end < text.length() && Character.isWhitespace(text.charAt(end));
-    }
-
-    /** A character a prefix name may hold (PN_CHARS and '.', loosely): not space, not punctuation that ends it. */
-    private static boolean pnChar(char c) {
-        return !Character.isWhitespace(c) && c != '#' && c != '<' && c != '>' && c != '{' && c != '"' && c != '\'';
+    /** SPARQL's whitespace (§19.8, WS): space, tab, CR, LF — nothing else Java calls whitespace. */
+    private static boolean sparqlSpace(char c) {
+        return c == ' ' || c == '\t' || c == '\r' || c == '\n';
     }
 
     /**
-     * The index just past an {@code IRIREF} that follows {@code from} after whitespace only, or
-     * {@code -1} when there is none to read with certainty. An IRIREF holds no space, '<' or '>'.
+     * Whether {@code lower} (ASCII lowercase letters) starts at {@code at} in any ASCII case and
+     * is followed by SPARQL whitespace. Not {@code regionMatches(true, …)}: that folds U+0131 (ı)
+     * to {@code I}, and read {@code PREFıX} as the keyword.
+     */
+    private static boolean prologueKeyword(String text, int at, String lower) {
+        int end = at + lower.length();
+        if (end >= text.length()) {
+            return false;
+        }
+        for (int k = 0; k < lower.length(); k++) {
+            char c = text.charAt(at + k);
+            if (c > 0x7F || (c | 0x20) != lower.charAt(k)) {
+                return false;
+            }
+        }
+        return sparqlSpace(text.charAt(end));
+    }
+
+    /**
+     * Whether {@code text[from, to)} is a prefix name this scan reads with certainty: empty (the
+     * default prefix), or PN_PREFIX in ASCII — a letter, then letters, digits, '_', '-' or '.',
+     * not ending in '.'. A name outside that stops the scan; RDF4J judges it.
+     */
+    private static boolean pnPrefix(String text, int from, int to) {
+        if (from == to) {
+            return true;
+        }
+        if (!asciiLetter(text.charAt(from)) || text.charAt(to - 1) == '.') {
+            return false;
+        }
+        for (int k = from + 1; k < to; k++) {
+            char c = text.charAt(k);
+            if (!(asciiLetter(c) || (c >= '0' && c <= '9') || c == '_' || c == '-' || c == '.')) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean asciiLetter(char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+    }
+
+    /**
+     * The index just past an IRIREF that follows {@code from} after SPARQL whitespace only, or
+     * {@code -1} when there is none to read with certainty: production [139] excludes
+     * {@code <>"{}|^`\} and everything up to U+0020 from it.
      */
     private static int iriRef(String text, int from) {
         int n = text.length();
         int i = from;
-        while (i < n && Character.isWhitespace(text.charAt(i))) {
+        while (i < n && sparqlSpace(text.charAt(i))) {
             i++;
         }
         if (i >= n || text.charAt(i) != '<') {
@@ -2091,7 +2146,7 @@ public final class SparqlProtocolServlet extends HttpServlet {
             if (c == '>') {
                 return j + 1;
             }
-            if (c == '<' || c <= ' ') {
+            if (c <= ' ' || "<\"{}|^`\\".indexOf(c) >= 0) {
                 return -1;
             }
         }

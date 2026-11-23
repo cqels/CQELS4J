@@ -3635,6 +3635,49 @@ class SparqlProtocolServletTest {
         assertSame(update, SparqlProtocolServlet.withoutRepeatedPrefixes(update), "only the first operation's prologue");
     }
 
+    /**
+     * The scan reads the prologue by the grammar, never more loosely (found in the Opus co-review
+     * of #135): a comment ends at CR as well as LF, so it cannot run on into a string literal;
+     * and Unicode spaces, a dotless ı in a keyword, a non-ASCII prefix name or a character IRIREF
+     * excludes stop it, leaving RDF4J to refuse what is malformed.
+     */
+    @Test
+    void thePrologueScanFollowsTheGrammar() {
+        // a bare CR ends the comment: the body begins there, and its literal is never touched
+        String literal = "#c\rSELECT ?x WHERE { ?x <urn:p> \"\"\"\nPREFIX a: <urn:a> PREFIX a: <urn:b>\"\"\" }";
+        assertSame(literal, SparqlProtocolServlet.withoutRepeatedPrefixes(literal));
+        assertEquals("#c\r                 \rPREFIX a: <urn:b>\rASK {}",
+                SparqlProtocolServlet.withoutRepeatedPrefixes("#c\rPREFIX a: <urn:a>\rPREFIX a: <urn:b>\rASK {}"));
+        for (String loose : List.of(
+                "PREFIX\u2028a: <urn:a>\nPREFIX a: <urn:b>\nASK {}",
+                "PREFIX a:\u3000<urn:a>\nPREFIX a: <urn:b>\nASK {}",
+                "PREF\u0131X a: <urn:a>\nPREFIX a: <urn:b>\nASK {}",
+                "PREFIX a: <urn:{x}>\nPREFIX a: <urn:b>\nASK {}",
+                "PREFIX a: <urn:a b>\nPREFIX a: <urn:b>\nASK {}",
+                "PREFIX \u00e9: <urn:a>\nPREFIX \u00e9: <urn:b>\nASK {}",
+                "PREFIX a.: <urn:a>\nPREFIX a.: <urn:b>\nASK {}")) {
+            assertSame(loose, SparqlProtocolServlet.withoutRepeatedPrefixes(loose), loose);
+        }
+        // and what the scan does rewrite, RDF4J then accepts
+        org.eclipse.rdf4j.query.parser.QueryParserUtil.parseQuery(org.eclipse.rdf4j.query.QueryLanguage.SPARQL,
+                SparqlProtocolServlet.withoutRepeatedPrefixes("prefix ex-1.b: <urn:a>\tPREFIX ex-1.b: <urn:b> ASK { ex-1.b:x ?p ?o }"), null);
+    }
+
+    /** One pass: a 1 MB body of declarations took 4.4 s, in a query slot, when each was searched for again. */
+    @Test
+    void thePrologueScanIsLinear() {
+        StringBuilder q = new StringBuilder();
+        for (int i = 0; i < 150_000; i++) {
+            q.append("PREFIX p").append(i).append(": <urn:x>\n");
+        }
+        q.append("PREFIX p0: <urn:y>\nASK {}");
+        long t0 = System.nanoTime();
+        String out = SparqlProtocolServlet.withoutRepeatedPrefixes(q.toString());
+        long millis = (System.nanoTime() - t0) / 1_000_000;
+        assertTrue(out.startsWith(" ".repeat("PREFIX p0: <urn:x>".length()) + "\n"), "the first p0 is blanked");
+        assertTrue(millis < 2_000, "150,000 declarations took " + millis + " ms");
+    }
+
     @SuppressWarnings("unused")
     private static void silence(IOException ignored) { }
 }
