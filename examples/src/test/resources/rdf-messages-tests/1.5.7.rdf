@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rdfm:MessageLog xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:rdfm="https://w3c-cg.github.io/rsp/spec/messages#" xmlns:ex="http://example.org/">
+  <rdf:RDF>
+    <rdf:Description rdf:about="http://example.org/s">
+      <ex:p rdf:resource="http://example.org/o"/>
+    </rdf:Description>
+  </rdf:RDF>
+</rdfm:MessageLog>

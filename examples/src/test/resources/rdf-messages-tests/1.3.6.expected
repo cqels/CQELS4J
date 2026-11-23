@@ -1,0 +1,8 @@
+Message 1:
+  <http://example.org/s> <http://example.org/one/p> <http://example.org/o> .
+
+Message 2:
+  <http://example.org/s> <http://example.org/two/p> <http://example.org/o> .
+
+Message 3:
+  <http://example.org/s> <http://example.org/one/p> <http://example.org/o> .

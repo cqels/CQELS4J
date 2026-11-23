@@ -1,0 +1,4 @@
+{"@context": "https://schema.org/"}
+{"@type": "Product", "name": "Hairdryer DRY 2000", "color": "red"}
+{"@context": "https://example.org/other-vocab/"}
+{"@type": "OtherType", "name": "Piotr"}

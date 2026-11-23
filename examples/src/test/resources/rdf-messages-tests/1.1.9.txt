@@ -1,0 +1,4 @@
+VERSION "1.2-messages"
+_:b0 <http://example.org/p> <http://example.org/o1> .
+MESSAGE
+_:b0 <http://example.org/p> <http://example.org/o2> .

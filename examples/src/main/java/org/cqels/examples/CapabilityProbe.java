@@ -17,6 +17,7 @@ import org.cqels.reasoning.TripleTemplate;
 import org.cqels.reasoning.config.ReasoningConfig;
 import org.cqels.reasoning.engine.ReactiveReteAdapter;
 import org.cqels.stream.StreamElement;
+import org.cqels.stream.codec.RdfMessageCodec;
 import org.eclipse.rdf4j.model.IRI;
 import org.eclipse.rdf4j.model.Literal;
 import org.eclipse.rdf4j.model.Statement;
@@ -100,6 +101,24 @@ public class CapabilityProbe {
         knownBug("     a static UNION drops every row when its join variable is not projected",
                 unionWithUnprojectedJoinVariable(), "0 rows", "1 row",
                 "CQELS-QL_SPEC.md §9 UNION entry, GETTING_STARTED.md limitations table");
+        knownBug("#126 RdfMessageCodec rejects MESSAGE followed by a comment on the same line",
+                codecMessageWithComment(), "rejected", "2 messages",
+                "RdfMessageLog.java (MESSAGE_WITH_COMMENT workaround and Javadoc), RDF_MESSAGES_MAPPING.md §3");
+        knownBug("#126 RdfMessageCodec opens an empty message for a comment-only line after the last MESSAGE",
+                codecCommentAfterLastDelimiter(), "[1, 0]", "[1]",
+                "RdfMessageLog.java (COMMENT_ONLY_LINE workaround and Javadoc), RDF_MESSAGES_MAPPING.md §3");
+        knownBug("#126 RdfMessageCodec.writeNQuads drops a trailing empty message on re-reading",
+                codecTrailingEmptyMessage(), "[1]", "[1, 0]",
+                "RdfMessageLog.java (writeNQuads workaround and Javadoc), RDF_MESSAGES_MAPPING.md §3");
+        knownBug("#133 RdfMessageCodec cannot parse an RDF 1.2 triple term under VERSION \"1.2-messages\"",
+                codecTripleTerm(), "rejected", "1 triple term",
+                "RdfMessageLog.java, JsonLdMessageLog.java, RdfXmlMessageLog.java (#133 refusals), RDF_MESSAGES_MAPPING.md §3 and §6");
+        knownBug("#133 the engine's Turtle parser reads << s p o >> as an RDF-star quoted triple, not an RDF 1.2 reifier",
+                turtleReifiedTriple(), "quoted triple", "reifier",
+                "RdfMessageLog.java (#133 refusal of <<), RDF_MESSAGES_MAPPING.md §3 and §6");
+        knownBug("#125 GRAPH inside a STREAM block is refused at registration",
+                graphInsideStream(), "refused", "registered",
+                "MessageLogReplay.java Javadoc, RDF_MESSAGES_MAPPING.md §3-§4");
         caveat("#58 reasoner cannot match the background graph",
                 reasonerSeesBackgroundGraph(),
                 "SkosConceptRollup.java, CDSP_MAPPING.md §5, GETTING_STARTED.md limitations table");
@@ -146,6 +165,8 @@ public class CapabilityProbe {
         capability("CypherQL: FROM STREAM before MATCH registers; MATCH first is a syntax error",
                 cypherClauseOrder());
         capability("warm parse-cache ASP backend reachable via registerQuery", warmBackendReachable());
+        capability("RdfMessageCodec: empty messages, per-message blank nodes, quad graph names kept",
+                codecMessageSemantics());
         capability("BIND arithmetic over two static joins feeds a windowed MIN (TrailerHealthMonitor unit conversion)",
                 convertedValueFeedsWindowedMin());
         capability("OPTIONAL over static data with FILTER(!BOUND) keeps only unmatched elements (TrailerHealthMonitor UnitMismatch)",
@@ -205,6 +226,126 @@ public class CapabilityProbe {
             System.out.println("  REGRESSED  " + name);
             DIVERGENCES.add("REGRESSED — " + name + "\n      the examples relying on this no longer work");
         }
+    }
+
+    // ---- RDF Messages (org.cqels.examples.messages) --------------------------------------
+
+    private static final String MSG_V = "VERSION \"1.2-messages\"\n";
+    private static final String MSG_T = "<https://example.org/probe#s> <https://example.org/probe#p> \"1\" .\n";
+
+    /**
+     * #126: "rejected" when the codec fails on two triples split by {@code MESSAGE # c} with the
+     * documented parse error, else how many messages it read. The same document without the comment
+     * is the control: it must read as 2 messages, or the verdict means nothing.
+     */
+    private static String codecMessageWithComment() {
+        try {
+            int control = RdfMessageCodec.parseNQuads(MSG_V + MSG_T + "MESSAGE\n" + MSG_T).size();
+            if (control != 2) {
+                return "control read " + control + " messages, not 2";
+            }
+        } catch (RuntimeException e) {
+            return "control failed: " + e;
+        }
+        try {
+            return RdfMessageCodec.parseNQuads(MSG_V + MSG_T + "MESSAGE # c\n" + MSG_T).size() + " messages";
+        } catch (org.eclipse.rdf4j.rio.RDFParseException e) {
+            return String.valueOf(e.getMessage()).contains("found: M") ? "rejected" : "other parse error: " + e.getMessage();
+        } catch (RuntimeException e) {
+            return "unexpected " + e;
+        }
+    }
+
+    /** #126: the message sizes the codec reads from one triple, MESSAGE, then a comment-only line. */
+    private static String codecCommentAfterLastDelimiter() {
+        return RdfMessageCodec.parseNQuads(MSG_V + MSG_T + "MESSAGE\n# tail\n").stream()
+                .map(List::size).toList().toString();
+    }
+
+    /** #126: the message sizes read back after writing [one triple, empty]. */
+    private static String codecTrailingEmptyMessage() {
+        Statement t = VF.createStatement(iri("s"), iri("p"), VF.createLiteral("1"));
+        List<List<Statement>> back = RdfMessageCodec.parseNQuads(
+                RdfMessageCodec.writeNQuads(List.of(List.of(t), List.of())));
+        return back.stream().map(List::size).toList().toString();
+    }
+
+    /**
+     * #133: "rejected" when the codec fails on a triple term with a parse error, "1 triple term" when
+     * it reads one message whose object is a triple term. The same document with an IRI object is
+     * the control.
+     */
+    private static String codecTripleTerm() {
+        String head = MSG_V + "<https://example.org/probe#s> <https://example.org/probe#p> ";
+        try {
+            if (RdfMessageCodec.parseNQuads(head + "<https://example.org/probe#o> .\n").size() != 1) {
+                return "control did not read 1 message";
+            }
+        } catch (RuntimeException e) {
+            return "control failed: " + e;
+        }
+        try {
+            List<List<Statement>> m = RdfMessageCodec.parseNQuads(head
+                    + "<<( <https://example.org/probe#a> <https://example.org/probe#b> <https://example.org/probe#c> )>> .\n");
+            return m.size() == 1 && m.get(0).size() == 1 && m.get(0).get(0).getObject() instanceof org.eclipse.rdf4j.model.Triple
+                    ? "1 triple term" : "read as " + m;
+        } catch (org.eclipse.rdf4j.rio.RDFParseException e) {
+            return "rejected";
+        } catch (RuntimeException e) {
+            return "unexpected " + e;
+        }
+    }
+
+    /**
+     * #133: how the engine's RDF4J Turtle parser reads {@code << ex:a ex:b ex:c >> ex:p ex:o}:
+     * "quoted triple" when the subject is the triple itself (RDF-star), "reifier" when the subject is
+     * a node that rdf:reifies the triple (RDF 1.2).
+     */
+    private static String turtleReifiedTriple() {
+        try {
+            org.eclipse.rdf4j.model.Model m = org.eclipse.rdf4j.rio.Rio.parse(new java.io.StringReader(
+                    "PREFIX ex: <https://example.org/probe#>\n<< ex:a ex:b ex:c >> ex:p ex:o .\n"),
+                    "", org.eclipse.rdf4j.rio.RDFFormat.TURTLE);
+            boolean reifies = m.stream().anyMatch(st -> st.getPredicate().stringValue()
+                    .equals("http://www.w3.org/1999/02/22-rdf-syntax-ns#reifies"));
+            boolean quoted = m.size() == 1 && m.iterator().next().getSubject() instanceof org.eclipse.rdf4j.model.Triple;
+            return reifies ? "reifier" : quoted ? "quoted triple" : "read as " + m;
+        } catch (Exception e) {
+            return "unexpected " + e;
+        }
+    }
+
+    /** #125: "refused" when GRAPH inside STREAM fails to register for that reason, else "registered". */
+    private static String graphInsideStream() throws Exception {
+        try (CQELSEngine engine = CQELSEngine.builder().id("probe-" + System.nanoTime()).withMemoryStore().build()) {
+            engine.createStream("S");
+            try {
+                engine.registerCqelsQuery(withRegister("""
+                        SELECT ?g ?o FROM STREAM S [NOW]
+                        WHERE { STREAM S { GRAPH ?g { ?s <%sp> ?o } } }
+                        """.formatted(C)), r -> { });
+                return "registered";
+            } catch (Exception e) {
+                String m = String.valueOf(e.getMessage());
+                return m.contains("GRAPH") ? "refused" : "refused for another reason: " + m;
+            }
+        }
+    }
+
+    /**
+     * What the messages demo relies on from the engine codec: an empty message, blank nodes scoped
+     * per message, and a quad's graph name kept.
+     */
+    private static boolean codecMessageSemantics() {
+        boolean empty = RdfMessageCodec.parseNQuads(MSG_V + "MESSAGE\n" + MSG_T).stream()
+                .map(List::size).toList().equals(List.of(0, 1));
+        List<List<Statement>> bn = RdfMessageCodec.parseNQuads(MSG_V
+                + "_:x <https://example.org/probe#p> \"1\" .\nMESSAGE\n_:x <https://example.org/probe#p> \"2\" .\n");
+        boolean scoped = bn.size() == 2 && !bn.get(0).get(0).getSubject().equals(bn.get(1).get(0).getSubject());
+        List<List<Statement>> q = RdfMessageCodec.parseNQuads(MSG_V + "<https://example.org/probe#s> "
+                + "<https://example.org/probe#p> <https://example.org/probe#o> <https://example.org/probe#g> .\n");
+        boolean graph = iri("g").equals(q.get(0).get(0).getContext());
+        return empty && scoped && graph;
     }
 
     // ---- caveat probes -------------------------------------------------------------------

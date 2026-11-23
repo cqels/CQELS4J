@@ -1,0 +1,2 @@
+VERSION "1.2-messages"
+<http://example.org/s1> <http://example.org/p> <http://example.org/o1> .

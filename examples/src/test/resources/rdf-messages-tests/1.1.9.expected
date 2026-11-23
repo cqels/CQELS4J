@@ -1,0 +1,3 @@
+Message 1 contains one quad whose subject is a blank node.
+Message 2 contains one quad whose subject is a blank node.
+The two blank nodes must not be the same RDF term.

@@ -1,0 +1,47 @@
+VERSION "1.2-messages"
+# An RDF Message Log (W3C RSP CG "RDF Messages", 22 October 2026 draft) in Turtle: cabin
+# temperature readings from two buses. Read by org.cqels.examples.messages.MessageLogReplay.
+#
+# Things this log exercises on purpose:
+#  - the first message describes the stream itself, as in the draft's §1.6 example;
+#  - every observation's result is the blank node _:r, the SAME label in every message, which
+#    is legal because blank nodes are scoped to their message (§1.6);
+#  - one empty message, a heartbeat with no readings;
+#  - a comment after a delimiter;
+#  - a repeated PREFIX: from the second bus on, ex: means another depot's namespace (§2.1.3).
+PREFIX ex:   <https://example.org/fleet/depot-a/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX sosa: <http://www.w3.org/ns/sosa/>
+PREFIX qudt: <http://qudt.org/schema/qudt/>
+PREFIX unit: <http://qudt.org/vocab/unit/>
+PREFIX xsd:  <http://www.w3.org/2001/XMLSchema#>
+
+ex:cabin-log a ex:MessageLog ;
+    rdfs:comment "Cabin temperature readings, one sosa:Observation per message" .
+MESSAGE
+ex:obs-1 a sosa:Observation ;
+    sosa:madeBySensor ex:bus-17-front ;
+    sosa:resultTime "2026-11-16T08:00:00Z"^^xsd:dateTime ;
+    sosa:hasResult _:r .
+_:r qudt:value 21.5 ; qudt:hasUnit unit:DEG_C .
+MESSAGE
+ex:obs-2 a sosa:Observation ;
+    sosa:madeBySensor ex:bus-17-rear ;
+    sosa:resultTime "2026-11-16T08:00:05Z"^^xsd:dateTime ;
+    sosa:hasResult _:r .
+_:r qudt:value 24.0 ; qudt:hasUnit unit:DEG_C .
+MESSAGE # an empty message follows: a heartbeat, no reading
+MESSAGE
+ex:obs-3 a sosa:Observation ;
+    sosa:madeBySensor ex:bus-17-front ;
+    sosa:resultTime "2026-11-16T08:00:10Z"^^xsd:dateTime ;
+    sosa:hasResult _:r .
+_:r qudt:value 22.5 ; qudt:hasUnit unit:DEG_C .
+MESSAGE
+PREFIX ex: <https://example.org/fleet/depot-b/>
+ex:obs-1 a sosa:Observation ;
+    sosa:madeBySensor ex:bus-40-front ;
+    sosa:resultTime "2026-11-16T08:00:12Z"^^xsd:dateTime ;
+    sosa:hasResult _:r .
+_:r qudt:value 19.0 ; qudt:hasUnit unit:DEG_C .
+MESSAGE

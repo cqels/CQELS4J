@@ -1,0 +1,6 @@
+@version "1.2-messages" .
+@prefix ex: <http://example.org/> .
+
+ex:s1 ex:p ex:o1 .
+@message .
+ex:s2 ex:p ex:o2 .

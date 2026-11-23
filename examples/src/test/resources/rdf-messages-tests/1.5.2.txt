@@ -1,0 +1,3 @@
+VERSION "1.2-messages"
+<http://example.org/s> <http://example.org/p> <http://example.org/o> .
+@message <http://example.org/invalid>
