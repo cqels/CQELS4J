@@ -68,8 +68,9 @@ import org.eclipse.rdf4j.rio.Rio;
  * every graph (characters XML 1.0 forbids, an ill-formed {@code rdf:XMLLiteral}, {@code rdf:li},
  * which reads back as {@code rdf:_1}, a predicate with no XML name), and RDF4J writes some of these
  * anyway. The comparison is linear (see {@link #sameUpToBlankNodeNames}). {@code rdf:version}, an
- * RDF 1.2 XML syntax term, is refused as a predicate by the writer and as a property element by
- * the reader.
+ * RDF 1.2 XML syntax term, is refused as a predicate by the writer, and by the reader as an
+ * element and as an attribute anywhere but {@code <rdf:RDF>} (RDF4J would read the attribute as a
+ * triple).
  *
  * <p>Note that each message is handed to a fresh RDF4J parser; the log itself is read once, as
  * one continuous stream, which is what the companion tests ask for.
@@ -300,9 +301,11 @@ public final class RdfXmlMessageLog {
      * writer renames them. A full isomorphism check takes factorial time on alike blank nodes (eight
      * {@code [] a ex:Heartbeat} took 20 s), so this compares, in linear time, the statements with
      * blank nodes masked, the number of blank nodes, and each blank node's masked neighbourhood. It
-     * would miss two blank nodes swapping places within an identical neighbourhood, which the
-     * writer does not do; it catches a changed predicate, value or literal, and a split or merged
-     * blank node.
+     * is not an isomorphism test: it misses any rewiring that leaves every blank node's one-step
+     * neighbourhood the same (a ring of six against two rings of three). The RDF4J 4.3.8 writer's
+     * only change to blank-node structure is merging two nodes whose IDs it mangles to the same
+     * name, which lowers the blank-node count and is caught; it catches a changed predicate,
+     * value or literal too.
      */
     static boolean sameUpToBlankNodeNames(Collection<Statement> original, Collection<Statement> back) {
         return original.size() == back.size()
@@ -371,8 +374,13 @@ public final class RdfXmlMessageLog {
 
     private static void refuseRdf12(StartElement element, int n) {
         if (element.getName().equals(RDF_VERSION)) {
-            throw new IllegalArgumentException("message " + n + " uses rdf:version as a property element at "
+            throw new IllegalArgumentException("message " + n + " uses rdf:version as an element at "
                     + where(element) + "; RDF 1.2 XML makes it a syntax term, not a property");
+        }
+        if (!element.getName().equals(RDF_RDF) && element.getAttributeByName(RDF_VERSION) != null) {
+            throw new IllegalArgumentException("message " + n + " has an rdf:version attribute at "
+                    + where(element) + ", which RDF 1.2 reads as a version announcement and RDF4J 4.3.8"
+                    + " as an extra rdf:version triple (#133)");
         }
         Attribute parseType = element.getAttributeByName(RDF_PARSE_TYPE);
         String found = parseType != null && parseType.getValue().equals("Triple") ? "rdf:parseType=\"Triple\""

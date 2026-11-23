@@ -234,5 +234,18 @@ class RdfXmlMessageLogTest {
         assertThrows(IllegalArgumentException.class, () -> RdfXmlMessageLog.write(List.of(List.of(st)), Map.of()));
         assertThrows(IllegalArgumentException.class, () -> xml("", message(
                 "<rdf:Description rdf:about=\"http://example.org/s\"><rdf:version>1.2</rdf:version></rdf:Description>")));
+        // as an attribute of a node element, RDF4J would read it as a triple
+        for (String inner : List.of(
+                "<rdf:Description rdf:about=\"http://example.org/s\" rdf:version=\"1.2\"><ex:p>v</ex:p></rdf:Description>",
+                "<ex:T rdf:about=\"http://example.org/s\" rdf:version=\"1.2\"/>",
+                "<rdf:Description rdf:about=\"http://example.org/s\"><ex:p><rdf:Description rdf:version=\"1.2\"/></ex:p></rdf:Description>")) {
+            assertThrows(IllegalArgumentException.class, () -> xml("", message(inner)), inner);
+        }
+        // on the message's own rdf:RDF it announces a version and gives no triple; inside an XML
+        // literal it is just XML
+        assertEquals(List.of(1), xml("", "<rdf:RDF rdf:version=\"1.2\"><rdf:Description rdf:about=\"http://example.org/s\">"
+                + "<ex:p>v</ex:p></rdf:Description></rdf:RDF>").stream().map(List::size).toList());
+        assertEquals(1, xml("", message("<rdf:Description rdf:about=\"http://example.org/s\"><ex:p rdf:parseType=\"Literal\">"
+                + "<b rdf:version=\"1.2\"/></ex:p></rdf:Description>")).get(0).size());
     }
 }

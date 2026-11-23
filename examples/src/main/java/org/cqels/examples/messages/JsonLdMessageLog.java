@@ -444,7 +444,7 @@ public final class JsonLdMessageLog {
      */
     static void refuseJsonLd11(JsonNode node, String where) {
         // Jackson reads 1e400 as a double Infinity, which it would write back as the string
-        // "Infinity"; integers of any length are kept exactly and are fine
+        // "Infinity"; integers are kept exactly (up to Jackson's 1000 digits)
         if (node.isDouble() && !Double.isFinite(node.doubleValue())) {
             throw new IllegalArgumentException(where + " holds the number " + node.asText()
                     + ", beyond the range of xsd:double");

@@ -190,22 +190,29 @@ document. The draft leaves some questions open; the choices made here are:
     and a property-valued `@index`. The check reads keys without the context. It therefore also
     refuses such a keyword when it is the key of an index map, where JSON-LD 1.0 would read it as
     data.
-  - **Read with the 1.0 meaning, without an error.** Input that 1.0 and 1.1 read differently,
-    measured against Titanium, a JSON-LD 1.1 processor:
+  - **Read with the 1.0 meaning, without an error.** Examples of input that 1.0 and 1.1 read
+    differently, measured against Titanium, a JSON-LD 1.1 processor (the list is not complete):
     - any term works as a prefix of a compact IRI. In 1.1, a term does so only if it is
       defined as a plain string ending in a gen-delim such as `/` or `#`, or has
       `"@prefix": true`. So `"ex": "http://example.org/ns"`, or an expanded definition
       `"ex": {"@id": "http://example.org/ns#"}`, makes `ex:foo` `http://example.org/nsfoo`
-      here, and leaves it `ex:foo` in 1.1;
-    - redefining a term that is itself a compact IRI is accepted (1.1: an error);
+      or `http://example.org/ns#foo` here, and leaves it `ex:foo` in 1.1;
+    - redefining a term that is itself a compact IRI, to an IRI other than its own expansion, is
+      accepted (1.1: an error);
     - an `@id` of `"@foo"` (keyword-like) becomes an IRI (1.1: dropped);
     - a JSON number written with a fraction or an exponent but with a whole value below
       10²¹ (`1.0`, `1e2`, `1.5e2`) becomes `xsd:double` (1.1: `xsd:integer`);
     - an integer of 10²¹ or more (`123456789012345678901234567890`) becomes `xsd:integer`
-      (1.1: `xsd:double`).
+      (1.1: `xsd:double`);
+    - a number that is not whole but rounds to a whole double (`1.000000000000000000001`,
+      `1e-400`) becomes `xsd:double` (1.1: `xsd:integer`);
+    - a double's lexical form: `0.30000000000000004` becomes `"3.0000000000000004E-1"` (1.1:
+      `"3.0E-1"`, 16 digits, a different value);
+    - a typed number keeps its JSON spelling: `{"@value": 1.0, "@type": "xsd:decimal"}` gives
+      `"1.0"` (1.1: `"1"`).
   - **Numbers.** Otherwise every number is typed exactly as RDF4J types it read directly. A
     floating-point number beyond `xsd:double` (`1e400`) is refused rather than read as the string
-    "Infinity"; an integer of any length is kept.
+    "Infinity"; an integer is kept exactly, up to Jackson's 1000 digits (see below).
 - **Invalid IRIs.** An `@id` with characters IRIs do not allow (`s t`) is percent-encoded, as RDF4J
   does. The writers refuse such IRIs instead.
 - **Line size.** Jackson's limits apply to a line: 20 million characters in a string, nesting depth
@@ -250,11 +257,15 @@ normalisation leave them as they were.
   So the writer reads each message back and refuses it unless it is the same. The comparison runs
   in linear time: the statements with blank nodes masked, the number of blank nodes, and each
   blank node's masked neighbourhood. A full graph-isomorphism check would take factorial time on
-  alike blank nodes (eight took 20 s). RDF4J renames blank nodes but does not rewire them, so the
-  only change this comparison can miss is one the writer does not make.
-- **`rdf:version`** is refused as a predicate (writer) and as a property element (reader). RDF 1.2
-  XML makes it a syntax term, and a log that announces `1.2-messages` should be valid RDF 1.2;
-  RDF4J 4.3.8 would write and read it as an ordinary property.
+  alike blank nodes (eight took 20 s). The comparison is not an isomorphism test: it would miss a
+  rewiring that leaves each blank node's one-step neighbourhood the same. The RDF4J 4.3.8 writer's
+  only change to blank-node structure is merging two blank nodes whose IDs it mangles to the same
+  name, which lowers the blank-node count, and the comparison refuses that. A review fuzzed
+  100,000 messages against an exact isomorphism check and found no wrong acceptance.
+- **`rdf:version`** is refused as a predicate (writer), and by the reader as an element and as an
+  attribute anywhere but `<rdf:RDF>`. RDF 1.2 XML makes it a syntax term; RDF4J 4.3.8 would read
+  `<rdf:Description rdf:version="1.2">` as an extra `rdf:version` triple, and write and read the
+  predicate as an ordinary property.
 
 ### 4.5 Server-Sent Events
 
