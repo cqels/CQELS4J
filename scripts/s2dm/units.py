@@ -12,7 +12,8 @@ For each value V of such an enum:
   - else V is matched against the labels of the QUDT units, upper-cased with every run of other
     characters turned into "_" ("Kilopascal" -> KILOPASCAL, "Degree Celsius" -> DEGREE_CELSIUS),
     skipping units QUDT marks deprecated; when several units match, only those QUDT gives the
-    quantity kind named by the enum (Pressure_Unit_Enum -> quantitykind:Pressure) are kept;
+    quantity kind named by the enum (Length_Unit_Enum -> quantitykind:Length) are kept, and if
+    that does not leave exactly one, the value gets no link;
   - a value left with no unit, or with more than one, gets no link and is reported on stderr.
 
 Output, sorted so that a re-run gives the same file:
@@ -22,8 +23,9 @@ Output, sorted so that a re-run gives the same file:
   <ns>Enum.X s2x:conversion [ s2x:to <ns>Enum.Y ; s2x:factor f ; s2x:offset o ] .
                                                           (derived here; v in X is f * v + o in Y)
 
-QUDT's convention: a value v in unit U is m_U * v + o_U in the SI unit of its quantity kind (an
-offset QUDT does not state is 0). So v in X is v * m_X / m_Y + (o_X - o_Y) / m_Y in Y, computed
+QUDT's convention: a value v in unit U is (v + o_U) * m_U in the SI unit of its quantity kind
+(an offset QUDT does not state is 0): 32 degF is (32 + 459.67) * 5/9 = 273.15 K. So v in X is
+v * m_X / m_Y + o_X * m_X / m_Y - o_Y in Y, computed
 here in decimal arithmetic and rounded to 34 significant digits, QUDT's own precision.
 
 Every value of a unit enum converts to itself (factor 1, offset 0), linked or not: a reading in
@@ -62,11 +64,24 @@ OVERRIDES = {
     "POUND": "LB",                       # QUDT: "Pound Mass"
     "RADIANS_PER_SECOND": "RAD-PER-SEC",  # QUDT: "Radian per Second"
     "METERS_PER_SECOND": "M-PER-SEC",    # QUDT: "Metre per Second"
+    "RATIO": "FRACTION",                 # a dimensionless ratio, 0.5 for one half
 }
 
 
 def normalise(label):
     return re.sub(r"[^A-Z0-9]+", "_", label.upper()).strip("_")
+
+
+def check_convention(qudt):
+    """Fail unless QUDT's own degC, degF and K facts give 0 degC = 32 degF = 273.15 K under the
+    convention above, so a change of convention (or a slip here) cannot pass silently."""
+    def si(unit, v):
+        m = Decimal(str(next(qudt.objects(URIRef(UNIT + unit), QUDT.conversionMultiplier))))
+        o = Decimal(str(next(qudt.objects(URIRef(UNIT + unit), QUDT.conversionOffset), Literal("0"))))
+        return (Decimal(v) + o) * m
+    for unit, v in (("DEG_C", "0"), ("DEG_F", "32"), ("K", "273.15")):
+        if abs(si(unit, v) - Decimal("273.15")) > Decimal("1e-20"):
+            sys.exit(f"QUDT convention check failed: {v} {unit} is {si(unit, v)} K, not 273.15")
 
 
 def decimal(d):
@@ -148,6 +163,7 @@ def main(schema_path, ns, qudt_path, qudt_tag, out_path):
                 set(qudt.objects(unit, QUDT.hasDimensionVector)), set(qudt.objects(unit, QUDT.unitForQuantityKind)))
 
     getcontext().prec = 34
+    check_convention(qudt)
     conversions = 0
     for enum_name in sorted(enums):
         for value in enums[enum_name].values or ():
@@ -161,7 +177,7 @@ def main(schema_path, ns, qudt_path, qudt_tag, out_path):
             if x == y or not mx or not my or not (dx & dy) or not (kx & ky):
                 continue
             factor = mx / my
-            offset = (ox - oy) / my
+            offset = ox * mx / my - oy
             lines.append(f"<{ns}{x}> s2x:conversion [ s2x:to <{ns}{y}> ; s2x:factor {decimal(factor)} ;"
                          f" s2x:offset {decimal(offset)} ] .")
             conversions += 1

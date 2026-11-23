@@ -50,6 +50,45 @@ PREFIX s2x: <https://example.org/s2dm/supplement#>
 <http://qudt.org/vocab/unit/DeciB> <http://qudt.org/schema/qudt/unitForQuantityKind> <http://qudt.org/vocab/quantitykind/SoundReductionIndex> .
 <http://qudt.org/vocab/unit/DeciB> <http://www.w3.org/2000/01/rdf-schema#label> "Decibel" .
 <http://qudt.org/vocab/unit/DeciB> <http://www.w3.org/2000/01/rdf-schema#label> "Decibel"@en .
+<http://qudt.org/vocab/unit/FRACTION> <http://qudt.org/schema/qudt/conversionMultiplier> "1.0"^^<http://www.w3.org/2001/XMLSchema#decimal> .
+<http://qudt.org/vocab/unit/FRACTION> <http://qudt.org/schema/qudt/hasDimensionVector> <http://qudt.org/vocab/dimensionvector/A0E0L0I0M0H0T0D1> .
+<http://qudt.org/vocab/unit/FRACTION> <http://qudt.org/schema/qudt/unitForQuantityKind> <http://qudt.org/vocab/quantitykind/BioconcentrationFactor> .
+<http://qudt.org/vocab/unit/FRACTION> <http://qudt.org/schema/qudt/unitForQuantityKind> <http://qudt.org/vocab/quantitykind/CoefficientOfPerformance> .
+<http://qudt.org/vocab/unit/FRACTION> <http://qudt.org/schema/qudt/unitForQuantityKind> <http://qudt.org/vocab/quantitykind/CompressibilityFactor> .
+<http://qudt.org/vocab/unit/FRACTION> <http://qudt.org/schema/qudt/unitForQuantityKind> <http://qudt.org/vocab/quantitykind/DimensionlessRatio> .
+<http://qudt.org/vocab/unit/FRACTION> <http://qudt.org/schema/qudt/unitForQuantityKind> <http://qudt.org/vocab/quantitykind/DutyCycle> .
+<http://qudt.org/vocab/unit/FRACTION> <http://qudt.org/schema/qudt/unitForQuantityKind> <http://qudt.org/vocab/quantitykind/EccentricityOfOrbit> .
+<http://qudt.org/vocab/unit/FRACTION> <http://qudt.org/schema/qudt/unitForQuantityKind> <http://qudt.org/vocab/quantitykind/Efficiency> .
+<http://qudt.org/vocab/unit/FRACTION> <http://qudt.org/schema/qudt/unitForQuantityKind> <http://qudt.org/vocab/quantitykind/FissionCoreRadiusToHeightRatio> .
+<http://qudt.org/vocab/unit/FRACTION> <http://qudt.org/schema/qudt/unitForQuantityKind> <http://qudt.org/vocab/quantitykind/FrictionCoefficient> .
+<http://qudt.org/vocab/unit/FRACTION> <http://qudt.org/schema/qudt/unitForQuantityKind> <http://qudt.org/vocab/quantitykind/Gain> .
+<http://qudt.org/vocab/unit/FRACTION> <http://qudt.org/schema/qudt/unitForQuantityKind> <http://qudt.org/vocab/quantitykind/HeatCapacityRatio> .
+<http://qudt.org/vocab/unit/FRACTION> <http://qudt.org/schema/qudt/unitForQuantityKind> <http://qudt.org/vocab/quantitykind/IncidenceProportion> .
+<http://qudt.org/vocab/unit/FRACTION> <http://qudt.org/schema/qudt/unitForQuantityKind> <http://qudt.org/vocab/quantitykind/LengthRatio> .
+<http://qudt.org/vocab/unit/FRACTION> <http://qudt.org/schema/qudt/unitForQuantityKind> <http://qudt.org/vocab/quantitykind/MassFraction> .
+<http://qudt.org/vocab/unit/FRACTION> <http://qudt.org/schema/qudt/unitForQuantityKind> <http://qudt.org/vocab/quantitykind/MassRatio> .
+<http://qudt.org/vocab/unit/FRACTION> <http://qudt.org/schema/qudt/unitForQuantityKind> <http://qudt.org/vocab/quantitykind/MoleFraction> .
+<http://qudt.org/vocab/unit/FRACTION> <http://qudt.org/schema/qudt/unitForQuantityKind> <http://qudt.org/vocab/quantitykind/OpeningRatio> .
+<http://qudt.org/vocab/unit/FRACTION> <http://qudt.org/schema/qudt/unitForQuantityKind> <http://qudt.org/vocab/quantitykind/PayloadRatio> .
+<http://qudt.org/vocab/unit/FRACTION> <http://qudt.org/schema/qudt/unitForQuantityKind> <http://qudt.org/vocab/quantitykind/Reflectance> .
+<http://qudt.org/vocab/unit/FRACTION> <http://qudt.org/schema/qudt/unitForQuantityKind> <http://qudt.org/vocab/quantitykind/RelativeAtomicMass> .
+<http://qudt.org/vocab/unit/FRACTION> <http://qudt.org/schema/qudt/unitForQuantityKind> <http://qudt.org/vocab/quantitykind/RelativeMassDefect> .
+<http://qudt.org/vocab/unit/FRACTION> <http://qudt.org/schema/qudt/unitForQuantityKind> <http://qudt.org/vocab/quantitykind/RelativeMolecularMass> .
+<http://qudt.org/vocab/unit/FRACTION> <http://qudt.org/schema/qudt/unitForQuantityKind> <http://qudt.org/vocab/quantitykind/ServiceFactor> .
+<http://qudt.org/vocab/unit/FRACTION> <http://qudt.org/schema/qudt/unitForQuantityKind> <http://qudt.org/vocab/quantitykind/SignalDetectionThreshold> .
+<http://qudt.org/vocab/unit/FRACTION> <http://qudt.org/schema/qudt/unitForQuantityKind> <http://qudt.org/vocab/quantitykind/SpecificHeatsRatio> .
+<http://qudt.org/vocab/unit/FRACTION> <http://qudt.org/schema/qudt/unitForQuantityKind> <http://qudt.org/vocab/quantitykind/SpectralLuminousEfficiency> .
+<http://qudt.org/vocab/unit/FRACTION> <http://qudt.org/schema/qudt/unitForQuantityKind> <http://qudt.org/vocab/quantitykind/SpeedRatio> .
+<http://qudt.org/vocab/unit/FRACTION> <http://qudt.org/schema/qudt/unitForQuantityKind> <http://qudt.org/vocab/quantitykind/StateOfCharge> .
+<http://qudt.org/vocab/unit/FRACTION> <http://qudt.org/schema/qudt/unitForQuantityKind> <http://qudt.org/vocab/quantitykind/ThermalEfficiency> .
+<http://qudt.org/vocab/unit/FRACTION> <http://qudt.org/schema/qudt/unitForQuantityKind> <http://qudt.org/vocab/quantitykind/ThrustCoefficient> .
+<http://qudt.org/vocab/unit/FRACTION> <http://qudt.org/schema/qudt/unitForQuantityKind> <http://qudt.org/vocab/quantitykind/ThrustToWeightRatio> .
+<http://qudt.org/vocab/unit/FRACTION> <http://qudt.org/schema/qudt/unitForQuantityKind> <http://qudt.org/vocab/quantitykind/Transmittance> .
+<http://qudt.org/vocab/unit/FRACTION> <http://qudt.org/schema/qudt/unitForQuantityKind> <http://qudt.org/vocab/quantitykind/VoltageImbalance> .
+<http://qudt.org/vocab/unit/FRACTION> <http://qudt.org/schema/qudt/unitForQuantityKind> <http://qudt.org/vocab/quantitykind/VolumeFlowRatio> .
+<http://qudt.org/vocab/unit/FRACTION> <http://qudt.org/schema/qudt/unitForQuantityKind> <http://qudt.org/vocab/quantitykind/VolumeStrain> .
+<http://qudt.org/vocab/unit/FRACTION> <http://www.w3.org/2000/01/rdf-schema#label> "Fraction" .
+<http://qudt.org/vocab/unit/FRACTION> <http://www.w3.org/2000/01/rdf-schema#label> "Fraction"@en .
 <http://qudt.org/vocab/unit/GM> <http://qudt.org/schema/qudt/conversionMultiplier> "0.001"^^<http://www.w3.org/2001/XMLSchema#decimal> .
 <http://qudt.org/vocab/unit/GM> <http://qudt.org/schema/qudt/hasDimensionVector> <http://qudt.org/vocab/dimensionvector/A0E0L0I0M1H0T0D0> .
 <http://qudt.org/vocab/unit/GM> <http://qudt.org/schema/qudt/unitForQuantityKind> <http://qudt.org/vocab/quantitykind/Mass> .
@@ -254,8 +293,11 @@ PREFIX s2x: <https://example.org/s2dm/supplement#>
 <https://example.org/s2dm/trailer#Relation_Unit_Enum.DECIBEL_MILLIWATT> s2x:qudtUnit <http://qudt.org/vocab/unit/DeciB-MilliW> .
 <https://example.org/s2dm/trailer#Relation_Unit_Enum.NANO_METER_PER_KILOMETER> s2x:conversion [ s2x:to <https://example.org/s2dm/trailer#Relation_Unit_Enum.NANO_METER_PER_KILOMETER> ; s2x:factor 1.0 ; s2x:offset 0.0 ] .
 <https://example.org/s2dm/trailer#Relation_Unit_Enum.PERCENT> s2x:conversion [ s2x:to <https://example.org/s2dm/trailer#Relation_Unit_Enum.PERCENT> ; s2x:factor 1.0 ; s2x:offset 0.0 ] .
+<https://example.org/s2dm/trailer#Relation_Unit_Enum.PERCENT> s2x:conversion [ s2x:to <https://example.org/s2dm/trailer#Relation_Unit_Enum.RATIO> ; s2x:factor 0.01 ; s2x:offset 0.0 ] .
 <https://example.org/s2dm/trailer#Relation_Unit_Enum.PERCENT> s2x:qudtUnit <http://qudt.org/vocab/unit/PERCENT> .
+<https://example.org/s2dm/trailer#Relation_Unit_Enum.RATIO> s2x:conversion [ s2x:to <https://example.org/s2dm/trailer#Relation_Unit_Enum.PERCENT> ; s2x:factor 100.0 ; s2x:offset 0.0 ] .
 <https://example.org/s2dm/trailer#Relation_Unit_Enum.RATIO> s2x:conversion [ s2x:to <https://example.org/s2dm/trailer#Relation_Unit_Enum.RATIO> ; s2x:factor 1.0 ; s2x:offset 0.0 ] .
+<https://example.org/s2dm/trailer#Relation_Unit_Enum.RATIO> s2x:qudtUnit <http://qudt.org/vocab/unit/FRACTION> .
 <https://example.org/s2dm/trailer#Temperature_Unit_Enum.DEGREE_CELSIUS> s2x:conversion [ s2x:to <https://example.org/s2dm/trailer#Temperature_Unit_Enum.DEGREE_CELSIUS> ; s2x:factor 1.0 ; s2x:offset 0.0 ] .
 <https://example.org/s2dm/trailer#Temperature_Unit_Enum.DEGREE_CELSIUS> s2x:qudtUnit <http://qudt.org/vocab/unit/DEG_C> .
 <https://example.org/s2dm/trailer#Velocity_Unit_Enum.KILOMETER_PER_HOUR> s2x:conversion [ s2x:to <https://example.org/s2dm/trailer#Velocity_Unit_Enum.KILOMETER_PER_HOUR> ; s2x:factor 1.0 ; s2x:offset 0.0 ] .

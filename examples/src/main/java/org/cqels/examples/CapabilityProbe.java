@@ -1484,20 +1484,24 @@ public class CapabilityProbe {
     }
 
     /**
-     * What TrailerHealthMonitor's LowestPressure relies on: each element's value converted with a
-     * factor and offset found by a static join, then MIN per group over a [RANGE] window. 4 in u1
-     * is 4 * 2.5 + 1 = 11 in u2, below the 20 sent in u2, so the last report must be MIN 11 over 2.
+     * What TrailerHealthMonitor's LowestPressure relies on: the target unit read from a static
+     * triple (the field's declared unit), each element's value converted with a factor and offset
+     * found by a second static join on it, then MIN per group over a [RANGE] window. 4 in u1 is
+     * 4 * 2.5 + 1 = 11 in u2, below the 20 sent in u2, so the last report must be MIN 11 over 2.
      */
     private static boolean convertedValueFeedsWindowedMin() throws Exception {
         List<Object> rows = run(engine -> {
             try (RepositoryConnection conn = engine.getRepository().getConnection()) {
                 addConversion(conn, "u1", "u2", "2.5", "1.0");
                 addConversion(conn, "u2", "u2", "1.0", "0.0");
+                addConversion(conn, "u2", "u1", "0.4", "-0.4");
+                conn.add(VF.createIRI(C + "field"), VF.createIRI(C + "declared"), VF.createIRI(C + "u2"));
             }
         }, """
             SELECT ?g (MIN(?x) AS ?lowest) (COUNT(*) AS ?n) FROM STREAM S [RANGE 10s]
             WHERE { STREAM S { ?r <%1$sval> ?v ; <%1$sunit> ?u ; <%1$sgrp> ?g . }
-                    ?u <%1$sconversion> ?c . ?c <%1$sto> <%1$su2> ; <%1$sfactor> ?f ; <%1$soffset> ?o .
+                    <%1$sfield> <%1$sdeclared> ?declared .
+                    ?u <%1$sconversion> ?c . ?c <%1$sto> ?declared ; <%1$sfactor> ?f ; <%1$soffset> ?o .
                     BIND(?v * ?f + ?o AS ?x) }
             GROUP BY ?g
             """.formatted(C),

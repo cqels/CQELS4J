@@ -325,7 +325,7 @@ public class TrailerHealthMonitor {
         return String.valueOf(row).replace(T, "");
     }
 
-    /** Load the two exported Turtle files and the supplement into the engine's static store. */
+    /** Load the two exported Turtle files, the supplement and the unit conversions into the store. */
     static long loadModel(CQELSEngine engine) throws IOException {
         try (RepositoryConnection conn = engine.getRepository().getConnection()) {
             for (String file : List.of("skos.ttl", "data_graph.ttl", "supplement.ttl", "units.ttl")) {

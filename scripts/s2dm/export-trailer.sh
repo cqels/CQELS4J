@@ -7,8 +7,9 @@
 #
 # Fetching the pinned s2dm commit and the pinned QUDT release from GitHub, and building the Docker
 # image (s2dm's locked dependencies), need network access. The export itself runs in a throwaway container with no
-# network, a read-only root filesystem, your uid, and only the input schema (read-only), the
-# output folder and, for the supplement, this script's folder (read-only) mounted.
+# network, a read-only root filesystem, your uid, and only the inputs (the schema and, for
+# units.py, the QUDT units file; read-only), the output folder and, for the supplement and the
+# units, this script's folder (read-only) mounted.
 #
 # Input: s2dm's own trailer example, examples/trailer/full_schema.graphl, at the pinned commit.
 # Usage: scripts/s2dm/export-trailer.sh        (needs git and docker)
@@ -16,6 +17,8 @@ set -euo pipefail
 
 S2DM_COMMIT=d97b449a7cd4bee9298eb9868545eded68f975d2
 QUDT_TAG=v3.5.3
+# a tag can be moved; the file's checksum pins what the tag held when units.ttl was generated
+QUDT_SHA256=5e84f3e10ae6a3c535e2e7616dc2affee09dd52bea5229822188730493fd4418
 NAMESPACE='https://example.org/s2dm/trailer#'
 IMAGE="cqels4j-s2dm:${S2DM_COMMIT:0:7}"
 
@@ -36,6 +39,8 @@ mkdir -p "$work/in" "$work/out"
 cp "$work/s2dm/examples/trailer/full_schema.graphl" "$work/in/trailer.graphql"
 curl -sSfL -o "$work/in/qudt-units.ttl" \
   "https://raw.githubusercontent.com/qudt/qudt-public-repo/$QUDT_TAG/src/main/rdf/vocab/unit/VOCAB_QUDT-UNITS-ALL.ttl"
+echo "$QUDT_SHA256  $work/in/qudt-units.ttl" | shasum -a 256 -c - >/dev/null \
+  || { echo "QUDT $QUDT_TAG units file does not match QUDT_SHA256" >&2; exit 1; }
 docker run --rm --network none --read-only --tmpfs /tmp --user "$(id -u):$(id -g)" \
   -v "$work/in:/in:ro" -v "$work/out:/out" "$IMAGE" \
   export rdf -s /in/trailer.graphql -o /out \
