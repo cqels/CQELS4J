@@ -142,10 +142,11 @@ FROM STREAM VehicleSignals [FUTURE 20s STEP 1s EMIT ON_CLOSE LATENESS 2s]
 | `LATENESS d` | duration | Watermark out-of-orderness budget — hold window closure back so events up to `d` late still land in their window. |
 
 **Semantics.** A forward-looking window can only be *complete* once enough time has passed, so directional
-windows produce **exact, delayed** results at window close (one result per anchor). `LATENESS` trades
-latency for tolerance of out-of-order arrivals. The `EMIT` policy governs emission for **windowed
-aggregation** queries; complex-event (`SEQ`) matching over a directional window instead emits one final
-match per anchor (see [§7](#7-complex-event-processing-cep)).
+windows produce **exact, delayed** results at window close (one result per anchor, or one row per
+group per anchor under `GROUP BY`). `LATENESS` trades latency for tolerance of out-of-order arrivals.
+The `EMIT` policy governs emission for **windowed aggregation** queries; complex-event (`SEQ`) matching
+over a directional window instead emits, at each anchor's window close, every match found in that
+window, so one anchor can give several matches (see [§7](#7-complex-event-processing-cep)).
 
 > **`LATENESS` on backward windows.** `LATENESS d` also parses on the backward forms. It is
 > honoured on:
@@ -425,8 +426,12 @@ Since `2.0.0-alpha.21` a match is bounded in size instead: a partial match that 
 characters (system properties `cqels.cep.maxEventsPerMatch`, `cqels.cep.maxPatternArguments` and
 `cqels.cep.maxArgumentNameLength`; `0` disables each).
 Running CEP over a **directional** window (`[FUTURE …]`, `[PAST … FUTURE …]`) switches to exact,
-window-close evaluation: one final match per anchor at window close (an explicit `EMIT` policy is not
-currently supported on directional CEP).
+window-close evaluation. When an anchor's window closes, the pattern runs over that window's events and
+every match is emitted, each as an `AnchoredPatternMatch` carrying the anchor and the window. Matching is
+the same as on a backward window: each start event gives at most one match, completed by the first event
+that finishes the sequence, so a window with two start events gives two matches for that anchor. With a
+`STEP` shorter than the window, an event lies in several windows and its match is reported once per
+anchor (an explicit `EMIT` policy is not currently supported on directional CEP).
 
 **Projecting from a CEP query.** The match output does not carry the SELECT list directly — bind an event
 variable to your projection variable:
