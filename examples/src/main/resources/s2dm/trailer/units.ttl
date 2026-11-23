@@ -205,6 +205,13 @@ PREFIX s2x: <https://example.org/s2dm/supplement#>
 <http://qudt.org/vocab/unit/PERCENT> <http://qudt.org/schema/qudt/unitForQuantityKind> <http://qudt.org/vocab/quantitykind/VolumeStrain> .
 <http://qudt.org/vocab/unit/PERCENT> <http://www.w3.org/2000/01/rdf-schema#label> "Percent" .
 <http://qudt.org/vocab/unit/PERCENT> <http://www.w3.org/2000/01/rdf-schema#label> "Percent"@en .
+<http://qudt.org/vocab/unit/PPT> <http://qudt.org/schema/qudt/conversionMultiplier> "0.000000000001"^^<http://www.w3.org/2001/XMLSchema#decimal> .
+<http://qudt.org/vocab/unit/PPT> <http://qudt.org/schema/qudt/hasDimensionVector> <http://qudt.org/vocab/dimensionvector/A0E0L0I0M0H0T0D1> .
+<http://qudt.org/vocab/unit/PPT> <http://qudt.org/schema/qudt/unitForQuantityKind> <http://qudt.org/vocab/quantitykind/AmountOfSubstanceFraction> .
+<http://qudt.org/vocab/unit/PPT> <http://qudt.org/schema/qudt/unitForQuantityKind> <http://qudt.org/vocab/quantitykind/DimensionlessRatio> .
+<http://qudt.org/vocab/unit/PPT> <http://qudt.org/schema/qudt/unitForQuantityKind> <http://qudt.org/vocab/quantitykind/MoleFraction> .
+<http://qudt.org/vocab/unit/PPT> <http://www.w3.org/2000/01/rdf-schema#label> "Part per Trillion" .
+<http://qudt.org/vocab/unit/PPT> <http://www.w3.org/2000/01/rdf-schema#label> "Part per Trillion"@en .
 <http://qudt.org/vocab/unit/PSI> <http://qudt.org/schema/qudt/conversionMultiplier> "6894.757293168361336722673445346887"^^<http://www.w3.org/2001/XMLSchema#decimal> .
 <http://qudt.org/vocab/unit/PSI> <http://qudt.org/schema/qudt/hasDimensionVector> <http://qudt.org/vocab/dimensionvector/A0E0L-1I0M1H0T-2D0> .
 <http://qudt.org/vocab/unit/PSI> <http://qudt.org/schema/qudt/unitForQuantityKind> <http://qudt.org/vocab/quantitykind/ForcePerArea> .
@@ -292,9 +299,14 @@ PREFIX s2x: <https://example.org/s2dm/supplement#>
 <https://example.org/s2dm/trailer#Relation_Unit_Enum.DECIBEL_MILLIWATT> s2x:conversion [ s2x:to <https://example.org/s2dm/trailer#Relation_Unit_Enum.DECIBEL_MILLIWATT> ; s2x:factor 1.0 ; s2x:offset 0.0 ] .
 <https://example.org/s2dm/trailer#Relation_Unit_Enum.DECIBEL_MILLIWATT> s2x:qudtUnit <http://qudt.org/vocab/unit/DeciB-MilliW> .
 <https://example.org/s2dm/trailer#Relation_Unit_Enum.NANO_METER_PER_KILOMETER> s2x:conversion [ s2x:to <https://example.org/s2dm/trailer#Relation_Unit_Enum.NANO_METER_PER_KILOMETER> ; s2x:factor 1.0 ; s2x:offset 0.0 ] .
+<https://example.org/s2dm/trailer#Relation_Unit_Enum.NANO_METER_PER_KILOMETER> s2x:conversion [ s2x:to <https://example.org/s2dm/trailer#Relation_Unit_Enum.PERCENT> ; s2x:factor 0.0000000001 ; s2x:offset 0.0 ] .
+<https://example.org/s2dm/trailer#Relation_Unit_Enum.NANO_METER_PER_KILOMETER> s2x:conversion [ s2x:to <https://example.org/s2dm/trailer#Relation_Unit_Enum.RATIO> ; s2x:factor 0.000000000001 ; s2x:offset 0.0 ] .
+<https://example.org/s2dm/trailer#Relation_Unit_Enum.NANO_METER_PER_KILOMETER> s2x:qudtUnit <http://qudt.org/vocab/unit/PPT> .
+<https://example.org/s2dm/trailer#Relation_Unit_Enum.PERCENT> s2x:conversion [ s2x:to <https://example.org/s2dm/trailer#Relation_Unit_Enum.NANO_METER_PER_KILOMETER> ; s2x:factor 10000000000.0 ; s2x:offset 0.0 ] .
 <https://example.org/s2dm/trailer#Relation_Unit_Enum.PERCENT> s2x:conversion [ s2x:to <https://example.org/s2dm/trailer#Relation_Unit_Enum.PERCENT> ; s2x:factor 1.0 ; s2x:offset 0.0 ] .
 <https://example.org/s2dm/trailer#Relation_Unit_Enum.PERCENT> s2x:conversion [ s2x:to <https://example.org/s2dm/trailer#Relation_Unit_Enum.RATIO> ; s2x:factor 0.01 ; s2x:offset 0.0 ] .
 <https://example.org/s2dm/trailer#Relation_Unit_Enum.PERCENT> s2x:qudtUnit <http://qudt.org/vocab/unit/PERCENT> .
+<https://example.org/s2dm/trailer#Relation_Unit_Enum.RATIO> s2x:conversion [ s2x:to <https://example.org/s2dm/trailer#Relation_Unit_Enum.NANO_METER_PER_KILOMETER> ; s2x:factor 1000000000000.0 ; s2x:offset 0.0 ] .
 <https://example.org/s2dm/trailer#Relation_Unit_Enum.RATIO> s2x:conversion [ s2x:to <https://example.org/s2dm/trailer#Relation_Unit_Enum.PERCENT> ; s2x:factor 100.0 ; s2x:offset 0.0 ] .
 <https://example.org/s2dm/trailer#Relation_Unit_Enum.RATIO> s2x:conversion [ s2x:to <https://example.org/s2dm/trailer#Relation_Unit_Enum.RATIO> ; s2x:factor 1.0 ; s2x:offset 0.0 ] .
 <https://example.org/s2dm/trailer#Relation_Unit_Enum.RATIO> s2x:qudtUnit <http://qudt.org/vocab/unit/FRACTION> .

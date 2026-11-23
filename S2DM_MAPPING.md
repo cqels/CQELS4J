@@ -206,7 +206,7 @@ The schema names units as enum values (`POUNDS_PER_SQUARE_INCH`) with no factors
 vocabulary s2dm itself builds on (`s2dm units sync` generates unit enums from QUDT, each value
 marked `@reference(uri: "http://qudt.org/vocab/unit/...")`), and derives the conversions. It runs
 in the same container, offline, on the QUDT units file of a pinned release (v3.5.3, CC BY 4.0;
-the script checks the file's SHA-256, since a tag can be moved).
+`export-trailer.sh` checks the file's SHA-256 after downloading it, since a tag can be moved).
 
 How a value is linked to a QUDT unit, in order:
 1. an `@reference(uri: ...)` on the value, as s2dm's current unit enums carry (the trailer
@@ -214,22 +214,21 @@ How a value is linked to a QUDT unit, in order:
 2. a table in the script, for names that are not a QUDT label: `POUNDS_PER_SQUARE_INCH` → `PSI`,
    `INCH` → `IN` (the label "Inch" is also QUDT's `ZOLL`), `POUND` → `LB`,
    `RADIANS_PER_SECOND` → `RAD-PER-SEC`, `METERS_PER_SECOND` → `M-PER-SEC`, `RATIO` →
-   `FRACTION` (a dimensionless ratio, 0.5 for one half);
+   `FRACTION` (a dimensionless ratio, 0.5 for one half), `NANO_METER_PER_KILOMETER` → `PPT`
+   (1 nm/km is 10⁻¹², QUDT's "Part per Trillion");
 3. otherwise, the QUDT unit whose label, upper-cased with every run of other characters turned
    into `_`, is the value's name (`KILOPASCAL` is "Kilopascal"), skipping deprecated units. When
    several units match, only those QUDT gives the quantity kind the enum is named after are kept
    (`Length_Unit_Enum` → `quantitykind:Length`); if that does not leave exactly one, the value
    gets no link.
 
-For the trailer schema, 22 of the 23 values of its unit enums are linked.
-`NANO_METER_PER_KILOMETER` has no QUDT unit and gets no link, so a reading in it converts only to
-itself.
+For the trailer schema, all 23 values of its unit enums are linked.
 
 What the file holds:
 - each link, `trailer:Pressure_Unit_Enum.KILOPASCAL s2x:qudtUnit unit:KiloPA`;
 - what QUDT says about each linked unit, copied as published: label, conversion multiplier and
   offset, quantity kinds and dimension vector;
-- 67 conversions, `[ s2x:to <unit> ; s2x:factor f ; s2x:offset o ]`. A value v in the first unit
+- 71 conversions, `[ s2x:to <unit> ; s2x:factor f ; s2x:offset o ]`. A value v in the first unit
   is `v * f + o` in the second.
 
 Rules for the conversions:
@@ -240,8 +239,10 @@ Rules for the conversions:
   logarithmic unit, the multiplier 0.
 - **QUDT's convention.** A value v in a unit with multiplier m and offset o is `(v + o) * m` in
   the SI unit (32 °F is `(32 + 459.67) * 5/9` = 273.15 K). So `f = m_from / m_to` and
-  `o = o_from * m_from / m_to - o_to`. The script refuses to run unless QUDT's own °C, °F and K
-  give 0 °C = 32 °F = 273.15 K under that rule. Only the trailer's °C enum has an offset, so its
+  `o = o_from * m_from / m_to - o_to`, written in one function. The script refuses to run unless
+  that function, applied to QUDT's own °C, °F and K, gives 0 °C → 32 °F, 32 °F → 0 °C,
+  0 °C → 273.15 K and 373.15 K → 212 °F: a slip in the formula or a change in QUDT's convention
+  stops it. Only the trailer's °C enum has an offset, so its
   file does not exercise this; a toy schema with °C, °F and K gives 0 °C → 32 °F and 32 °F → 0 °C.
 - **Arithmetic.** The factors are computed in decimal arithmetic from QUDT's multipliers and
   offsets, rounded to QUDT's 34 significant digits (`POUNDS_PER_SQUARE_INCH` → `KILOPASCAL` is

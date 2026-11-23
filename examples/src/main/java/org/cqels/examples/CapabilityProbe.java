@@ -146,7 +146,7 @@ public class CapabilityProbe {
         capability("CypherQL: FROM STREAM before MATCH registers; MATCH first is a syntax error",
                 cypherClauseOrder());
         capability("warm parse-cache ASP backend reachable via registerQuery", warmBackendReachable());
-        capability("BIND arithmetic over a static join feeds a windowed MIN (TrailerHealthMonitor unit conversion)",
+        capability("BIND arithmetic over two static joins feeds a windowed MIN (TrailerHealthMonitor unit conversion)",
                 convertedValueFeedsWindowedMin());
         capability("OPTIONAL over static data with FILTER(!BOUND) keeps only unmatched elements (TrailerHealthMonitor UnitMismatch)",
                 optionalStaticUnboundFilter());

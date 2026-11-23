@@ -65,6 +65,7 @@ OVERRIDES = {
     "RADIANS_PER_SECOND": "RAD-PER-SEC",  # QUDT: "Radian per Second"
     "METERS_PER_SECOND": "M-PER-SEC",    # QUDT: "Metre per Second"
     "RATIO": "FRACTION",                 # a dimensionless ratio, 0.5 for one half
+    "NANO_METER_PER_KILOMETER": "PPT",   # 1 nm/km = 1e-12: QUDT's "Part per Trillion"
 }
 
 
@@ -72,16 +73,26 @@ def normalise(label):
     return re.sub(r"[^A-Z0-9]+", "_", label.upper()).strip("_")
 
 
+def conversion(m_from, o_from, m_to, o_to):
+    """Factor f and offset o such that v in the first unit is v * f + o in the second, under
+    QUDT's convention SI = (v + offset) * multiplier. The only place the formula is written."""
+    return m_from / m_to, o_from * m_from / m_to - o_to
+
+
 def check_convention(qudt):
-    """Fail unless QUDT's own degC, degF and K facts give 0 degC = 32 degF = 273.15 K under the
-    convention above, so a change of convention (or a slip here) cannot pass silently."""
-    def si(unit, v):
+    """Fail unless conversion() on QUDT's own degC, degF and K facts gives 0 degC = 32 degF,
+    32 degF = 0 degC and 0 degC = 273.15 K, so neither a change in QUDT's convention nor a slip in
+    conversion() can pass silently."""
+    def facts(unit):
         m = Decimal(str(next(qudt.objects(URIRef(UNIT + unit), QUDT.conversionMultiplier))))
         o = Decimal(str(next(qudt.objects(URIRef(UNIT + unit), QUDT.conversionOffset), Literal("0"))))
-        return (Decimal(v) + o) * m
-    for unit, v in (("DEG_C", "0"), ("DEG_F", "32"), ("K", "273.15")):
-        if abs(si(unit, v) - Decimal("273.15")) > Decimal("1e-20"):
-            sys.exit(f"QUDT convention check failed: {v} {unit} is {si(unit, v)} K, not 273.15")
+        return m, o
+    for source, target, v, expected in (("DEG_C", "DEG_F", "0", "32"), ("DEG_F", "DEG_C", "32", "0"),
+                                        ("DEG_C", "K", "0", "273.15"), ("K", "DEG_F", "373.15", "212")):
+        f, o = conversion(*facts(source), *facts(target))
+        got = Decimal(v) * f + o
+        if abs(got - Decimal(expected)) > Decimal("1e-20"):
+            sys.exit(f"conversion check failed: {v} {source} gave {got} {target}, not {expected}")
 
 
 def decimal(d):
@@ -176,8 +187,7 @@ def main(schema_path, ns, qudt_path, qudt_tag, out_path):
             my, oy, dy, ky = facts(uy)
             if x == y or not mx or not my or not (dx & dy) or not (kx & ky):
                 continue
-            factor = mx / my
-            offset = ox * mx / my - oy
+            factor, offset = conversion(mx, ox, my, oy)
             lines.append(f"<{ns}{x}> s2x:conversion [ s2x:to <{ns}{y}> ; s2x:factor {decimal(factor)} ;"
                          f" s2x:offset {decimal(offset)} ] .")
             conversions += 1
