@@ -2003,7 +2003,7 @@ public final class SparqlProtocolServlet extends HttpServlet {
      * to RDF4J as it was. Any backslash inside a comment leaves the whole text as it was: RDF4J
      * decodes {@code \\uXXXX} escapes before it tokenizes, and an escaped line break ends a
      * comment there. A declaration it would drop is dropped only when RDF4J could not refuse its IRI
-     * ({@link #droppable}); otherwise the text is left as it was too. So it never turns text RDF4J would refuse as malformed into text it accepts (found
+     * ({@link #droppable}); otherwise the text is left as it was too. So it never turns text RDF4J would refuse for any reason other than the repeated declaration itself into text it accepts (found
      * in the Opus co-review of #135: a comment ended by a bare CR or an escaped line break ran the
      * scan into a string literal and blanked part of it; Unicode spaces, a dotless ı and
      * {@code { }} inside an IRI were read as if valid; a dropped IRI went unchecked).
