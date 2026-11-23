@@ -352,7 +352,7 @@ class RdfMessageLogTest {
     @Test
     void aTerminatingDotRightAfterATokenIsStillATerminator() throws Exception {
         String prologue = "PREFIX ex: <http://e/>\nPREFIX : <http://e/empty#>\n";
-        for (String object : List.of("true", "\"x\"@en", ":", "ex:", "\"x\"^^ex:", "1.e2", "-1.e-2", "\"x\"@en--ltr")) {
+        for (String object : List.of("true", "\"x\"@en", ":", "ex:", "\"x\"^^ex:", "1.e2", "-1.e-2")) {
             for (String delimiter : List.of("@message .", "MESSAGE")) {
                 String first = "ex:s ex:p " + object + ".";
                 String log = V + prologue + first + delimiter + "\nex:s ex:p 2 .\n";
@@ -361,6 +361,13 @@ class RdfMessageLogTest {
                 sameAsRio(prologue, first + "\n", messages.get(0));
             }
         }
+    }
+
+    @Test
+    void aBaseDirectionRightBeforeADotIsRefusedNotSwallowed() {
+        String log = V + "PREFIX ex: <http://e/>\nex:s ex:p \"x\"@en--ltr.MESSAGE\nex:s ex:p 2 .\n";
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> ttl(log));
+        assertTrue(e.getMessage().contains("#133"), e.getMessage());
     }
 
     @Test
@@ -395,10 +402,23 @@ class RdfMessageLogTest {
     }
 
     @Test
-    void rdfStarQuotedTriplesPassThrough() throws Exception {
+    void rdf12SyntaxThatRdf4jWouldMisreadIsRefused() {
+        // #133: RDF4J 4.3.8 cannot parse <<( )>> and reads << >>, {| |} and @ar--rtl as other data
         String prologue = "PREFIX ex: <http://e/>\n";
-        String fragment = "<< ex:a ex:b \"x>y\" >> ex:p << ex:c ex:d ex:e >> .\n";
-        List<List<Statement>> messages = ttl(V + prologue + fragment + "MESSAGE\n" + fragment);
-        assertEquals(List.of(1, 1), sizes(messages));
+        for (String fragment : List.of(
+                "ex:s ex:p <<( ex:a ex:b ex:c )>> .\n",
+                "<< ex:a ex:b ex:c >> ex:p ex:o .\n",
+                "ex:a ex:b ex:c {| ex:p ex:o |} .\n",
+                "ex:s ex:p \"x\"@ar--rtl .\n")) {
+            for (RDFFormat format : List.of(RDFFormat.TURTLE, RDFFormat.TRIG)) {
+                IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                        () -> RdfMessageLog.parse(V + prologue + fragment, format, BASE), fragment);
+                assertTrue(e.getMessage().contains("#133"), e.getMessage());
+            }
+        }
+        // the same characters inside a string, an IRI or a comment are not syntax
+        String quiet = "ex:s ex:p \"<<( {| x\"@ar , <http://e/a?b=c> . # << {| @ar--rtl\n";
+        assertEquals(List.of(2), sizes(ttl(V + prologue + quiet)));
+        assertEquals(List.of(1), sizes(ttl(V + prologue + "ex:s ex:p \"x\"@ar-Latn-x-y .\n")));
     }
 }

@@ -1,0 +1,8 @@
+Message 1:
+  RDF dataset obtained by processing the effective JSON-LD document:
+  {"@context": {"ex": "https://example.org/base/", "name": "ex:baseName"}, "@graph": {"@context": {"label": "ex:label"}, "@type": "ex:Thing", "name": "Alice", "label": "A"}}
+
+Message 2:
+  RDF dataset obtained by processing the effective JSON-LD document:
+  {"@context": {"ex": "https://example.org/base/", "name": "ex:baseName"}, "@graph": {"@type": "ex:Thing", "name": "Bob"}}
+  The local @context from line 2 does not change the active context C for subsequent messages.

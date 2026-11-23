@@ -110,6 +110,12 @@ public class CapabilityProbe {
         knownBug("#126 RdfMessageCodec.writeNQuads drops a trailing empty message on re-reading",
                 codecTrailingEmptyMessage(), "[1]", "[1, 0]",
                 "RdfMessageLog.java (writeNQuads workaround and Javadoc), RDF_MESSAGES_MAPPING.md §3");
+        knownBug("#133 RdfMessageCodec cannot parse an RDF 1.2 triple term under VERSION \"1.2-messages\"",
+                codecTripleTerm(), "rejected", "1 triple term",
+                "RdfMessageLog.java, JsonLdMessageLog.java, RdfXmlMessageLog.java (#133 refusals), RDF_MESSAGES_MAPPING.md §3 and §6");
+        knownBug("#133 the engine's Turtle parser reads << s p o >> as an RDF-star quoted triple, not an RDF 1.2 reifier",
+                turtleReifiedTriple(), "quoted triple", "reifier",
+                "RdfMessageLog.java (#133 refusal of <<), RDF_MESSAGES_MAPPING.md §3 and §6");
         knownBug("#125 GRAPH inside a STREAM block is refused at registration",
                 graphInsideStream(), "refused", "registered",
                 "MessageLogReplay.java Javadoc, RDF_MESSAGES_MAPPING.md §3-§4");
@@ -258,6 +264,51 @@ public class CapabilityProbe {
         List<List<Statement>> back = RdfMessageCodec.parseNQuads(
                 RdfMessageCodec.writeNQuads(List.of(List.of(t), List.of())));
         return back.stream().map(List::size).toList().toString();
+    }
+
+    /**
+     * #133: "rejected" when the codec fails on a triple term with a parse error, "1 triple term" when
+     * it reads one message whose object is a triple term. The same document with an IRI object is
+     * the control.
+     */
+    private static String codecTripleTerm() {
+        String head = MSG_V + "<https://example.org/probe#s> <https://example.org/probe#p> ";
+        try {
+            if (RdfMessageCodec.parseNQuads(head + "<https://example.org/probe#o> .\n").size() != 1) {
+                return "control did not read 1 message";
+            }
+        } catch (RuntimeException e) {
+            return "control failed: " + e;
+        }
+        try {
+            List<List<Statement>> m = RdfMessageCodec.parseNQuads(head
+                    + "<<( <https://example.org/probe#a> <https://example.org/probe#b> <https://example.org/probe#c> )>> .\n");
+            return m.size() == 1 && m.get(0).size() == 1 && m.get(0).get(0).getObject() instanceof org.eclipse.rdf4j.model.Triple
+                    ? "1 triple term" : "read as " + m;
+        } catch (org.eclipse.rdf4j.rio.RDFParseException e) {
+            return "rejected";
+        } catch (RuntimeException e) {
+            return "unexpected " + e;
+        }
+    }
+
+    /**
+     * #133: how the engine's RDF4J Turtle parser reads {@code << ex:a ex:b ex:c >> ex:p ex:o}:
+     * "quoted triple" when the subject is the triple itself (RDF-star), "reifier" when the subject is
+     * a node that rdf:reifies the triple (RDF 1.2).
+     */
+    private static String turtleReifiedTriple() {
+        try {
+            org.eclipse.rdf4j.model.Model m = org.eclipse.rdf4j.rio.Rio.parse(new java.io.StringReader(
+                    "PREFIX ex: <https://example.org/probe#>\n<< ex:a ex:b ex:c >> ex:p ex:o .\n"),
+                    "", org.eclipse.rdf4j.rio.RDFFormat.TURTLE);
+            boolean reifies = m.stream().anyMatch(st -> st.getPredicate().stringValue()
+                    .equals("http://www.w3.org/1999/02/22-rdf-syntax-ns#reifies"));
+            boolean quoted = m.size() == 1 && m.iterator().next().getSubject() instanceof org.eclipse.rdf4j.model.Triple;
+            return reifies ? "reifier" : quoted ? "quoted triple" : "read as " + m;
+        } catch (Exception e) {
+            return "unexpected " + e;
+        }
     }
 
     /** #125: "refused" when GRAPH inside STREAM fails to register for that reason, else "registered". */

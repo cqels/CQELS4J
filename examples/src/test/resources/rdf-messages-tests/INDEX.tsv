@@ -1,0 +1,34 @@
+1.1.1	Single Message Without Delimiter
+1.1.2	Two Messages With MESSAGE
+1.1.3	Two Messages With @message .
+1.1.4	Empty First Message
+1.1.5	Empty Message Between Non-Empty Messages
+1.1.6	Final Delimiter Does Not Create Extra Empty Message
+1.1.7	N-Quads Messages Preserve Graph Names
+1.1.8	Message With Default Graph And Named Graph Quads
+1.1.9	Blank Node Labels Are Scoped Per Message
+1.1.10	Repeated Prefixes Across Messages
+1.1.11	Message Boundary After A Graph Block
+1.2.1	Context Message Followed By Data Message
+1.2.2	Empty Message Does Not Change Active Context
+1.2.3	Context Switch Applies To Subsequent Data Messages
+1.2.4	Data Message With Local @context Is Wrapped With Active Context
+1.2.5	Data Message Without Prior Context Is Allowed
+1.3.1	Two Messages
+1.3.2	Empty Log
+1.3.3	Empty Message Between Non-Empty Messages
+1.3.4	Blank Node Identifiers Are Scoped Per Message
+1.3.5	Blank Node Identifier Reused Within One Message
+1.3.6	Namespaces Declared On The Log Element
+1.3.7	Base IRI Declared On The Log Element
+1.3.8	Language Tag Declared On The Log Element
+1.3.9	Comments And Processing Instructions Between Messages Are Ignored
+1.3.10	Multiline Literal
+1.4	Serialization Tests for Turtle, TriG, N-Triples, and N-Quads
+1.5.1	Message Delimiter Without Message Support
+1.5.2	@message Without Trailing Dot
+1.5.3	Message Delimiter Inside An Open Graph Block
+1.5.4	RDF/XML Root Element Is Not rdfm:MessageLog
+1.5.5	RDF/XML Node Element Directly Inside rdfm:MessageLog
+1.5.6	RDF/XML Text Between Messages
+1.5.7	RDF/XML Log Read By A Parser Without Message Support

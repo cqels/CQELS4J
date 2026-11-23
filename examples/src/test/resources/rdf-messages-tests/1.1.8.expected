@@ -1,0 +1,7 @@
+Message 1:
+  <http://example.org/s1> <http://example.org/p> <http://example.org/o1> .
+  <http://example.org/s2> <http://example.org/p> <http://example.org/o2> <http://example.org/g> .
+  <http://example.org/s3> <http://example.org/p> <http://example.org/o3> <http://example.org/g> .
+
+Message 2:
+  <http://example.org/s4> <http://example.org/p> <http://example.org/o4> .

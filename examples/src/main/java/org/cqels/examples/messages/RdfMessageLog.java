@@ -13,6 +13,7 @@ import java.util.regex.Pattern;
 import org.cqels.stream.codec.RdfMessageCodec;
 import org.eclipse.rdf4j.model.Model;
 import org.eclipse.rdf4j.model.Statement;
+import org.eclipse.rdf4j.model.Triple;
 import org.eclipse.rdf4j.model.impl.LinkedHashModel;
 import org.eclipse.rdf4j.rio.RDFFormat;
 import org.eclipse.rdf4j.rio.Rio;
@@ -41,6 +42,9 @@ import org.eclipse.rdf4j.rio.Rio;
  *       message is handed to RDF4J's ordinary Turtle or TriG parser.</li>
  * </ul>
  *
+ * <p>For the other log formats of the draft, see {@link JsonLdMessageLog} (NDJSON-LD, YAML-LD) and
+ * {@link RdfXmlMessageLog} (RDF/XML).
+ *
  * <p><strong>Rules implemented</strong> (§2.1.1 to §2.1.3), the same for every format:
  * <ul>
  *   <li>A delimiter ends the current message. A message is opened by a triple, a quad, or another
@@ -66,9 +70,11 @@ import org.eclipse.rdf4j.rio.Rio;
  *   <li>{@code MESSAGE}, {@code VERSION}, {@code PREFIX} and {@code BASE} are matched
  *       case-insensitively, as Turtle matches its SPARQL-style directives; the {@code @} forms are
  *       lower-case only.</li>
- *   <li>RDF-star quoted triples ({@code << s p o >>}) pass through to RDF4J 4.3.8, which reads
- *       them; RDF 1.2 triple terms ({@code <<( s p o )>>}) do not parse, because RDF4J 4.3.8 does
- *       not read them.</li>
+ *   <li>RDF 1.2 syntax that RDF4J 4.3.8 cannot read, or would read as different data, is refused
+ *       with an error naming <a href="https://github.com/cqels/CQELS4J/issues/133">#133</a>:
+ *       triple terms {@code <<( s p o )>>}, reified triples {@code << s p o >>} (RDF4J reads them
+ *       as RDF-star quoted triples), annotations {@code {| |}}, and base direction
+ *       {@code "x"@ar--rtl} (RDF4J reads {@code ar--rtl} as the language tag).</li>
  * </ul>
  */
 public final class RdfMessageLog {
@@ -144,8 +150,11 @@ public final class RdfMessageLog {
     /**
      * Write an N-Quads RDF Message Log with the engine's writer, adding a final delimiter when the
      * last message is empty so that it survives re-reading (#126). Named graphs are kept.
+     *
+     * @throws IllegalArgumentException if a statement holds a triple term (#133)
      */
     public static String writeNQuads(List<? extends Collection<Statement>> messages) {
+        checkWritable(messages, true, "N-Quads");
         String log = RdfMessageCodec.writeNQuads(messages);
         if (!messages.isEmpty() && messages.get(messages.size() - 1).isEmpty()) {
             log = (log.endsWith("\n") ? log : log + "\n") + "MESSAGE\n";
@@ -160,29 +169,40 @@ public final class RdfMessageLog {
      * {@code @prefix} lines, which §2.1.3 allows.
      *
      * <p>Turtle has no named graphs, so a statement with a graph name is refused rather than
-     * written into the default graph; write such messages with {@link #writeNQuads}.
+     * written into the default graph; write such messages with {@link #writeTriG} or
+     * {@link #writeNQuads}.
      *
      * @param namespaces prefix to namespace pairs to declare in every message (may be empty)
-     * @throws IllegalArgumentException if a statement has a graph name
+     * @throws IllegalArgumentException if a statement has a graph name, or holds a triple term
+     *                                  (RDF4J 4.3.8 would write it as RDF-star, #133)
      */
     public static String writeTurtle(List<? extends Collection<Statement>> messages,
                                      Map<String, String> namespaces) {
+        checkWritable(messages, false, "Turtle");
+        return write(messages, namespaces, RDFFormat.TURTLE);
+    }
+
+    /**
+     * Write a TriG RDF Message Log, as {@link #writeTurtle} does, keeping named graphs.
+     *
+     * @throws IllegalArgumentException if a statement holds a triple term (#133)
+     */
+    public static String writeTriG(List<? extends Collection<Statement>> messages,
+                                   Map<String, String> namespaces) {
+        checkWritable(messages, true, "TriG");
+        return write(messages, namespaces, RDFFormat.TRIG);
+    }
+
+    private static String write(List<? extends Collection<Statement>> messages,
+                                Map<String, String> namespaces, RDFFormat format) {
         StringBuilder out = new StringBuilder("VERSION \"").append(VERSION_LABEL).append("\"\n");
-        int n = 0;
         for (Collection<Statement> message : messages) {
-            n++;
-            for (Statement st : message) {
-                if (st.getContext() != null) {
-                    throw new IllegalArgumentException("message " + n + " has a statement in graph "
-                            + st.getContext() + "; Turtle has no named graphs, use writeNQuads");
-                }
-            }
             if (!message.isEmpty()) {
                 Model model = new LinkedHashModel(message);
                 namespaces.forEach(model::setNamespace);
-                StringWriter turtle = new StringWriter();
-                Rio.write(model, turtle, RDFFormat.TURTLE);
-                out.append(turtle);
+                StringWriter text = new StringWriter();
+                Rio.write(model, text, format);
+                out.append(text);
                 if (out.charAt(out.length() - 1) != '\n') {
                     out.append('\n');
                 }
@@ -190,6 +210,28 @@ public final class RdfMessageLog {
             out.append("MESSAGE\n");
         }
         return out.toString();
+    }
+
+    /**
+     * Refuse what a writer cannot write faithfully: a triple term (RDF4J 4.3.8 writes RDF-star,
+     * which RDF 1.2 reads differently and which the readers here refuse, #133), and a graph name
+     * where the format has no named graphs.
+     */
+    static void checkWritable(List<? extends Collection<Statement>> messages, boolean graphs, String format) {
+        int n = 0;
+        for (Collection<Statement> message : messages) {
+            n++;
+            for (Statement st : message) {
+                if (!graphs && st.getContext() != null) {
+                    throw new IllegalArgumentException("message " + n + " has a statement in graph "
+                            + st.getContext() + "; " + format + " has no named graphs");
+                }
+                if (st.getSubject() instanceof Triple || st.getObject() instanceof Triple) {
+                    throw new IllegalArgumentException("message " + n + " holds a triple term, which"
+                            + " cannot be written faithfully with RDF4J 4.3.8 (#133)");
+                }
+            }
+        }
     }
 
     // ---------------------------------------------------------------- Turtle/TriG log tokeniser
@@ -210,7 +252,7 @@ public final class RdfMessageLog {
     private static final class Splitter {
         private final String s;
         private int i;
-        private int depth;                 // nesting of {}, [], () and << >>
+        private int depth;                 // nesting of {}, [] and ()
         private boolean statementStart = true;
         private String versionLabel;       // most recent VERSION label, decoded
         private final StringBuilder header = new StringBuilder();
@@ -230,15 +272,14 @@ public final class RdfMessageLog {
                 }
                 char c = s.charAt(i);
                 if (c == '<' && i + 1 < s.length() && s.charAt(i + 1) == '<') {
-                    depth++;                       // an RDF-star quoted triple, << s p o >>
-                    body.append("<<");
-                    i += 2;
-                    statementStart = false;
-                } else if (c == '>' && i + 1 < s.length() && s.charAt(i + 1) == '>') {
-                    depth = Math.max(0, depth - 1);
-                    body.append(">>");
-                    i += 2;
-                    statementStart = false;
+                    throw new IllegalArgumentException("'<<' at offset " + i + ": RDF 1.2 triple"
+                            + " terms and reified triples are refused, because RDF4J 4.3.8 cannot"
+                            + " parse <<( )>> and reads << >> as an RDF-star quoted triple, which"
+                            + " RDF 1.2 does not (#133)");
+                } else if (c == '{' && i + 1 < s.length() && s.charAt(i + 1) == '|') {
+                    throw new IllegalArgumentException("'{|' at offset " + i + ": RDF 1.2"
+                            + " annotations are refused, because RDF4J 4.3.8 reads them with RDF-star"
+                            + " semantics, not RDF 1.2's (#133)");
                 } else if (c == '<') {
                     body.append(readIri());
                     statementStart = false;
@@ -301,8 +342,8 @@ public final class RdfMessageLog {
          * A token that is not a string, IRI or punctuation, read by the Turtle grammar's own rules
          * so that a following '.' or delimiter is never swallowed:
          * <ul>
-         *   <li>a language tag or {@code @}-directive: {@code @[a-zA-Z]+(-[a-zA-Z0-9]+)*}, with an
-         *       optional RDF 1.2 direction {@code --ltr} / {@code --rtl};</li>
+         *   <li>a language tag or {@code @}-directive: {@code @[a-zA-Z]+(-[a-zA-Z0-9]+)*}; an
+         *       RDF 1.2 direction ({@code --ltr} / {@code --rtl}) is refused (#133);</li>
          *   <li>the datatype marker {@code ^^};</li>
          *   <li>a number ({@link #readNumber});</li>
          *   <li>otherwise a name: a prefixed name, a blank-node label or a keyword
@@ -336,10 +377,9 @@ public final class RdfMessageLog {
                 }
             }
             if (i + 2 < s.length() && s.startsWith("--", i) && isAsciiLetter(s.charAt(i + 2))) {
-                i += 2;
-                while (i < s.length() && isAsciiLetter(s.charAt(i))) {
-                    i++;
-                }
+                throw new IllegalArgumentException("'" + s.substring(start, i) + "--' at offset "
+                        + start + ": RDF 1.2 base direction is refused, because RDF4J 4.3.8 reads"
+                        + " it as part of the language tag (#133)");
             }
             return s.substring(start, i);
         }

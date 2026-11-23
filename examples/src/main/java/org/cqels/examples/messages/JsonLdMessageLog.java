@@ -1,0 +1,400 @@
+package org.cqels.examples.messages;
+
+import java.io.IOException;
+import java.io.StringReader;
+import java.io.StringWriter;
+import java.math.BigDecimal;
+import java.math.BigInteger;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.IdentityHashMap;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.StreamReadFeature;
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.json.JsonMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.github.jsonldjava.core.DocumentLoader;
+import com.github.jsonldjava.core.JsonLdError;
+import com.github.jsonldjava.core.RemoteDocument;
+import com.github.jsonldjava.utils.JsonUtils;
+import org.eclipse.rdf4j.model.Model;
+import org.eclipse.rdf4j.model.Statement;
+import org.eclipse.rdf4j.model.impl.LinkedHashModel;
+import org.eclipse.rdf4j.rio.RDFFormat;
+import org.eclipse.rdf4j.rio.RDFParser;
+import org.eclipse.rdf4j.rio.RDFWriter;
+import org.eclipse.rdf4j.rio.Rio;
+import org.eclipse.rdf4j.rio.helpers.BasicWriterSettings;
+import org.eclipse.rdf4j.rio.helpers.JSONLDMode;
+import org.eclipse.rdf4j.rio.helpers.JSONLDSettings;
+import org.eclipse.rdf4j.rio.helpers.StatementCollector;
+import org.snakeyaml.engine.v2.api.Dump;
+import org.snakeyaml.engine.v2.api.DumpSettings;
+import org.snakeyaml.engine.v2.api.Load;
+import org.snakeyaml.engine.v2.api.LoadSettings;
+import org.snakeyaml.engine.v2.common.FlowStyle;
+import org.snakeyaml.engine.v2.schema.CoreSchema;
+
+/**
+ * Reads and writes RDF Message Logs in the two JSON-LD based formats of the W3C RSP CG
+ * <a href="https://w3c-cg.github.io/rsp/spec/messages">RDF Messages</a> draft (22 October 2026):
+ * <strong>NDJSON-LD</strong> (§2.2) and <strong>YAML-LD</strong> (§2.3). Each message comes back as
+ * one {@code List<Statement>}, one atomic CQELS stream element.
+ *
+ * <p><strong>NDJSON-LD</strong>, as §2.2 defines it: every line is exactly one JSON object, and
+ * blank lines are not allowed (a final newline is). A line is one of
+ * <ul>
+ *   <li>{@code {}}: an empty message;</li>
+ *   <li>an object whose only key is {@code @context}: a context message, which emits nothing and
+ *       becomes the active context C for the lines after it;</li>
+ *   <li>anything else: a data message, converted to RDF as {@code {"@context": C, "@graph": L}}
+ *       when C is set, as itself otherwise. Its own {@code @context} applies to it alone.</li>
+ * </ul>
+ * RDF4J 4.3.8 has an NDJSON-LD parser, but it reads all lines as one document, which shares blank
+ * nodes across lines and knows no context messages, so it is not used here.
+ *
+ * <p><strong>YAML-LD</strong>, as §2.3 proposes it: a YAML stream in which each document is one
+ * message, read as a JSON-LD document. The draft marks this format as still under discussion.
+ * Choices made here where it is silent:
+ * <ul>
+ *   <li>YAML 1.2 with the Core schema (snakeyaml-engine), so {@code yes} is a string and
+ *       {@code 0o17} a number. Aliases are expanded; a recursive alias, an explicit tag other than
+ *       the Core schema's, a key that is not a string, and {@code .inf} or {@code .nan} are
+ *       refused, since none of them has a JSON form.</li>
+ *   <li>An empty document (such as a {@code ---} with nothing after it) is refused rather than
+ *       guessed at; an empty message is written {@code {}}.</li>
+ *   <li>No context messages: §2.3 does not define them, so every document stands alone.</li>
+ * </ul>
+ *
+ * <p><strong>Both formats.</strong>
+ * <ul>
+ *   <li>Blank nodes are scoped to their message: each message is converted on its own.</li>
+ *   <li>Remote contexts are never fetched. A {@code @context} given as a URL is served from the
+ *       {@code contexts} map the caller passes (URL to JSON document), and any other URL is an
+ *       error.</li>
+ *   <li>The JSON-LD processor is jsonld-java 0.13.4, the one {@code rdf4j-rio-jsonld} 4.3.8
+ *       uses, and it implements JSON-LD 1.0. JSON-LD 1.1 keywords it would drop or reject, and a
+ *       term's scoped {@code @context}, which it would ignore, are refused with an error naming
+ *       <a href="https://github.com/cqels/CQELS4J/issues/133">#133</a>.</li>
+ * </ul>
+ *
+ * <p>The writers emit each message as expanded JSON-LD wrapped in {@code {"@graph": [...]}} (an
+ * empty message as {@code {}}), with no context, so the output re-reads to the same messages.
+ */
+public final class JsonLdMessageLog {
+
+    private JsonLdMessageLog() {
+    }
+
+    /** The media type RDF4J uses for NDJSON-LD; the draft asks (§2.2) what it should be. */
+    public static final String NDJSON_LD_MEDIA_TYPE = "application/x-ld+ndjson";
+
+    /** The media type §2.3 proposes for a YAML-LD RDF Message Log. */
+    public static final String YAML_LD_MEDIA_TYPE = "application/rdfm+yaml";
+
+    private static final JsonMapper JSON = JsonMapper.builder()
+            .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
+            .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+            .build();
+
+    /** JSON-LD 1.1 keywords that a JSON-LD 1.0 processor drops or rejects. */
+    private static final Set<String> JSON_LD_11_KEYWORDS = Set.of(
+            "@direction", "@import", "@included", "@json", "@nest", "@none", "@prefix",
+            "@propagate", "@protected", "@version");
+
+    // ------------------------------------------------------------------------------- NDJSON-LD
+
+    /**
+     * Parse an NDJSON-LD RDF Message Log (§2.2).
+     *
+     * @param log      the whole log
+     * @param baseIri  base IRI for relative IRIs
+     * @param contexts remote contexts by URL (may be empty); nothing is fetched over the network
+     * @return one statement list per message, in order; an empty message is an empty list
+     * @throws IllegalArgumentException if the log is malformed, uses an unknown remote context or a
+     *                                  JSON-LD 1.1 feature (#133)
+     */
+    public static List<List<Statement>> parseNdjson(String log, String baseIri, Map<String, String> contexts) {
+        List<List<Statement>> messages = new ArrayList<>();
+        if (log.isEmpty()) {
+            return messages;
+        }
+        String[] lines = log.split("\n", -1);
+        int count = log.endsWith("\n") ? lines.length - 1 : lines.length;
+        JsonNode context = null;
+        boolean contextSet = false;
+        for (int n = 0; n < count; n++) {
+            String line = lines[n].endsWith("\r") ? lines[n].substring(0, lines[n].length() - 1) : lines[n];
+            String where = "line " + (n + 1);
+            if (line.isBlank()) {
+                throw new IllegalArgumentException(where + " is blank; NDJSON-LD allows no blank lines");
+            }
+            JsonNode value;
+            try {
+                value = JSON.readTree(line);
+            } catch (JsonProcessingException e) {
+                throw new IllegalArgumentException(where + " is not one JSON value: " + e.getOriginalMessage(), e);
+            }
+            if (!(value instanceof ObjectNode object)) {
+                throw new IllegalArgumentException(where + " is not a JSON object");
+            }
+            if (object.isEmpty()) {
+                messages.add(List.of());
+            } else if (object.size() == 1 && object.has("@context")) {
+                context = object.get("@context");
+                contextSet = true;
+            } else {
+                JsonNode document = object;
+                if (contextSet) {
+                    ObjectNode wrapped = JSON.createObjectNode();
+                    wrapped.set("@context", context);
+                    wrapped.set("@graph", object);
+                    document = wrapped;
+                }
+                messages.add(toStatements(document, baseIri, contexts, where));
+            }
+        }
+        return messages;
+    }
+
+    /** Write an NDJSON-LD RDF Message Log: one line per message, no context messages. */
+    public static String writeNdjson(List<? extends Collection<Statement>> messages) {
+        RdfMessageLog.checkWritable(messages, true, "NDJSON-LD");
+        StringBuilder out = new StringBuilder();
+        for (Collection<Statement> message : messages) {
+            out.append(messageObject(message)).append('\n');
+        }
+        return out.toString();
+    }
+
+    /**
+     * One message as a single-line JSON-LD object: {@code {}} when empty, otherwise its expanded
+     * form wrapped in {@code {"@graph": [...]}}. Also the payload of one Server-Sent Event.
+     */
+    public static String messageObject(Collection<Statement> message) {
+        if (message.isEmpty()) {
+            return "{}";
+        }
+        RdfMessageLog.checkWritable(List.of(message), true, "JSON-LD");
+        StringWriter text = new StringWriter();
+        RDFWriter writer = Rio.createWriter(RDFFormat.JSONLD, text);
+        writer.getWriterConfig().set(JSONLDSettings.JSONLD_MODE, JSONLDMode.EXPAND);
+        writer.getWriterConfig().set(BasicWriterSettings.PRETTY_PRINT, false);
+        Rio.write(message, writer);
+        try {
+            ObjectNode wrapped = JSON.createObjectNode();
+            wrapped.set("@graph", (ArrayNode) JSON.readTree(text.toString()));
+            return JSON.writeValueAsString(wrapped);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("RDF4J wrote JSON-LD that does not re-read", e);
+        }
+    }
+
+    /**
+     * Parse one standalone JSON-LD document, such as the payload of one Server-Sent Event, as one
+     * message. The same checks apply as for a log; {@code {}} is an empty message.
+     */
+    public static List<Statement> parseMessage(String json, String baseIri, Map<String, String> contexts) {
+        JsonNode value;
+        try {
+            value = JSON.readTree(json);
+        } catch (JsonProcessingException e) {
+            throw new IllegalArgumentException("not one JSON value: " + e.getOriginalMessage(), e);
+        }
+        return toStatements(value, baseIri, contexts, "message");
+    }
+
+    // ---------------------------------------------------------------------------------- YAML-LD
+
+    /**
+     * Parse a YAML-LD RDF Message Log (§2.3): one message per YAML document.
+     *
+     * @param contexts remote contexts by URL (may be empty); nothing is fetched over the network
+     * @throws IllegalArgumentException if the log is malformed, holds an empty document or a value
+     *                                  with no JSON form, or uses a JSON-LD 1.1 feature (#133)
+     */
+    public static List<List<Statement>> parseYaml(String log, String baseIri, Map<String, String> contexts) {
+        LoadSettings settings = LoadSettings.builder().setSchema(new CoreSchema()).build();
+        List<List<Statement>> messages = new ArrayList<>();
+        int n = 0;
+        Iterator<Object> documents;
+        try {
+            documents = new Load(settings).loadAllFromString(log).iterator();
+        } catch (RuntimeException e) {
+            throw new IllegalArgumentException("not YAML: " + e.getMessage(), e);
+        }
+        while (true) {
+            Object document;
+            try {
+                if (!documents.hasNext()) {
+                    break;
+                }
+                document = documents.next();
+            } catch (RuntimeException e) {
+                throw new IllegalArgumentException("YAML document " + (n + 1) + ": " + e.getMessage(), e);
+            }
+            n++;
+            String where = "YAML document " + n;
+            if (document == null) {
+                throw new IllegalArgumentException(where + " is empty; write {} for an empty message");
+            }
+            if (!(document instanceof Map) && !(document instanceof List)) {
+                throw new IllegalArgumentException(where + " is a scalar, not a JSON-LD document");
+            }
+            checkJsonForm(document, where, new IdentityHashMap<>());
+            messages.add(toStatements(JSON.valueToTree(document), baseIri, contexts, where));
+        }
+        return messages;
+    }
+
+    /** Write a YAML-LD RDF Message Log: one {@code ---} document per message, {@code {}} if empty. */
+    public static String writeYaml(List<? extends Collection<Statement>> messages) {
+        RdfMessageLog.checkWritable(messages, true, "YAML-LD");
+        List<Object> documents = new ArrayList<>();
+        for (Collection<Statement> message : messages) {
+            try {
+                documents.add(JSON.readValue(messageObject(message), Object.class));
+            } catch (JsonProcessingException e) {
+                throw new IllegalStateException(e);
+            }
+        }
+        DumpSettings settings = DumpSettings.builder().setSchema(new CoreSchema())
+                .setExplicitStart(true).setDefaultFlowStyle(FlowStyle.BLOCK).build();
+        return new Dump(settings).dumpAllToString(documents.iterator());
+    }
+
+    /** Refuse YAML values that have no JSON form: recursion, non-string keys, NaN and infinities. */
+    private static void checkJsonForm(Object value, String where, Map<Object, Boolean> path) {
+        if (value instanceof Map<?, ?> || value instanceof List<?>) {
+            if (path.put(value, Boolean.TRUE) != null) {
+                throw new IllegalArgumentException(where + " holds a recursive alias");
+            }
+            if (value instanceof Map<?, ?> map) {
+                for (Map.Entry<?, ?> e : map.entrySet()) {
+                    if (!(e.getKey() instanceof String)) {
+                        throw new IllegalArgumentException(where + " has a key that is not a string: " + e.getKey());
+                    }
+                    checkJsonForm(e.getValue(), where, path);
+                }
+            } else {
+                for (Object item : (List<?>) value) {
+                    checkJsonForm(item, where, path);
+                }
+            }
+            path.remove(value);
+        } else if (value instanceof Double d && (d.isNaN() || d.isInfinite())) {
+            throw new IllegalArgumentException(where + " holds " + d + ", which JSON cannot hold");
+        } else if (value != null && !(value instanceof String || value instanceof Boolean
+                || value instanceof Integer || value instanceof Long || value instanceof BigInteger
+                || value instanceof Double || value instanceof BigDecimal)) {
+            throw new IllegalArgumentException(where + " holds a " + value.getClass().getSimpleName()
+                    + ", which has no JSON form");
+        }
+    }
+
+    // ------------------------------------------------------------------------------ conversion
+
+    private static List<Statement> toStatements(JsonNode document, String baseIri,
+                                                Map<String, String> contexts, String where) {
+        if (document instanceof ObjectNode object && object.isEmpty()
+                || document instanceof ArrayNode array && array.isEmpty()) {
+            return List.of();
+        }
+        if (!(document instanceof ObjectNode) && !(document instanceof ArrayNode)) {
+            throw new IllegalArgumentException(where + " is not a JSON-LD document");
+        }
+        refuseJsonLd11(document, where);
+        RDFParser parser = Rio.createParser(RDFFormat.JSONLD);
+        parser.getParserConfig().set(JSONLDSettings.DOCUMENT_LOADER, new OfflineLoader(contexts));
+        StatementCollector collector = new StatementCollector(new LinkedHashModel());
+        parser.setRDFHandler(collector);
+        try {
+            parser.parse(new StringReader(JSON.writeValueAsString(document)), baseIri);
+        } catch (IOException | RuntimeException e) {
+            throw new IllegalArgumentException(where + " does not convert to RDF: " + rootMessage(e), e);
+        }
+        return new ArrayList<>((Model) collector.getStatements());
+    }
+
+    /**
+     * Refuse what jsonld-java 0.13.4 (JSON-LD 1.0) would silently drop or misread: a JSON-LD 1.1
+     * keyword used as a key, and a term definition with its own {@code @context}.
+     */
+    static void refuseJsonLd11(JsonNode node, String where) {
+        if (node instanceof ObjectNode object) {
+            for (Map.Entry<String, JsonNode> field : object.properties()) {
+                if (JSON_LD_11_KEYWORDS.contains(field.getKey())) {
+                    throw new IllegalArgumentException(where + " uses the JSON-LD 1.1 keyword "
+                            + field.getKey() + ", which the JSON-LD 1.0 processor of RDF4J 4.3.8"
+                            + " would drop or reject (#133)");
+                }
+                if (field.getKey().equals("@context")) {
+                    refuseScopedContexts(field.getValue(), where);
+                }
+                refuseJsonLd11(field.getValue(), where);
+            }
+        } else if (node instanceof ArrayNode array) {
+            for (JsonNode item : array) {
+                refuseJsonLd11(item, where);
+            }
+        }
+    }
+
+    private static void refuseScopedContexts(JsonNode context, String where) {
+        if (context instanceof ArrayNode array) {
+            for (JsonNode item : array) {
+                refuseScopedContexts(item, where);
+            }
+        } else if (context instanceof ObjectNode object) {
+            for (Map.Entry<String, JsonNode> term : object.properties()) {
+                if (term.getValue() instanceof ObjectNode definition && definition.has("@context")) {
+                    throw new IllegalArgumentException(where + " gives the term '" + term.getKey()
+                            + "' a scoped @context (JSON-LD 1.1), which the JSON-LD 1.0 processor"
+                            + " of RDF4J 4.3.8 would ignore (#133)");
+                }
+            }
+        }
+    }
+
+    private static String rootMessage(Throwable e) {
+        Throwable root = e;
+        StringBuilder message = new StringBuilder(String.valueOf(e.getMessage()));
+        while (root.getCause() != null && root.getCause() != root) {
+            root = root.getCause();
+            message.append(": ").append(root.getMessage());
+        }
+        return message.toString();
+    }
+
+    /** Serves remote contexts from a map, after the same JSON-LD 1.1 checks; fetches nothing. */
+    private static final class OfflineLoader extends DocumentLoader {
+        private final Map<String, String> contexts;
+
+        OfflineLoader(Map<String, String> contexts) {
+            this.contexts = new LinkedHashMap<>(contexts);
+        }
+
+        @Override
+        public RemoteDocument loadDocument(String url) throws JsonLdError {
+            String json = contexts.get(url);
+            if (json == null) {
+                throw new JsonLdError(JsonLdError.Error.LOADING_REMOTE_CONTEXT_FAILED,
+                        url + " is not among the contexts provided; remote contexts are not fetched");
+            }
+            try {
+                refuseJsonLd11(JSON.readTree(json), "the context " + url);
+                return new RemoteDocument(url, JsonUtils.fromString(json));
+            } catch (IOException e) {
+                throw new JsonLdError(JsonLdError.Error.LOADING_DOCUMENT_FAILED, url + ": " + e.getMessage());
+            }
+        }
+    }
+}
