@@ -3582,6 +3582,59 @@ class SparqlProtocolServletTest {
         }
     }
 
+    /**
+     * A prefix declared twice in the prologue is a 400 from RDF4J ("Multiple prefix declarations")
+     * but not from Jena or Virtuoso, and rdflib's SPARQLStore prepends some 30 namespaces to every
+     * query (#115). The last declaration now wins; only the prologue is touched.
+     */
+    @Test
+    void aPrefixDeclaredAgainTakesItsLastDeclaration() throws Exception {
+        // rdflib's shape: its defaults first, then the query's own, the same IRI again
+        var same = getCsv(shared.url(), "PREFIX skos: <http://www.w3.org/2004/02/skos/core#>\n"
+                + "PREFIX ex: <urn:ex:>\n"
+                + "PREFIX skos: <http://www.w3.org/2004/02/skos/core#>\n"
+                + "SELECT ?d WHERE { ex:EV-7Q2 ex:depot ?d }");
+        assertEquals(200, same.statusCode(), same.body());
+        assertTrue(same.body().contains("urn:ex:North"), same.body());
+        // another IRI: the last declaration is the one in force, as in Jena
+        var last = getCsv(shared.url(), "prefix ex: <urn:wrong:>\nPREFIX ex: <urn:ex:>\n"
+                + "SELECT ?d WHERE { ex:EV-7Q2 ex:depot ?d }");
+        assertEquals(200, last.statusCode(), last.body());
+        assertTrue(last.body().contains("urn:ex:North"), last.body());
+        // an error further on still names its own line
+        var broken = getCsv(shared.url(), "PREFIX ex: <urn:a:>\nPREFIX ex: <urn:ex:>\nSELECT * WHERE { ?s ?p }");
+        assertEquals(400, broken.statusCode(), broken.body());
+        assertTrue(broken.body().contains("line 3"), broken.body());
+        try (Endpoint rw = Endpoint.start(EndpointOptions.defaults().withUpdateEnabled(true), 0)) {
+            var u = post(rw.url(), "application/sparql-update",
+                    "PREFIX ex: <urn:wrong:>\nPREFIX ex: <urn:ex:>\nINSERT DATA { ex:EV-9 ex:depot ex:South }", null);
+            assertEquals(204, u.statusCode(), u.body());
+            var q = getCsv(rw.url(), "SELECT ?d WHERE { <urn:ex:EV-9> <urn:ex:depot> ?d }");
+            assertTrue(q.body().contains("urn:ex:South"), q.body());
+        }
+    }
+
+    /** The prologue scan: what it blanks, and where it stops without touching anything. */
+    @Test
+    void onlyTheLeadingPrologueIsRewritten() {
+        String plain = "PREFIX a: <urn:a> SELECT * {}";
+        assertSame(plain, SparqlProtocolServlet.withoutRepeatedPrefixes(plain));
+        String twice = "PREFIX a: <urn:x>\r\n# note\nBASE <http://b/>\nprefix a:<urn:a>\nSELECT * {}";
+        String once = SparqlProtocolServlet.withoutRepeatedPrefixes(twice);
+        assertEquals(twice.length(), once.length());
+        assertEquals("                 \r\n# note\nBASE <http://b/>\nprefix a:<urn:a>\nSELECT * {}", once);
+        assertEquals(" ".repeat("PREFIX : <urn:a>".length()) + "PREFIX : <urn:b> ASK {}",
+                SparqlProtocolServlet.withoutRepeatedPrefixes("PREFIX : <urn:a>PREFIX : <urn:b> ASK {}"));
+        // nothing past the prologue is read: a body that repeats the words is left alone
+        String body = "PREFIX a: <urn:a> SELECT * { ?s ?p \"PREFIX a: <urn:a>\" } # PREFIX a: <urn:a>";
+        assertSame(body, SparqlProtocolServlet.withoutRepeatedPrefixes(body));
+        // a declaration it cannot read with certainty ends the scan: RDF4J answers for it
+        String unsure = "PREFIX a: # c >\n <urn:a>\nPREFIX a: <urn:a> ASK {}";
+        assertSame(unsure, SparqlProtocolServlet.withoutRepeatedPrefixes(unsure));
+        String update = "PREFIX a: <urn:a> INSERT DATA {} ; PREFIX a: <urn:a> PREFIX a: <urn:a> INSERT DATA {}";
+        assertSame(update, SparqlProtocolServlet.withoutRepeatedPrefixes(update), "only the first operation's prologue");
+    }
+
     @SuppressWarnings("unused")
     private static void silence(IOException ignored) { }
 }

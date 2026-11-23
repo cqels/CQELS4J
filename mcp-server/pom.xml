@@ -47,6 +47,13 @@
     <build>
         <finalName>cqels-mcp-server</finalName>
         <plugins>
+            <plugin>
+                <!-- pinned: Maven 3.8's super-POM binds 3.1, which predates maven.compiler.release
+                     and fails with "Source option 5 is no longer supported" (cqels/CQELS4J#115) -->
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.13.0</version>
+            </plugin>
             <!-- Build a single runnable jar so an MCP client can launch `java -jar …`. -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>

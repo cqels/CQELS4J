@@ -589,8 +589,9 @@ public final class SparqlProtocolServlet extends HttpServlet {
 
     // ---- query -------------------------------------------------------------------------
 
-    private void evaluateQuery(HttpServletRequest req, HttpServletResponse resp, Params params, String queryString)
+    private void evaluateQuery(HttpServletRequest req, HttpServletResponse resp, Params params, String requested)
             throws IOException {
+        String queryString = withoutRepeatedPrefixes(requested);
         Repository target = null;
         boolean snapshot = false;
         try {
@@ -941,8 +942,9 @@ public final class SparqlProtocolServlet extends HttpServlet {
         executeUpdate(req, resp, params, updateString);
     }
 
-    private void executeUpdate(HttpServletRequest req, HttpServletResponse resp, Params params, String updateString)
+    private void executeUpdate(HttpServletRequest req, HttpServletResponse resp, Params params, String requested)
             throws IOException {
+        String updateString = withoutRepeatedPrefixes(requested);
         try (TimedServiceClient.Budget budget = openBudget();
              RepositoryConnection conn = repository.get().getConnection()) {
             String base = baseIri(req);
@@ -1979,6 +1981,121 @@ public final class SparqlProtocolServlet extends HttpServlet {
             // fall through to the same answer
         }
         throw new IllegalArgumentException("'" + param + "' is not an absolute IRI: " + value);
+    }
+
+    /**
+     * {@code text} with every {@code PREFIX} declaration of its leading prologue blanked out that
+     * a later one in the same prologue declares again, so the last declaration of a prefix wins —
+     * what Jena and Virtuoso do. RDF4J refuses the request instead ("Multiple prefix declarations
+     * for prefix"), and rdflib's {@code SPARQLStore} prepends some 30 namespaces to every query,
+     * so a query declaring {@code skos:} itself was a 400 from here and a 200 elsewhere (cqels/CQELS4J#115).
+     *
+     * <p>Only the prologue is read, and only as far as it is plain: whitespace, {@code #}
+     * comments, {@code BASE <iri>} and {@code PREFIX name: <iri>}, keywords in any case. At the
+     * first token that is anything else — the query's form, or a declaration it cannot read with
+     * certainty (a comment inside one, say) — the scan stops, and what it has not read is left to
+     * RDF4J as it was. Removing an earlier declaration changes no meaning: every use of a prefix
+     * comes after the whole prologue, where the last declaration is the one in force, and a
+     * {@code BASE} between them resolves the kept declaration's IRI as before. A blanked
+     * declaration becomes spaces, its line breaks kept, so the line and column RDF4J reports
+     * for a later error are still those of the request. In an update, only the prologue before
+     * the first operation is read.
+     */
+    static String withoutRepeatedPrefixes(String text) {
+        int n = text.length();
+        List<int[]> spans = new ArrayList<>();
+        List<String> names = new ArrayList<>();
+        int i = 0;
+        while (i < n) {
+            char c = text.charAt(i);
+            if (Character.isWhitespace(c)) {
+                i++;
+            } else if (c == '#') {
+                int end = text.indexOf('\n', i);
+                if (end < 0) {
+                    break;
+                }
+                i = end + 1;
+            } else if (prologueKeyword(text, i, "BASE")) {
+                int end = iriRef(text, i + 4);
+                if (end < 0) {
+                    break;
+                }
+                i = end;
+            } else if (prologueKeyword(text, i, "PREFIX")) {
+                int j = i + 6;
+                while (j < n && Character.isWhitespace(text.charAt(j))) {
+                    j++;
+                }
+                int colon = j;
+                while (colon < n && text.charAt(colon) != ':' && pnChar(text.charAt(colon))) {
+                    colon++;
+                }
+                if (colon >= n || text.charAt(colon) != ':') {
+                    break;
+                }
+                int end = iriRef(text, colon + 1);
+                if (end < 0) {
+                    break;
+                }
+                names.add(text.substring(j, colon));
+                spans.add(new int[] {i, end});
+                i = end;
+            } else {
+                break;
+            }
+        }
+        char[] out = null;
+        for (int k = 0; k < names.size(); k++) {
+            if (names.subList(k + 1, names.size()).contains(names.get(k))) {
+                if (out == null) {
+                    out = text.toCharArray();
+                }
+                for (int p = spans.get(k)[0]; p < spans.get(k)[1]; p++) {
+                    if (out[p] != '\n' && out[p] != '\r') {
+                        out[p] = ' ';
+                    }
+                }
+            }
+        }
+        return out == null ? text : new String(out);
+    }
+
+    /** Whether {@code word} starts at {@code at}, in any case, and is not the start of a longer name. */
+    private static boolean prologueKeyword(String text, int at, String word) {
+        int end = at + word.length();
+        return text.regionMatches(true, at, word, 0, word.length())
+                && end < text.length() && Character.isWhitespace(text.charAt(end));
+    }
+
+    /** A character a prefix name may hold (PN_CHARS and '.', loosely): not space, not punctuation that ends it. */
+    private static boolean pnChar(char c) {
+        return !Character.isWhitespace(c) && c != '#' && c != '<' && c != '>' && c != '{' && c != '"' && c != '\'';
+    }
+
+    /**
+     * The index just past an {@code IRIREF} that follows {@code from} after whitespace only, or
+     * {@code -1} when there is none to read with certainty. An IRIREF holds no space, '<' or '>'.
+     */
+    private static int iriRef(String text, int from) {
+        int n = text.length();
+        int i = from;
+        while (i < n && Character.isWhitespace(text.charAt(i))) {
+            i++;
+        }
+        if (i >= n || text.charAt(i) != '<') {
+            return -1;
+        }
+        for (int j = i + 1; j < n; j++) {
+            char c = text.charAt(j);
+            if (c == '>') {
+                return j + 1;
+            }
+            if (c == '<' || c <= ' ') {
+                return -1;
+            }
+        }
+        return -1;
     }
 
     /** The service-defined base IRI of §2.3: the request URL, without its query string. */
