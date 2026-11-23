@@ -219,4 +219,46 @@ class JsonLdMessageLogTest {
         String log = JsonLdMessageLog.writeYaml(messages);
         assertMessages(messages, JsonLdMessageLog.parseYaml(log, BASE, Map.of()));
     }
+
+    // ------------------------------------------------------------------ co-review round 5
+
+    @Test
+    void aByteOrderMarkBeforeTheFirstLineIsSkipped() {
+        assertEquals(List.of(1), sizes(nd("\uFEFF" + S1 + "\n")));
+        assertEquals(List.of(), nd("\uFEFF"));
+    }
+
+    @Test
+    void yamlTagsAndVersions() {
+        for (String bad : List.of("\"@id\": http://e/s\nhttp://e/p: !!bool yes\n",
+                "\"@id\": http://e/s\nhttp://e/p: !!null x\n",
+                "%YAML 1.1\n--- {\"@id\": http://e/s, http://e/p: yes}\n",
+                "\"@id\": http://e/s\nhttp://e/p: !!binary YQ==\n",
+                "\"@id\": http://e/s\nhttp://e/p: !!set {x}\n")) {
+            assertThrows(IllegalArgumentException.class, () -> yaml(bad), bad);
+        }
+        assertEquals(List.of(1), sizes(yaml("%YAML 1.2\n--- {\"@id\": http://e/s, http://e/p: !!bool true}\n")));
+        assertEquals(List.of(1), sizes(yaml("\"@id\": http://e/s\nhttp://e/p: !!str 15\n")));
+    }
+
+    @Test
+    void writersKeepNumberSpellingsAndRefuseUnwritableIris() {
+        IRI s = iri("http://e/s");
+        IRI p = iri("http://e/p");
+        List<List<Statement>> numbers = List.of(List.of(
+                VF.createStatement(s, p, VF.createLiteral("01", XSD.INTEGER)),
+                VF.createStatement(s, p, VF.createLiteral("+1", XSD.INTEGER)),
+                VF.createStatement(s, p, VF.createLiteral("1.00", XSD.DOUBLE)),
+                VF.createStatement(s, p, VF.createLiteral("1.", XSD.DECIMAL))));
+        Map<String, String> ns = Map.of("e", "http://e/");
+        assertMessages(numbers, RdfMessageLog.parse(RdfMessageLog.writeTurtle(numbers, ns), RDFFormat.TURTLE, BASE));
+        assertMessages(numbers, RdfMessageLog.parse(RdfMessageLog.writeTriG(numbers, ns), RDFFormat.TRIG, BASE));
+        for (String bad : List.of("http://e/a b", "http://e/a\\b", "http://e/a>b", "http://e/a{b}")) {
+            List<List<Statement>> m = List.of(List.of(VF.createStatement(s, p, iri(bad))));
+            for (Runnable write : List.<Runnable>of(() -> RdfMessageLog.writeTriG(m, ns), () -> JsonLdMessageLog.writeNdjson(m),
+                    () -> RdfXmlMessageLog.write(m, ns), () -> RdfMessageLog.writeNQuads(m))) {
+                assertThrows(IllegalArgumentException.class, write::run, bad);
+            }
+        }
+    }
 }

@@ -1,6 +1,9 @@
 package org.cqels.examples.messages;
 
+import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.io.StringReader;
 import java.io.StringWriter;
@@ -37,7 +40,8 @@ import org.eclipse.rdf4j.rio.Rio;
  * line per statement. Each event is a standalone document, so blank nodes are scoped to their
  * message, and an empty message is the payload {@code {}} (JSON-LD) or no statements (N-Quads).
  *
- * <p>The consumer follows the WHATWG event-stream parsing rules: lines end in CR, LF or CRLF; a
+ * <p>The consumer follows the WHATWG event-stream parsing rules: the stream is UTF-8 whatever
+ * charset the response names; lines end in CR, LF or CRLF; a
  * line starting with ':' is a comment; a field's value loses one leading space; several
  * {@code data:} lines join with a newline; an event is dispatched at a blank line, and not at all
  * if its data is empty. Events of other types are skipped. JSON-LD payloads go through
@@ -165,8 +169,10 @@ public final class SseMessageChannel {
                               Consumer<List<Statement>> sink) throws IOException, InterruptedException {
         HttpClient client = HttpClient.newHttpClient();
         HttpRequest request = HttpRequest.newBuilder(uri).header("Accept", "text/event-stream").GET().build();
-        HttpResponse<Stream<String>> response = client.send(request, HttpResponse.BodyHandlers.ofLines());
-        try (Stream<String> lines = response.body()) {
+        HttpResponse<InputStream> response = client.send(request, HttpResponse.BodyHandlers.ofInputStream());
+        // an event stream is always UTF-8, whatever charset the Content-Type names (WHATWG); a
+        // BufferedReader ends a line at CR, LF or CRLF, as the event-stream grammar does
+        try (BufferedReader lines = new BufferedReader(new InputStreamReader(response.body(), StandardCharsets.UTF_8))) {
             String type = response.headers().firstValue("Content-Type").orElse("");
             if (response.statusCode() != 200 || !type.startsWith("text/event-stream")) {
                 throw new IOException("not an event stream: HTTP " + response.statusCode() + ", " + type);
@@ -177,7 +183,7 @@ public final class SseMessageChannel {
                     .filter(p -> p.mediaType().equals(payloadType.split(";")[0].strip()))
                     .findFirst()
                     .orElseThrow(() -> new IOException("unsupported payload type " + payloadType));
-            return dispatch(lines.iterator(), data -> sink.accept(decode(data, payload, baseIri, contexts)));
+            return dispatch(lines.lines().iterator(), data -> sink.accept(decode(data, payload, baseIri, contexts)));
         }
     }
 

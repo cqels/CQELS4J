@@ -63,4 +63,29 @@ class SseMessageChannelTest {
         return message.stream().filter(st -> st.getPredicate().getLocalName().equals("hasResult"))
                 .map(Statement::getObject).findFirst().orElseThrow();
     }
+
+    @Test
+    void theStreamIsUtf8WhateverCharsetItNamesAndLinesMayEndInCr() throws Exception {
+        com.sun.net.httpserver.HttpServer server = com.sun.net.httpserver.HttpServer.create(
+                new java.net.InetSocketAddress(java.net.InetAddress.getLoopbackAddress(), 0), 0);
+        byte[] body = ("event: rdf-message\rdata: {\"@id\":\"http://e/s\",\"http://e/p\":\"caf\u00e9\"}\r\r")
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        server.createContext("/m", exchange -> {
+            exchange.getResponseHeaders().set("Content-Type", "text/event-stream; charset=iso-8859-1");
+            exchange.getResponseHeaders().set(SseMessageChannel.PAYLOAD_HEADER, "application/ld+json");
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        try {
+            List<List<Statement>> received = new ArrayList<>();
+            int n = SseMessageChannel.consume(java.net.URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/m"),
+                    BASE, Map.of(), received::add);
+            assertEquals(1, n);
+            assertEquals("caf\u00e9", received.get(0).get(0).getObject().stringValue());
+        } finally {
+            server.stop(0);
+        }
+    }
 }

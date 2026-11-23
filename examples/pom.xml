@@ -86,7 +86,10 @@
              and surefire versions as sparql-endpoint. -->
         <!-- RDF Messages demo (org.cqels.examples.messages): the NDJSON-LD, YAML-LD and RDF/XML
              message logs. Same RDF4J version as the engine. snakeyaml-engine reads YAML 1.2 with
-             its Core schema, so `yes` stays a string (Jackson's YAML reader makes it true). -->
+             its Core schema, so `yes` stays a string (Jackson's YAML reader makes it true).
+             rdf4j-rio-jsonld excludes some httpcomponents artifacts that jsonld-java brought in
+             (fluent-hc, httpmime, httpcore-nio and the OSGi bundles); nothing on the classpath
+             uses them. -->
         <dependency>
             <groupId>org.eclipse.rdf4j</groupId>
             <artifactId>rdf4j-rio-jsonld</artifactId>

@@ -14,9 +14,7 @@ import javax.xml.XMLConstants;
 import javax.xml.namespace.QName;
 import javax.xml.stream.XMLEventFactory;
 import javax.xml.stream.XMLEventReader;
-import javax.xml.stream.XMLEventWriter;
 import javax.xml.stream.XMLInputFactory;
-import javax.xml.stream.XMLOutputFactory;
 import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.events.Attribute;
 import javax.xml.stream.events.Characters;
@@ -205,26 +203,97 @@ public final class RdfXmlMessageLog {
         }
         refuseRdf12(start, n);
 
-        StringWriter out = new StringWriter();
-        XMLEventWriter writer = XMLOutputFactory.newFactory().createXMLEventWriter(out);
-        writer.add(EVENTS.createStartElement(start.getName().getPrefix(), RDF, "RDF",
-                attributes.iterator(), namespaces.iterator()));
+        // Written out by hand rather than with an XMLEventWriter, which would write a decoded CR,
+        // tab or newline back raw, where XML's end-of-line and attribute-value normalisation turn
+        // them into LF or spaces: here they are written as character references.
+        StringBuilder out = new StringBuilder();
+        writeStart(out, start.getName(), attributes, namespaces);
         int depth = 1;
+        int literalDepth = 0;                // > 0 inside the content of an XML-literal property
         while (depth > 0) {
             if (!reader.hasNext()) {
                 throw new IllegalArgumentException("message " + n + " is not closed");
             }
             XMLEvent event = reader.nextEvent();
-            if (event.isStartElement()) {
-                refuseRdf12(event.asStartElement(), n);
-                depth++;
-            } else if (event.isEndElement()) {
-                depth--;
+            switch (event.getEventType()) {
+                case XMLEvent.START_ELEMENT -> {
+                    StartElement element = event.asStartElement();
+                    depth++;
+                    if (literalDepth > 0) {
+                        literalDepth++;
+                    } else {
+                        refuseRdf12(element, n);
+                        Attribute parseType = element.getAttributeByName(RDF_PARSE_TYPE);
+                        if (parseType != null && !parseType.getValue().equals("Resource")
+                                && !parseType.getValue().equals("Collection")) {
+                            literalDepth = 1;        // RDF/XML reads any other parseType as Literal
+                        }
+                    }
+                    List<Attribute> own = new ArrayList<>();
+                    element.getAttributes().forEachRemaining(own::add);
+                    writeStart(out, element.getName(), own, namespaces(element));
+                }
+                case XMLEvent.END_ELEMENT -> {
+                    depth--;
+                    if (literalDepth > 0) {
+                        literalDepth--;
+                    }
+                    out.append("</").append(qname(event.asEndElement().getName())).append('>');
+                }
+                case XMLEvent.CHARACTERS, XMLEvent.CDATA, XMLEvent.SPACE ->
+                        escape(out, event.asCharacters().getData(), false);
+                case XMLEvent.COMMENT -> out.append("<!--").append(((javax.xml.stream.events.Comment) event).getText())
+                        .append("-->");
+                case XMLEvent.PROCESSING_INSTRUCTION -> {
+                    javax.xml.stream.events.ProcessingInstruction pi = (javax.xml.stream.events.ProcessingInstruction) event;
+                    out.append("<?").append(pi.getTarget());
+                    if (pi.getData() != null && !pi.getData().isEmpty()) {
+                        out.append(' ').append(pi.getData());
+                    }
+                    out.append("?>");
+                }
+                default -> throw new IllegalArgumentException("unexpected XML event " + event.getEventType()
+                        + " in message " + n + " at " + where(event));
             }
-            writer.add(event);
         }
-        writer.close();
         return out.toString();
+    }
+
+    private static void writeStart(StringBuilder out, QName name, List<Attribute> attributes, List<Namespace> namespaces) {
+        out.append('<').append(qname(name));
+        for (Namespace ns : namespaces) {
+            out.append(ns.getPrefix().isEmpty() ? " xmlns" : " xmlns:" + ns.getPrefix()).append("=\"");
+            escape(out, ns.getNamespaceURI(), true);
+            out.append('"');
+        }
+        for (Attribute a : attributes) {
+            out.append(' ').append(qname(a.getName())).append("=\"");
+            escape(out, a.getValue(), true);
+            out.append('"');
+        }
+        out.append('>');
+    }
+
+    private static String qname(QName name) {
+        return name.getPrefix() == null || name.getPrefix().isEmpty() ? name.getLocalPart()
+                : name.getPrefix() + ":" + name.getLocalPart();
+    }
+
+    /** XML-escape {@code text}; CR always, and tab and LF in an attribute, as character references. */
+    private static void escape(StringBuilder out, String text, boolean attribute) {
+        for (int k = 0; k < text.length(); k++) {
+            char c = text.charAt(k);
+            switch (c) {
+                case '&' -> out.append("&amp;");
+                case '<' -> out.append("&lt;");
+                case '>' -> out.append("&gt;");
+                case '"' -> out.append(attribute ? "&quot;" : "\"");
+                case '\r' -> out.append("&#13;");
+                case '\n' -> out.append(attribute ? "&#10;" : "\n");
+                case '\t' -> out.append(attribute ? "&#9;" : "\t");
+                default -> out.append(c);
+            }
+        }
     }
 
     private static List<Statement> parseMessage(String text, String base, int n) {

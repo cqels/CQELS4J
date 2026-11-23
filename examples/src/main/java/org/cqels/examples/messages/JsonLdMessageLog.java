@@ -7,6 +7,7 @@ import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -40,7 +41,14 @@ import org.snakeyaml.engine.v2.api.Dump;
 import org.snakeyaml.engine.v2.api.DumpSettings;
 import org.snakeyaml.engine.v2.api.Load;
 import org.snakeyaml.engine.v2.api.LoadSettings;
+import org.snakeyaml.engine.v2.api.lowlevel.Compose;
 import org.snakeyaml.engine.v2.common.FlowStyle;
+import org.snakeyaml.engine.v2.nodes.MappingNode;
+import org.snakeyaml.engine.v2.nodes.Node;
+import org.snakeyaml.engine.v2.nodes.NodeTuple;
+import org.snakeyaml.engine.v2.nodes.ScalarNode;
+import org.snakeyaml.engine.v2.nodes.SequenceNode;
+import org.snakeyaml.engine.v2.nodes.Tag;
 import org.snakeyaml.engine.v2.schema.CoreSchema;
 
 /**
@@ -50,7 +58,8 @@ import org.snakeyaml.engine.v2.schema.CoreSchema;
  * one {@code List<Statement>}, one atomic CQELS stream element.
  *
  * <p><strong>NDJSON-LD</strong>, as §2.2 defines it: every line is exactly one JSON object, and
- * blank lines are not allowed (a final newline is). A line is one of
+ * blank lines are not allowed (a final newline is; so are CRLF line ends and a byte-order mark
+ * before the first line). A line is one of
  * <ul>
  *   <li>{@code {}}: an empty message;</li>
  *   <li>an object whose only key is {@code @context}: a context message, which emits nothing and
@@ -66,9 +75,12 @@ import org.snakeyaml.engine.v2.schema.CoreSchema;
  * Choices made here where it is silent:
  * <ul>
  *   <li>YAML 1.2 with the Core schema (snakeyaml-engine), so {@code yes} is a string and
- *       {@code 0o17} a number. Aliases are expanded; a recursive alias, an explicit tag other than
- *       the Core schema's, a key that is not a string, and {@code .inf} or {@code .nan} are
- *       refused, since none of them has a JSON form.</li>
+ *       {@code 0o17} a number; a {@code %YAML} directive for another version is refused. Aliases
+ *       are expanded. Refused, since none of them has a JSON form: a recursive alias, an explicit
+ *       tag other than the Core schema's ({@code !!binary}, {@code !!set}, custom tags), a
+ *       {@code !!bool} or {@code !!null} tag on a value not spelled that way (snakeyaml-engine
+ *       would make {@code !!bool yes} null), a key that is not a string, and {@code .inf} or
+ *       {@code .nan}.</li>
  *   <li>An empty document (such as a {@code ---} with nothing after it) is refused rather than
  *       guessed at; an empty message is written {@code {}}.</li>
  *   <li>No context messages: §2.3 does not define them, so every document stands alone.</li>
@@ -83,7 +95,10 @@ import org.snakeyaml.engine.v2.schema.CoreSchema;
  *   <li>The JSON-LD processor is jsonld-java 0.13.4, the one {@code rdf4j-rio-jsonld} 4.3.8
  *       uses, and it implements JSON-LD 1.0. JSON-LD 1.1 keywords it would drop or reject, and a
  *       term's scoped {@code @context}, which it would ignore, are refused with an error naming
- *       <a href="https://github.com/cqels/CQELS4J/issues/133">#133</a>.</li>
+ *       <a href="https://github.com/cqels/CQELS4J/issues/133">#133</a>. The check looks at keys
+ *       only, without the context, so it also refuses such a keyword used as a key of an index
+ *       map, where JSON-LD 1.0 would read it as data; a keyword alias defined in the context is
+ *       rejected by jsonld-java itself.</li>
  * </ul>
  *
  * <p>The writers emit each message as expanded JSON-LD wrapped in {@code {"@graph": [...]}} (an
@@ -124,6 +139,9 @@ public final class JsonLdMessageLog {
      */
     public static List<List<Statement>> parseNdjson(String log, String baseIri, Map<String, String> contexts) {
         List<List<Statement>> messages = new ArrayList<>();
+        if (log.startsWith("\uFEFF")) {
+            log = log.substring(1);                     // a byte-order mark before the first line
+        }
         if (log.isEmpty()) {
             return messages;
         }
@@ -222,7 +240,23 @@ public final class JsonLdMessageLog {
      *                                  with no JSON form, or uses a JSON-LD 1.1 feature (#133)
      */
     public static List<List<Statement>> parseYaml(String log, String baseIri, Map<String, String> contexts) {
-        LoadSettings settings = LoadSettings.builder().setSchema(new CoreSchema()).build();
+        LoadSettings settings = LoadSettings.builder().setSchema(new CoreSchema())
+                .setVersionFunction(version -> {
+                    if (version.getMajor() != 1 || version.getMinor() != 2) {
+                        throw new IllegalArgumentException("%YAML " + version.getRepresentation()
+                                + ": only YAML 1.2 is read (1.1 would read yes as true)");
+                    }
+                    return version;
+                }).build();
+        try {
+            for (Node node : new Compose(settings).composeAllFromString(log)) {
+                checkTaggedScalars(node, Collections.newSetFromMap(new IdentityHashMap<>()));
+            }
+        } catch (IllegalArgumentException e) {
+            throw e;
+        } catch (RuntimeException e) {
+            throw new IllegalArgumentException("not YAML: " + e.getMessage(), e);
+        }
         List<List<Statement>> messages = new ArrayList<>();
         int n = 0;
         Iterator<Object> documents;
@@ -269,6 +303,34 @@ public final class JsonLdMessageLog {
         DumpSettings settings = DumpSettings.builder().setSchema(new CoreSchema())
                 .setExplicitStart(true).setDefaultFlowStyle(FlowStyle.BLOCK).build();
         return new Dump(settings).dumpAllToString(documents.iterator());
+    }
+
+    /**
+     * An explicit {@code !!bool} or {@code !!null} tag on a value the Core schema does not spell that
+     * way ({@code !!bool yes}) is constructed as null by snakeyaml-engine, and JSON-LD would then drop
+     * the value: refused.
+     */
+    private static void checkTaggedScalars(Node node, Set<Node> seen) {
+        if (!seen.add(node)) {
+            return;
+        }
+        if (node instanceof ScalarNode scalar) {
+            String v = scalar.getValue();
+            if (scalar.getTag().equals(Tag.BOOL) && !v.matches("true|True|TRUE|false|False|FALSE")
+                    || scalar.getTag().equals(Tag.NULL) && !v.matches("null|Null|NULL|~|")) {
+                throw new IllegalArgumentException("'" + v + "' tagged " + scalar.getTag()
+                        + " is not a YAML 1.2 Core schema value of that type");
+            }
+        } else if (node instanceof MappingNode mapping) {
+            for (NodeTuple tuple : mapping.getValue()) {
+                checkTaggedScalars(tuple.getKeyNode(), seen);
+                checkTaggedScalars(tuple.getValueNode(), seen);
+            }
+        } else if (node instanceof SequenceNode sequence) {
+            for (Node item : sequence.getValue()) {
+                checkTaggedScalars(item, seen);
+            }
+        }
     }
 
     /** Refuse YAML values that have no JSON form: recursion, non-string keys, NaN and infinities. */

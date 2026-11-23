@@ -12,11 +12,15 @@ import java.util.regex.Pattern;
 
 import org.cqels.stream.codec.RdfMessageCodec;
 import org.eclipse.rdf4j.model.Model;
+import org.eclipse.rdf4j.model.IRI;
 import org.eclipse.rdf4j.model.Statement;
+import org.eclipse.rdf4j.model.Value;
 import org.eclipse.rdf4j.model.Triple;
 import org.eclipse.rdf4j.model.impl.LinkedHashModel;
 import org.eclipse.rdf4j.rio.RDFFormat;
+import org.eclipse.rdf4j.rio.RDFWriter;
 import org.eclipse.rdf4j.rio.Rio;
+import org.eclipse.rdf4j.rio.turtle.TurtleWriterSettings;
 
 /**
  * Reads and writes <strong>RDF Message Logs</strong> as defined by the W3C RSP Community Group's
@@ -201,7 +205,11 @@ public final class RdfMessageLog {
                 Model model = new LinkedHashModel(message);
                 namespaces.forEach(model::setNamespace);
                 StringWriter text = new StringWriter();
-                Rio.write(model, text, format);
+                RDFWriter writer = Rio.createWriter(format, text);
+                // RDF4J would write "01"^^xsd:integer as 01 and "1.00"^^xsd:double as 1.0E0,
+                // which re-read as different literals
+                writer.getWriterConfig().set(TurtleWriterSettings.ABBREVIATE_NUMBERS, false);
+                Rio.write(model, writer);
                 out.append(text);
                 if (out.charAt(out.length() - 1) != '\n') {
                     out.append('\n');
@@ -214,8 +222,9 @@ public final class RdfMessageLog {
 
     /**
      * Refuse what a writer cannot write faithfully: a triple term (RDF4J 4.3.8 writes RDF-star,
-     * which RDF 1.2 reads differently and which the readers here refuse, #133), and a graph name
-     * where the format has no named graphs.
+     * which RDF 1.2 reads differently and which the readers here refuse, #133), an IRI with a
+     * character no syntax allows unescaped (space, {@code < > " { } | ^ `} or a backslash), and a
+     * graph name where the format has no named graphs.
      */
     static void checkWritable(List<? extends Collection<Statement>> messages, boolean graphs, String format) {
         int n = 0;
@@ -230,8 +239,28 @@ public final class RdfMessageLog {
                     throw new IllegalArgumentException("message " + n + " holds a triple term, which"
                             + " cannot be written faithfully with RDF4J 4.3.8 (#133)");
                 }
+                for (Value v : new Value[] {st.getSubject(), st.getPredicate(), st.getObject(), st.getContext()}) {
+                    if (v instanceof IRI iri && !isWritableIri(iri.stringValue())) {
+                        throw new IllegalArgumentException("message " + n + " holds the IRI <" + iri
+                                + ">, whose characters no RDF syntax can write unchanged");
+                    }
+                }
             }
         }
+    }
+
+    /**
+     * Whether an IRI can be written as it is: Turtle's IRIREF and RDF/XML both exclude these
+     * characters, and RDF4J's writers would percent-encode or reject them.
+     */
+    private static boolean isWritableIri(String iri) {
+        for (int k = 0; k < iri.length(); k++) {
+            char c = iri.charAt(k);
+            if (c <= 0x20 || "<>\"{}|^`\\".indexOf(c) >= 0) {
+                return false;
+            }
+        }
+        return true;
     }
 
     // ---------------------------------------------------------------- Turtle/TriG log tokeniser

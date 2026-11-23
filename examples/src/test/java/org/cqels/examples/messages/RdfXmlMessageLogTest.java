@@ -119,4 +119,40 @@ class RdfXmlMessageLogTest {
         assertThrows(IllegalArgumentException.class, () -> RdfXmlMessageLog.write(List.of(List.of(VF.createStatement(
                 b, VF.createIRI("http://example.org/p"), b, VF.createIRI("http://example.org/g")))), Map.of()));
     }
+
+    // ------------------------------------------------------------------ co-review round 5
+
+    /** The same element parsed as a standalone RDF/XML document by RDF4J. */
+    private static org.eclipse.rdf4j.model.Model direct(String inner) throws Exception {
+        return org.eclipse.rdf4j.rio.Rio.parse(new java.io.StringReader("<?xml version=\"1.0\"?>\n"
+                + "<rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\" xmlns:ex=\"http://example.org/\">"
+                + inner + "</rdf:RDF>"), BASE, org.eclipse.rdf4j.rio.RDFFormat.RDFXML);
+    }
+
+    @Test
+    void characterReferencesSurviveTheCopy() throws Exception {
+        for (String inner : List.of(
+                "<rdf:Description rdf:about=\"http://example.org/s\"><ex:p>a&#13;b&#13;&#10;c</ex:p></rdf:Description>",
+                "<rdf:Description rdf:about=\"http://example.org/s\" ex:p=\"a&#9;b&#10;c&#13;d &amp; &lt;&quot;\"/>",
+                "<rdf:Description rdf:about=\"http://example.org/s\"><ex:p><![CDATA[a<b & c]]></ex:p></rdf:Description>")) {
+            assertMessages(List.of(new java.util.ArrayList<>(direct(inner))), xml("", message(inner)));
+        }
+        Statement cr = VF.createStatement(VF.createIRI("http://example.org/s"), VF.createIRI("http://example.org/p"),
+                VF.createLiteral("a\rb\tc\n"));
+        assertMessages(List.of(List.of(cr)), RdfXmlMessageLog.parse(RdfXmlMessageLog.write(List.of(List.of(cr)), Map.of()), BASE));
+    }
+
+    @Test
+    void anXmlLiteralMayHoldWhatTheReaderRefusesElsewhere() throws Exception {
+        for (String content : List.of("<ex:q rdf:annotation=\"http://example.org/r\"/>",
+                "<ex:q rdf:parseType=\"Triple\"/>", "<ex:q rdf:annotationNodeID=\"r\">x</ex:q>")) {
+            String inner = "<rdf:Description rdf:about=\"http://example.org/s\"><ex:p rdf:parseType=\"Literal\">"
+                    + content + "</ex:p><ex:after rdf:resource=\"http://example.org/o\"/></rdf:Description>";
+            assertMessages(List.of(new java.util.ArrayList<>(direct(inner))), xml("", message(inner)));
+        }
+        // after the literal ends, the checks apply again
+        assertThrows(IllegalArgumentException.class, () -> xml("", message("<rdf:Description rdf:about=\"http://example.org/s\">"
+                + "<ex:p rdf:parseType=\"Literal\"><b/></ex:p><ex:q rdf:annotation=\"http://example.org/r\""
+                + " rdf:resource=\"http://example.org/o\"/></rdf:Description>")));
+    }
 }

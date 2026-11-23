@@ -133,13 +133,19 @@ These are tokenised here, and each message is parsed by RDF4J's ordinary parser.
   names #133: `<<( )>>`, `<< >>`, `{| |}`, and a base direction such as `@ar--rtl`.
 
 The writers terminate every message with `MESSAGE`, so an empty last message round-trips. Each
-message carries its own `@prefix` lines, which §2.1.3 allows. The Turtle writer refuses a
-statement with a graph name; the TriG writer keeps it.
+message carries its own `@prefix` lines, which §2.1.3 allows. Numbers are written as typed
+literals, because RDF4J's short form would turn `"01"^^xsd:integer` into `1`. The Turtle writer
+refuses a statement with a graph name; the TriG writer keeps it.
+
+Every writer refuses two things rather than change them: a triple term (#133), and an IRI
+containing a character that no syntax can write unescaped (a space, a
+backslash, or one of `` < > " { } | ^ ` ``).
 
 ### 4.3 NDJSON-LD and YAML-LD
 
 **NDJSON-LD** follows §2.2's algorithm as written:
-- Every line is one JSON object. Blank lines, duplicate keys and trailing tokens are errors.
+- Every line is one JSON object. Blank lines, duplicate keys and trailing tokens are errors. CRLF
+  line ends and a byte-order mark before the first line are accepted.
 - `{}` is an empty message.
 - A line whose only key is `@context` is a context message: it emits nothing and becomes the
   active context C.
@@ -153,9 +159,15 @@ behaviour, because it is the reason the parser is not used here.
 **YAML-LD** follows §2.3's proposal: each YAML document is one message, read as a JSON-LD
 document. The draft leaves some questions open; the choices made here are:
 - **YAML 1.2 with the Core schema.** `yes` stays a string and `0o17` is 15. Jackson's YAML
-  reader would make `yes` the boolean true, which is why it is not used.
-- **Aliases are expanded.** Refused, because they have no JSON form: a recursive alias, an
-  unknown tag, a key that is not a string, and `.inf` or `.nan`.
+  reader would make `yes` the boolean true, which is why it is not used. A `%YAML 1.1` directive
+  is refused.
+- **Aliases are expanded.** Refused, because they have no JSON form or would lose a value:
+  - a recursive alias;
+  - a tag the Core schema lacks (`!!binary`, `!!set`, a custom tag);
+  - `!!bool` or `!!null` on a value not spelled that way (the library would make `!!bool yes`
+    null, which JSON-LD then drops);
+  - a key that is not a string;
+  - `.inf` or `.nan`.
 - **An empty document is refused** rather than guessed at. An empty message is written `{}`.
 - **No context messages,** because §2.3 defines none.
 
@@ -164,14 +176,17 @@ document. The draft leaves some questions open; the choices made here are:
 - Remote contexts are never fetched. A context URL is served from a map the caller passes, and
   any other URL is an error.
 - JSON-LD 1.1 keywords and scoped contexts are refused, because the processor is JSON-LD 1.0
-  (#133).
+  (#133). The check reads keys without the context. It therefore also refuses such a keyword when
+  it is the key of an index map, where JSON-LD 1.0 would read it as data.
 - The writers emit expanded JSON-LD, one `{"@graph": [...]}` object per message, with named
   graphs kept.
 
 ### 4.4 RDF/XML
 
 The `<rdfm:MessageLog>` is read with StAX, one `<rdf:RDF>` element at a time. Each element is
-copied out as a standalone document and parsed by RDF4J.
+copied out as a standalone document and parsed by RDF4J. The copy writes a carriage return, and a
+tab or newline in an attribute, as character references, so XML's line-end and attribute
+normalisation leave them as they were.
 
 - **Scope.** `rdf:nodeID` is scoped to its message (§2.4.1).
 - **Inheritance (§2.4.2).** Namespace declarations, `xml:base` and `xml:lang` are inherited from
@@ -183,7 +198,8 @@ copied out as a standalone document and parsed by RDF4J.
 - **Also refused:**
   - an `rdf:version` without `-messages`;
   - a DOCTYPE (DTDs and external entities are not processed);
-  - `rdf:parseType="Triple"`, `rdf:annotation` and `rdf:annotationNodeID` (#133).
+  - `rdf:parseType="Triple"`, `rdf:annotation` and `rdf:annotationNodeID` (#133), except inside
+    the content of an XML literal, where they are just XML.
 - **The writer** wraps RDF4J's `<rdf:RDF>` output for each message in an `<rdfm:MessageLog>`
   carrying `rdf:version="1.2-messages"`. It refuses graph names, since RDF/XML has none.
 
@@ -194,7 +210,8 @@ copied out as a standalone document and parsed by RDF4J.
   `RDF-Message-Content-Type: application/ld+json` (or `application/n-quads`), and one
   `event: rdf-message` per message. With JSON-LD, the payload is one line, and an empty message is
   `{}`.
-- **Consumer:** follows the WHATWG event-stream rules: CR, LF or CRLF line ends; `:` comments;
+- **Consumer:** follows the WHATWG event-stream rules: UTF-8 whatever charset the response names;
+  CR, LF or CRLF line ends; `:` comments;
   one leading space dropped; several `data:` lines joined; dispatch at a blank line, and none for
   empty data. It skips other event types and decodes each payload as one standalone message.
 - **Scope:** a demonstration transport. One fixed list of messages per client, loopback only, no
@@ -220,9 +237,9 @@ Beside the suite, there are four more test classes:
 | Test class | Tests | What it covers |
 |---|---|---|
 | [`RdfMessageLogTest`](examples/src/test/java/org/cqels/examples/messages/RdfMessageLogTest.java) | 30 | Turtle/TriG token boundaries checked against RDF4J's own parse, prefix carry, version labels, the RDF 1.2 refusals, writer round trips |
-| [`JsonLdMessageLogTest`](examples/src/test/java/org/cqels/examples/messages/JsonLdMessageLogTest.java) | 12 | NDJSON line rules, context messages, offline contexts, JSON-LD 1.1 refusals, YAML 1.2 scalars and document rules, round trips |
-| [`RdfXmlMessageLogTest`](examples/src/test/java/org/cqels/examples/messages/RdfXmlMessageLogTest.java) | 5 | inheritance and overrides, refusals, round trips |
-| [`SseMessageChannelTest`](examples/src/test/java/org/cqels/examples/messages/SseMessageChannelTest.java) | 2 | the event-stream rules, and a loopback run with both payload types |
+| [`JsonLdMessageLogTest`](examples/src/test/java/org/cqels/examples/messages/JsonLdMessageLogTest.java) | 15 | NDJSON line rules, context messages, offline contexts, JSON-LD 1.1 refusals, YAML 1.2 scalars, tags, versions and document rules, writer round trips (number spellings, unwritable IRIs) |
+| [`RdfXmlMessageLogTest`](examples/src/test/java/org/cqels/examples/messages/RdfXmlMessageLogTest.java) | 7 | inheritance and overrides, character references, XML literals, refusals, round trips |
+| [`SseMessageChannelTest`](examples/src/test/java/org/cqels/examples/messages/SseMessageChannelTest.java) | 3 | the event-stream rules, UTF-8 and CR line ends, and a loopback run with both payload types |
 
 ## 5. The worked examples
 
