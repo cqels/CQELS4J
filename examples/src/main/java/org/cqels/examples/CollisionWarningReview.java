@@ -215,8 +215,9 @@ public class CollisionWarningReview {
         }
         String vehicle = warning.asStatement().getSubject().stringValue().substring(Fleet.EX.length());
         String key = vehicle + " warning @ " + t + " ms";
+        // TimeWindow is [start, end) in ms; the same window written (start-1, end-1] reads as (a-2s, a+1s].
         System.out.printf("  [review, window (%d, %d] around anchor %d ms] %s: %s%n",
-                anchor - 2_000, anchor + 1_000, anchor, key, verdict);
+                am.getWindow().getStart() - 1, am.getWindow().getEnd() - 1, anchor, key, verdict);
         REVIEW.computeIfAbsent(key, k -> new LinkedHashSet<>()).add(verdict);
     }
 
