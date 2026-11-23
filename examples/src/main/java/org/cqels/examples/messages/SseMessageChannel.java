@@ -44,11 +44,12 @@ import org.eclipse.rdf4j.rio.Rio;
  * charset the response names; lines end in CR, LF or CRLF; a
  * line starting with ':' is a comment; a field's value loses one leading space; several
  * {@code data:} lines join with a newline; an event is dispatched at a blank line, and not at all
- * if its data is empty. Events of other types are skipped. JSON-LD payloads go through
+ * if its data is empty. Events of other types are skipped; media types are compared
+ * case-insensitively. JSON-LD payloads go through
  * {@link JsonLdMessageLog#parseMessage}, with its checks and no network access.
  *
  * <p>This is a demonstration transport: the producer serves one fixed list of messages to each
- * client, on the loopback address only, and closes the stream at the end; it does not resume from
+ * client (clients in parallel), on the loopback address only, and closes the stream at the end; it does not resume from
  * {@code Last-Event-ID}.
  */
 public final class SseMessageChannel {
@@ -85,6 +86,7 @@ public final class SseMessageChannel {
      */
     public static final class Producer implements AutoCloseable {
         private final HttpServer server;
+        private final java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newCachedThreadPool();
 
         public Producer(List<? extends List<Statement>> messages, Payload payload, long delayMillis)
                 throws IOException {
@@ -95,6 +97,7 @@ public final class SseMessageChannel {
             }
             server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
             server.createContext("/messages", exchange -> serve(exchange, events, payload, delayMillis));
+            server.setExecutor(executor);                  // one thread per client, not one for all
             server.start();
         }
 
@@ -106,6 +109,7 @@ public final class SseMessageChannel {
         @Override
         public void close() {
             server.stop(0);
+            executor.shutdownNow();
         }
 
         private static void serve(HttpExchange exchange, List<String> events, Payload payload, long delayMillis)
@@ -174,13 +178,13 @@ public final class SseMessageChannel {
         // BufferedReader ends a line at CR, LF or CRLF, as the event-stream grammar does
         try (BufferedReader lines = new BufferedReader(new InputStreamReader(response.body(), StandardCharsets.UTF_8))) {
             String type = response.headers().firstValue("Content-Type").orElse("");
-            if (response.statusCode() != 200 || !type.startsWith("text/event-stream")) {
+            if (response.statusCode() != 200 || !type.toLowerCase(java.util.Locale.ROOT).startsWith("text/event-stream")) {
                 throw new IOException("not an event stream: HTTP " + response.statusCode() + ", " + type);
             }
             String payloadType = response.headers().firstValue(PAYLOAD_HEADER)
                     .orElseThrow(() -> new IOException("no " + PAYLOAD_HEADER + " header"));
             Payload payload = Stream.of(Payload.values())
-                    .filter(p -> p.mediaType().equals(payloadType.split(";")[0].strip()))
+                    .filter(p -> p.mediaType().equalsIgnoreCase(payloadType.split(";")[0].strip()))
                     .findFirst()
                     .orElseThrow(() -> new IOException("unsupported payload type " + payloadType));
             return dispatch(lines.lines().iterator(), data -> sink.accept(decode(data, payload, baseIri, contexts)));

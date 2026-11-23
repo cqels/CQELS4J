@@ -49,7 +49,9 @@ import org.eclipse.rdf4j.rio.Rio;
  *
  * <p>Refused, as §2.4 requires: a root element other than {@code <rdfm:MessageLog>}, any child of
  * it other than {@code <rdf:RDF>}, and non-whitespace text between messages. Comments and
- * processing instructions between messages are ignored.
+ * processing instructions between messages are ignored. After {@code </rdfm:MessageLog>} only
+ * comments, processing instructions and whitespace may follow. Messages are copied out as XML 1.0,
+ * so a character only XML 1.1 allows is refused.
  *
  * <p>Also refused:
  * <ul>
@@ -61,6 +63,11 @@ import org.eclipse.rdf4j.rio.Rio;
  *       {@code rdf:annotationNodeID} (read as an extra triple), all tracked in
  *       <a href="https://github.com/cqels/CQELS4J/issues/133">#133</a>.</li>
  * </ul>
+ *
+ * <p>The writer reads each message back and refuses it unless it is the same: RDF/XML cannot hold
+ * every graph (characters XML 1.0 forbids, an ill-formed {@code rdf:XMLLiteral}, {@code rdf:li},
+ * which reads back as {@code rdf:_1}, a predicate with no XML name), and RDF4J writes some of these
+ * anyway.
  *
  * <p>Note that each message is handed to a fresh RDF4J parser; the log itself is read once, as
  * one continuous stream, which is what the companion tests ask for.
@@ -163,8 +170,18 @@ public final class RdfXmlMessageLog {
                 case XMLEvent.COMMENT, XMLEvent.PROCESSING_INSTRUCTION -> {
                     // ignored, as §2.4 requires
                 }
-                case XMLEvent.END_ELEMENT -> {
-                    return messages;                       // </rdfm:MessageLog>
+                case XMLEvent.END_ELEMENT -> {                 // </rdfm:MessageLog>
+                    while (reader.hasNext()) {                 // only comments, PIs, whitespace after it
+                        XMLEvent after = reader.nextEvent();
+                        boolean ignorable = after.getEventType() == XMLEvent.COMMENT
+                                || after.getEventType() == XMLEvent.PROCESSING_INSTRUCTION
+                                || after.getEventType() == XMLEvent.END_DOCUMENT
+                                || after.isCharacters() && after.asCharacters().getData().isBlank();
+                        if (!ignorable) {
+                            throw new IllegalArgumentException("content after </rdfm:MessageLog> at " + where(after));
+                        }
+                    }
+                    return messages;
                 }
                 case XMLEvent.ENTITY_REFERENCE -> throw new IllegalArgumentException(
                         "an entity reference between messages at " + where(event));
@@ -263,7 +280,7 @@ public final class RdfXmlMessageLog {
         out.append('<').append(qname(name));
         for (Namespace ns : namespaces) {
             out.append(ns.getPrefix().isEmpty() ? " xmlns" : " xmlns:" + ns.getPrefix()).append("=\"");
-            escape(out, ns.getNamespaceURI(), true);
+            escape(out, ns.getNamespaceURI() == null ? "" : ns.getNamespaceURI(), true);  // xmlns=""
             out.append('"');
         }
         for (Attribute a : attributes) {
@@ -353,18 +370,37 @@ public final class RdfXmlMessageLog {
      *
      * @param namespaces prefix to namespace pairs to declare in every message (may be empty)
      * @throws IllegalArgumentException if a statement has a graph name (RDF/XML has none) or holds
-     *                                  a triple term (#133)
+     *                                  a triple term (#133), or a message would not read back
+     *                                  unchanged (each one is checked)
      */
     public static String write(List<? extends Collection<Statement>> messages, Map<String, String> namespaces) {
         RdfMessageLog.checkWritable(messages, false, "RDF/XML");
         StringBuilder out = new StringBuilder("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
                 .append("<rdfm:MessageLog xmlns:rdfm=\"").append(RDFM).append("\" xmlns:rdf=\"").append(RDF)
                 .append("\" rdf:version=\"").append(RdfMessageLog.VERSION_LABEL).append("\">\n");
+        int n = 0;
         for (Collection<Statement> message : messages) {
+            n++;
             Model model = new LinkedHashModel(message);
             namespaces.forEach(model::setNamespace);
             StringWriter text = new StringWriter();
-            Rio.write(model, text, RDFFormat.RDFXML);
+            String problem;
+            try {
+                Rio.write(model, text, RDFFormat.RDFXML);
+                // RDF/XML cannot hold everything: characters XML 1.0 forbids, an ill-formed
+                // rdf:XMLLiteral, predicates such as rdf:li (read back as rdf:_1) or rdf:nodeID, or
+                // one with no XML name. RDF4J writes some of these anyway, so the message is read
+                // back here and refused unless it is the same.
+                Model back = Rio.parse(new StringReader(text.toString()), "", RDFFormat.RDFXML);
+                problem = org.eclipse.rdf4j.model.util.Models.isomorphic(model, back) ? null
+                        : "it would read back as " + back;
+            } catch (IOException | RuntimeException e) {
+                problem = e.getMessage();
+            }
+            if (problem != null) {
+                throw new IllegalArgumentException("message " + n + " cannot be written as RDF/XML that"
+                        + " reads back unchanged: " + problem);
+            }
             out.append(XML_DECLARATION.matcher(text.toString()).replaceFirst("").strip()).append('\n');
         }
         return out.append("</rdfm:MessageLog>\n").toString();

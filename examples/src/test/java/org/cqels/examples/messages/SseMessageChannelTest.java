@@ -88,4 +88,41 @@ class SseMessageChannelTest {
             server.stop(0);
         }
     }
+
+    @Test
+    void mediaTypesAreCaseInsensitiveAndClientsAreServedInParallel() throws Exception {
+        com.sun.net.httpserver.HttpServer server = com.sun.net.httpserver.HttpServer.create(
+                new java.net.InetSocketAddress(java.net.InetAddress.getLoopbackAddress(), 0), 0);
+        byte[] body = "event: rdf-message\ndata: {}\n\n".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        server.createContext("/m", exchange -> {
+            exchange.getResponseHeaders().set("Content-Type", "Text/Event-Stream");
+            exchange.getResponseHeaders().set(SseMessageChannel.PAYLOAD_HEADER, "Application/LD+JSON");
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        try {
+            assertEquals(1, SseMessageChannel.consume(java.net.URI.create("http://127.0.0.1:"
+                    + server.getAddress().getPort() + "/m"), BASE, Map.of(), m -> { }));
+        } finally {
+            server.stop(0);
+        }
+        // six events 300 ms apart take 1.8 s per client; served one after the other, two take 3.6 s
+        List<List<Statement>> six = java.util.Collections.nCopies(6, List.of());
+        try (SseMessageChannel.Producer producer = new SseMessageChannel.Producer(six, SseMessageChannel.Payload.JSON_LD, 300)) {
+            long start = System.nanoTime();
+            java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+            List<java.util.concurrent.Future<Integer>> runs = new ArrayList<>();
+            for (int i = 0; i < 2; i++) {
+                runs.add(pool.submit(() -> SseMessageChannel.consume(producer.uri(), BASE, Map.of(), m -> { })));
+            }
+            for (java.util.concurrent.Future<Integer> run : runs) {
+                assertEquals(6, run.get());
+            }
+            pool.shutdown();
+            long ms = (System.nanoTime() - start) / 1_000_000;
+            org.junit.jupiter.api.Assertions.assertTrue(ms < 3000, "two clients took " + ms + " ms");
+        }
+    }
 }

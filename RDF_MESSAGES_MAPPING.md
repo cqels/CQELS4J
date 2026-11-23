@@ -80,11 +80,14 @@ an error (#133): in Turtle, `<< s p o >>` becomes an RDF-star quoted triple rath
 `rdf:parseType="Triple"` becomes an XML literal and `rdf:annotation` an extra triple. Its JSON-LD
 parser (jsonld-java 0.13.4) implements JSON-LD 1.0, so it drops `@direction` and ignores a term's
 scoped `@context`. The readers below refuse all of these rather than pass the misreading on.
+Where JSON-LD 1.0 and 1.1 read the same input differently, the readers cannot tell, and the 1.0
+reading applies (§4.3).
 
 ## 4. What this repository adds
 
 All in `org.cqels.examples.messages`. Every reader returns one `List<Statement>` per message, which
-is one `push`; every writer's output reads back to the same messages.
+is one `push`; every writer's output reads back to the same messages (the RDF/XML writer checks
+each message, since RDF/XML cannot hold every graph).
 
 | Format | Reader and writer | Built on |
 |---|---|---|
@@ -161,23 +164,46 @@ document. The draft leaves some questions open; the choices made here are:
 - **YAML 1.2 with the Core schema.** `yes` stays a string and `0o17` is 15. Jackson's YAML
   reader would make `yes` the boolean true, which is why it is not used. A `%YAML 1.1` directive
   is refused.
-- **Aliases are expanded.** Refused, because they have no JSON form or would lose a value:
+- **Aliases are expanded,** up to snakeyaml-engine's guard against alias bombs (50 aliases to
+  collections per document). Refused, because they have no JSON form or would lose a value:
   - a recursive alias;
   - a tag the Core schema lacks (`!!binary`, `!!set`, a custom tag);
   - `!!bool` or `!!null` on a value not spelled that way (the library would make `!!bool yes`
     null, which JSON-LD then drops);
   - a key that is not a string;
-  - `.inf` or `.nan`.
+  - `.inf` or `.nan`;
+  - a `<<` merge key, which the library merges as YAML 1.1 did, already while reading; in YAML
+    1.2 it is an ordinary key (quoted, `"<<"` is accepted).
 - **An empty document is refused** rather than guessed at. An empty message is written `{}`.
+- **Library limit:** a bare document after a `...` end marker (valid YAML 1.2) is refused by
+  snakeyaml-engine; start the next document with `---`.
 - **No context messages,** because §2.3 defines none.
 
 **Both formats:**
 - Blank nodes are scoped per message.
 - Remote contexts are never fetched. A context URL is served from a map the caller passes, and
   any other URL is an error.
-- JSON-LD 1.1 keywords and scoped contexts are refused, because the processor is JSON-LD 1.0
-  (#133). The check reads keys without the context. It therefore also refuses such a keyword when
-  it is the key of an index map, where JSON-LD 1.0 would read it as data.
+- **JSON-LD 1.0, not 1.1.** The processor implements JSON-LD 1.0 (#133).
+  - **Refused:** what it would drop or reject: JSON-LD 1.1 keywords, a term's scoped `@context`,
+    and a property-valued `@index`. The check reads keys without the context. It therefore also
+    refuses such a keyword when it is the key of an index map, where JSON-LD 1.0 would read it as
+    data.
+  - **Read with the 1.0 meaning, without an error.** Input that 1.0 and 1.1 read differently,
+    measured against Titanium, a JSON-LD 1.1 processor:
+    - a term whose IRI does not end in a character such as `/` or `#` still works as a prefix
+      (`"ex": "http://example.org/ns"` makes `ex:foo` `http://example.org/nsfoo`; 1.1 needs
+      `"@prefix": true`);
+    - the JSON number `1.0` becomes `xsd:double` (1.1: `xsd:integer`);
+    - `1.2e29` becomes `xsd:integer` (1.1: `xsd:double`).
+  - **Numbers beyond `xsd:double`** (`1e400`) are refused rather than read as the string
+    "Infinity".
+- **Invalid IRIs.** An `@id` with characters IRIs do not allow (`s t`) is percent-encoded, as RDF4J
+  does. The writers refuse such IRIs instead.
+- **Line size.** Jackson's limits apply to a line: 20 million characters in a string, nesting depth
+  1000, 1000 digits in a number. Direct RDF4J has the same limits.
+- **A question for the draft.** While a context C is set, a data line with its own `@graph`
+  becomes a named graph with a blank-node name, because §2.2 wraps it in another `@graph`.
+  JSON-LD 1.1 reads the wrapped document the same way. The code follows the draft as written.
 - The writers emit expanded JSON-LD, one `{"@graph": [...]}` object per message, with named
   graphs kept.
 
@@ -194,14 +220,25 @@ normalisation leave them as they were.
   the base in force.
 - **Refused, as §2.4 requires:** a root other than `rdfm:MessageLog`, a child other than
   `rdf:RDF`, and text between messages. Comments and processing instructions between messages
-  are ignored.
+  are ignored. Anything after `</rdfm:MessageLog>` other than comments, processing instructions
+  and whitespace is refused.
 - **Also refused:**
   - an `rdf:version` without `-messages`;
   - a DOCTYPE (DTDs and external entities are not processed);
   - `rdf:parseType="Triple"`, `rdf:annotation` and `rdf:annotationNodeID` (#133), except inside
     the content of an XML literal, where they are just XML.
+- **XML 1.0 only.** Each message is copied out as an XML 1.0 document, so a character that only
+  XML 1.1 allows (`&#1;`) is refused.
 - **The writer** wraps RDF4J's `<rdf:RDF>` output for each message in an `<rdfm:MessageLog>`
   carrying `rdf:version="1.2-messages"`. It refuses graph names, since RDF/XML has none.
+- **Read-back check.** RDF/XML cannot hold every graph, and RDF4J writes some of these anyway:
+  - characters XML 1.0 forbids;
+  - an ill-formed `rdf:XMLLiteral`;
+  - `rdf:li`, which reads back as `rdf:_1`;
+  - `rdf:nodeID` as a predicate;
+  - a predicate with no XML name.
+
+  So the writer reads each message back and refuses it unless it is the same.
 
 ### 4.5 Server-Sent Events
 
@@ -214,8 +251,9 @@ normalisation leave them as they were.
   CR, LF or CRLF line ends; `:` comments;
   one leading space dropped; several `data:` lines joined; dispatch at a blank line, and none for
   empty data. It skips other event types and decodes each payload as one standalone message.
-- **Scope:** a demonstration transport. One fixed list of messages per client, loopback only, no
-  `Last-Event-ID` resumption.
+- **Media types** are compared case-insensitively.
+- **Scope:** a demonstration transport. One fixed list of messages per client (clients are served
+  in parallel), loopback only, no `Last-Event-ID` resumption.
 
 ### 4.6 Tests
 
@@ -237,9 +275,9 @@ Beside the suite, there are four more test classes:
 | Test class | Tests | What it covers |
 |---|---|---|
 | [`RdfMessageLogTest`](examples/src/test/java/org/cqels/examples/messages/RdfMessageLogTest.java) | 30 | Turtle/TriG token boundaries checked against RDF4J's own parse, prefix carry, version labels, the RDF 1.2 refusals, writer round trips |
-| [`JsonLdMessageLogTest`](examples/src/test/java/org/cqels/examples/messages/JsonLdMessageLogTest.java) | 15 | NDJSON line rules, context messages, offline contexts, JSON-LD 1.1 refusals, YAML 1.2 scalars, tags, versions and document rules, writer round trips (number spellings, unwritable IRIs) |
-| [`RdfXmlMessageLogTest`](examples/src/test/java/org/cqels/examples/messages/RdfXmlMessageLogTest.java) | 7 | inheritance and overrides, character references, XML literals, refusals, round trips |
-| [`SseMessageChannelTest`](examples/src/test/java/org/cqels/examples/messages/SseMessageChannelTest.java) | 3 | the event-stream rules, UTF-8 and CR line ends, and a loopback run with both payload types |
+| [`JsonLdMessageLogTest`](examples/src/test/java/org/cqels/examples/messages/JsonLdMessageLogTest.java) | 18 | NDJSON line rules, context messages, offline contexts, JSON-LD 1.1 refusals (including a property-valued `@index`), numbers beyond `xsd:double`, YAML 1.2 scalars, tags, merge keys, versions and document rules, writer round trips (number spellings, unwritable IRIs) |
+| [`RdfXmlMessageLogTest`](examples/src/test/java/org/cqels/examples/messages/RdfXmlMessageLogTest.java) | 10 | inheritance and overrides, `xmlns=""`, character references, XML literals, content after the log, refusals, round trips, and the writer's read-back check |
+| [`SseMessageChannelTest`](examples/src/test/java/org/cqels/examples/messages/SseMessageChannelTest.java) | 4 | the event-stream rules, UTF-8 and CR line ends, case-insensitive media types, two clients in parallel, and a loopback run with both payload types |
 
 ## 5. The worked examples
 
@@ -268,8 +306,9 @@ is 6 events, the empty heartbeat among them, and 4 `Reading` rows, the same as t
 
 - **RDF 1.2 triple terms, reifiers, annotations and base direction.** These are refused, not
   read, until the engine can parse RDF 1.2
-  ([#133](https://github.com/cqels/CQELS4J/issues/133)). JSON-LD 1.1 is refused for the same
-  reason.
+  ([#133](https://github.com/cqels/CQELS4J/issues/133)). For the same reason the JSON-LD
+  readers are JSON-LD 1.0 processors: what 1.0 would drop is refused, and where 1.0 and 1.1 differ
+  in meaning, the 1.0 meaning applies (§4.3).
 - **Other transports.** The draft's WebSocket and MQTT examples (§4.1) are not built.
 - **Binary formats.** Jelly (§2.5) is not built.
 - **Profiles.** Once the draft's §3 is written, check this demo's reading in §2 (a window wider

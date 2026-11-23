@@ -261,4 +261,35 @@ class JsonLdMessageLogTest {
             }
         }
     }
+
+    // ------------------------------------------------------------------ co-review round 6
+
+    @Test
+    void numbersBeyondDoubleAreRefusedNotTurnedIntoStrings() {
+        assertThrows(IllegalArgumentException.class, () -> nd("{\"@id\":\"http://e/s\",\"http://e/p\":1e400}\n"));
+        assertThrows(IllegalArgumentException.class, () -> nd("{\"@id\":\"http://e/s\",\"http://e/p\":-1e400}\n"));
+        Statement st = nd("{\"@id\":\"http://e/s\",\"http://e/p\":1.5e2}\n").get(0).get(0);
+        assertEquals(XSD.DOUBLE, ((org.eclipse.rdf4j.model.Literal) st.getObject()).getDatatype());
+    }
+
+    @Test
+    void aPropertyValuedIndexIsRefused() {
+        String line = "{\"@context\":{\"t\":{\"@id\":\"http://e/t\",\"@container\":\"@index\",\"@index\":\"http://e/i\"}},"
+                + "\"@id\":\"http://e/s\",\"t\":{\"k\":{\"@id\":\"http://e/o\"}}}\n";
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> nd(line));
+        assertTrue(e.getMessage().contains("#133"), e.getMessage());
+    }
+
+    @Test
+    void yamlMergeKeysAreRefused() {
+        assertThrows(IllegalArgumentException.class, () -> yaml(
+                "\"@id\": http://e/s\nhttp://e/a: &a {http://e/q: 1}\nhttp://e/m: {<<: *a, http://e/r: 2}\n"));
+        assertThrows(IllegalArgumentException.class, () -> yaml(
+                "\"@id\": http://e/s\nhttp://e/a: &a {http://e/q: 1}\nhttp://e/m:\n  <<: *a\n  http://e/r: 2\n"));
+        // as a plain value, snakeyaml-engine refuses it too (it has no constructor for the merge tag)
+        assertThrows(IllegalArgumentException.class, () -> yaml("\"@id\": http://e/s\nhttp://e/r: <<\n"));
+        assertEquals(List.of(1), sizes(yaml("\"@id\": http://e/s\nhttp://e/r: \"<<\"\n")));
+        // quoted, "<<" is an ordinary key, which JSON-LD drops as it is not an IRI
+        assertEquals(List.of(1), sizes(yaml("\"@id\": http://e/s\nhttp://e/r: 2\n\"<<\": x\n")));
+    }
 }

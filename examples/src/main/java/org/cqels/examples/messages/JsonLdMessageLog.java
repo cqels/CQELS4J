@@ -42,6 +42,15 @@ import org.snakeyaml.engine.v2.api.DumpSettings;
 import org.snakeyaml.engine.v2.api.Load;
 import org.snakeyaml.engine.v2.api.LoadSettings;
 import org.snakeyaml.engine.v2.api.lowlevel.Compose;
+import org.snakeyaml.engine.v2.api.lowlevel.Parse;
+import org.snakeyaml.engine.v2.common.ScalarStyle;
+import org.snakeyaml.engine.v2.events.AliasEvent;
+import org.snakeyaml.engine.v2.events.Event;
+import org.snakeyaml.engine.v2.events.MappingEndEvent;
+import org.snakeyaml.engine.v2.events.MappingStartEvent;
+import org.snakeyaml.engine.v2.events.ScalarEvent;
+import org.snakeyaml.engine.v2.events.SequenceEndEvent;
+import org.snakeyaml.engine.v2.events.SequenceStartEvent;
 import org.snakeyaml.engine.v2.common.FlowStyle;
 import org.snakeyaml.engine.v2.nodes.MappingNode;
 import org.snakeyaml.engine.v2.nodes.Node;
@@ -80,7 +89,8 @@ import org.snakeyaml.engine.v2.schema.CoreSchema;
  *       tag other than the Core schema's ({@code !!binary}, {@code !!set}, custom tags), a
  *       {@code !!bool} or {@code !!null} tag on a value not spelled that way (snakeyaml-engine
  *       would make {@code !!bool yes} null), a key that is not a string, and {@code .inf} or
- *       {@code .nan}.</li>
+ *       {@code .nan}, and a {@code <<} merge key, which snakeyaml-engine merges as YAML 1.1
+ *       did.</li>
  *   <li>An empty document (such as a {@code ---} with nothing after it) is refused rather than
  *       guessed at; an empty message is written {@code {}}.</li>
  *   <li>No context messages: §2.3 does not define them, so every document stands alone.</li>
@@ -95,10 +105,14 @@ import org.snakeyaml.engine.v2.schema.CoreSchema;
  *   <li>The JSON-LD processor is jsonld-java 0.13.4, the one {@code rdf4j-rio-jsonld} 4.3.8
  *       uses, and it implements JSON-LD 1.0. JSON-LD 1.1 keywords it would drop or reject, and a
  *       term's scoped {@code @context}, which it would ignore, are refused with an error naming
- *       <a href="https://github.com/cqels/CQELS4J/issues/133">#133</a>. The check looks at keys
- *       only, without the context, so it also refuses such a keyword used as a key of an index
- *       map, where JSON-LD 1.0 would read it as data; a keyword alias defined in the context is
- *       rejected by jsonld-java itself.</li>
+ *       <a href="https://github.com/cqels/CQELS4J/issues/133">#133</a>, and so is a
+ *       property-valued {@code @index}, whose triples it would drop. The check looks at keys only,
+ *       without the context, so it also refuses such a keyword used as a key of an index map,
+ *       where JSON-LD 1.0 would read it as data; a keyword alias defined in the context is
+ *       rejected by jsonld-java itself. Input that JSON-LD 1.0 and 1.1 read differently is read
+ *       with the 1.0 meaning, without an error: a term whose IRI does not end in a gen-delim
+ *       still acts as a prefix, the number {@code 1.0} is an {@code xsd:double} and
+ *       {@code 1.2e29} an {@code xsd:integer}. A number beyond {@code xsd:double} is refused.</li>
  * </ul>
  *
  * <p>The writers emit each message as expanded JSON-LD wrapped in {@code {"@graph": [...]}} (an
@@ -118,6 +132,8 @@ public final class JsonLdMessageLog {
     private static final JsonMapper JSON = JsonMapper.builder()
             .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
             .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+            // as written, so 1e400 is not turned into the string "Infinity" on the way to jsonld-java
+            .enable(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS)
             .build();
 
     /** JSON-LD 1.1 keywords that a JSON-LD 1.0 processor drops or rejects. */
@@ -249,6 +265,7 @@ public final class JsonLdMessageLog {
                     return version;
                 }).build();
         try {
+            refuseMergeKeys(new Parse(settings).parseString(log));
             for (Node node : new Compose(settings).composeAllFromString(log)) {
                 checkTaggedScalars(node, Collections.newSetFromMap(new IdentityHashMap<>()));
             }
@@ -303,6 +320,39 @@ public final class JsonLdMessageLog {
         DumpSettings settings = DumpSettings.builder().setSchema(new CoreSchema())
                 .setExplicitStart(true).setDefaultFlowStyle(FlowStyle.BLOCK).build();
         return new Dump(settings).dumpAllToString(documents.iterator());
+    }
+
+    /**
+     * A plain {@code <<} mapping key (or a {@code !!merge} tag): snakeyaml-engine merges it as YAML
+     * 1.1 did, already while composing nodes, but in YAML 1.2 it is an ordinary key. Found here in
+     * the event stream, tracking which scalars stand in key position.
+     */
+    private static void refuseMergeKeys(Iterable<Event> events) {
+        java.util.Deque<boolean[]> open = new java.util.ArrayDeque<>();   // {is a mapping, next is a key}
+        for (Event event : events) {
+            if (event instanceof MappingStartEvent || event instanceof SequenceStartEvent) {
+                open.push(new boolean[] {event instanceof MappingStartEvent, true});
+            } else if (event instanceof MappingEndEvent || event instanceof SequenceEndEvent) {
+                open.pop();
+                completed(open);
+            } else if (event instanceof ScalarEvent scalar) {
+                boolean key = !open.isEmpty() && open.peek()[0] && open.peek()[1];
+                if (key && scalar.getScalarStyle() == ScalarStyle.PLAIN && scalar.getValue().equals("<<")
+                        || scalar.getTag().filter(t -> t.equals(Tag.MERGE.getValue())).isPresent()) {
+                    throw new IllegalArgumentException("a '<<' merge key, which snakeyaml-engine merges as"
+                            + " YAML 1.1 did; in YAML 1.2 it is an ordinary key (quote it as \"<<\")");
+                }
+                completed(open);
+            } else if (event instanceof AliasEvent) {
+                completed(open);
+            }
+        }
+    }
+
+    private static void completed(java.util.Deque<boolean[]> open) {
+        if (!open.isEmpty() && open.peek()[0]) {
+            open.peek()[1] = !open.peek()[1];
+        }
     }
 
     /**
@@ -391,6 +441,10 @@ public final class JsonLdMessageLog {
      * keyword used as a key, and a term definition with its own {@code @context}.
      */
     static void refuseJsonLd11(JsonNode node, String where) {
+        if (node.isNumber() && !Double.isFinite(node.doubleValue())) {
+            throw new IllegalArgumentException(where + " holds the number " + node.asText()
+                    + ", beyond the range of xsd:double");
+        }
         if (node instanceof ObjectNode object) {
             for (Map.Entry<String, JsonNode> field : object.properties()) {
                 if (JSON_LD_11_KEYWORDS.contains(field.getKey())) {
@@ -421,6 +475,11 @@ public final class JsonLdMessageLog {
                     throw new IllegalArgumentException(where + " gives the term '" + term.getKey()
                             + "' a scoped @context (JSON-LD 1.1), which the JSON-LD 1.0 processor"
                             + " of RDF4J 4.3.8 would ignore (#133)");
+                }
+                if (term.getValue() instanceof ObjectNode definition && definition.has("@index")) {
+                    throw new IllegalArgumentException(where + " gives the term '" + term.getKey()
+                            + "' a property-valued @index (JSON-LD 1.1), whose triples the JSON-LD 1.0"
+                            + " processor of RDF4J 4.3.8 would drop (#133)");
                 }
             }
         }

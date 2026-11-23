@@ -155,4 +155,40 @@ class RdfXmlMessageLogTest {
                 + "<ex:p rdf:parseType=\"Literal\"><b/></ex:p><ex:q rdf:annotation=\"http://example.org/r\""
                 + " rdf:resource=\"http://example.org/o\"/></rdf:Description>")));
     }
+
+    // ------------------------------------------------------------------ co-review round 6
+
+    @Test
+    void anEmptyDefaultNamespaceDeclarationIsCopied() throws Exception {
+        String inner = "<rdf:Description rdf:about=\"http://example.org/s\"><ex:p rdf:parseType=\"Literal\">"
+                + "<b xmlns=\"\">x</b></ex:p></rdf:Description>";
+        assertMessages(List.of(new java.util.ArrayList<>(direct(inner))), xml("", message(inner)));
+        List<List<Statement>> m = xml(" xmlns=\"http://example.org/d#\"", "<rdf:RDF xmlns=\"\">"
+                + "<rdf:Description rdf:about=\"http://example.org/s\"><ex:p>v</ex:p></rdf:Description></rdf:RDF>");
+        assertEquals(1, m.get(0).size());
+    }
+
+    @Test
+    void nothingButCommentsAfterTheLog() {
+        assertEquals(1, RdfXmlMessageLog.parse(HEAD + ">\n" + ONE + END + "<!-- end -->\n", BASE).size());
+        assertThrows(IllegalArgumentException.class, () -> RdfXmlMessageLog.parse(HEAD + ">\n" + ONE + END + "junk", BASE));
+        assertThrows(IllegalArgumentException.class, () -> RdfXmlMessageLog.parse(HEAD + ">\n" + ONE + END + HEAD + ">" + ONE + END, BASE));
+    }
+
+    @Test
+    void theWriterRefusesWhatWouldNotReadBack() {
+        org.eclipse.rdf4j.model.IRI s = VF.createIRI("http://example.org/s");
+        org.eclipse.rdf4j.model.IRI p = VF.createIRI("http://example.org/p");
+        String rdf = "http://www.w3.org/1999/02/22-rdf-syntax-ns#";
+        for (Statement st : List.of(
+                VF.createStatement(s, p, VF.createLiteral("a\u0000b")),
+                VF.createStatement(s, p, VF.createLiteral("a\uFFFEb")),
+                VF.createStatement(s, p, VF.createLiteral("<a>", VF.createIRI(rdf + "XMLLiteral"))),
+                VF.createStatement(s, VF.createIRI(rdf + "li"), VF.createLiteral("x")),
+                VF.createStatement(s, VF.createIRI(rdf + "nodeID"), VF.createLiteral("x")),
+                VF.createStatement(s, VF.createIRI("http://example.org/123"), VF.createLiteral("x")))) {
+            assertThrows(IllegalArgumentException.class, () -> RdfXmlMessageLog.write(List.of(List.of(st)), Map.of()),
+                    st.toString());
+        }
+    }
 }
