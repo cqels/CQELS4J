@@ -6,14 +6,13 @@ import org.eclipse.rdf4j.model.ValueFactory;
 import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
 
 /**
- * Example — OPT-IN multi-pattern directional SELECT (alpha.7): a per-vehicle star join inside a
- * forward-looking {@code [FUTURE 2s]} window.
+ * Example — multi-pattern directional SELECT: a per-vehicle star join inside a forward-looking
+ * {@code [FUTURE 2s]} window.
  *
- * <p>Directional (LARS-style) windows previously executed single-pattern shapes only (see
- * {@link DirectionalWindow}). alpha.7 adds an opt-in path — behind the
- * {@code cqels.directional.multiPatternSelect} system property, read per gate evaluation — where a
- * SELECT with <em>two or more</em> stream triple patterns over one {@code FUTURE}/centered window
- * joins each closed window's final contents. Here: pair a vehicle's battery state-of-charge with
+ * <p>alpha.7 added this path as an opt-in, behind the {@code cqels.directional.multiPatternSelect}
+ * system property (read per gate evaluation): a SELECT with <em>two or more</em> stream triple
+ * patterns over one {@code FUTURE}/centered window joins each closed window's final contents. On
+ * 2.0.0-alpha.22 it runs with the property unset; only setting it to {@code false} refuses the shape. Here: pair a vehicle's battery state-of-charge with
  * its V2G charge/discharge power <em>observed in the same forward window</em> — a V2G-readiness
  * snapshot per window.
  *
@@ -40,9 +39,10 @@ public class DirectionalMultiPatternJoin {
     private static final ValueFactory VF = SimpleValueFactory.getInstance();
 
     public static void main(String[] args) throws InterruptedException {
-        // OPT-IN (alpha.7): without this property the multi-pattern directional shape fails
-        // loudly at the shape guard. The flag is read per gate evaluation (never cached), so
-        // setting it before registering the query is sufficient.
+        // On 2.0.0-alpha.22 the multi-pattern directional shape runs with this property unset, and
+        // "false" refuses it at the shape guard. Setting it explicitly keeps the example working on
+        // alphas where it was opt-in (from alpha.7). The flag is read per gate evaluation (never
+        // cached), so setting it before registering the query is sufficient.
         System.setProperty("cqels.directional.multiPatternSelect", "true");
 
         try (CQELSEngine engine = CQELSEngine.builder()

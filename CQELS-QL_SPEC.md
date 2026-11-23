@@ -144,7 +144,8 @@ FROM STREAM VehicleSignals [FUTURE 20s STEP 1s EMIT ON_CLOSE LATENESS 2s]
 **Semantics.** A forward-looking window can only be *complete* once enough time has passed, so directional
 windows produce **exact, delayed** results at window close: with the default or `ON_CLOSE` policy, one
 result per anchor, or one row per group per anchor under `GROUP BY` (`ON_UPDATE` emits on each update
-instead, and `EARLY_AND_FINAL` adds early rows before the final ones). `LATENESS` trades latency for tolerance of out-of-order arrivals.
+instead, and `EARLY_AND_FINAL` adds early rows before the final ones; both are refused on shapes that
+have no incremental path, such as an aggregate over two stream patterns). `LATENESS` trades latency for tolerance of out-of-order arrivals.
 The `EMIT` policy governs emission for **windowed aggregation** queries; complex-event (`SEQ`) matching
 over a directional window instead emits, at each anchor's window close, every match found in that
 window, so one anchor can give several matches (see [§7](#7-complex-event-processing-cep)).
@@ -428,10 +429,12 @@ characters (system properties `cqels.cep.maxEventsPerMatch`, `cqels.cep.maxPatte
 `cqels.cep.maxArgumentNameLength`; `0` disables each).
 Running CEP over a **directional** window (`[FUTURE …]`, `[PAST … FUTURE …]`) switches to exact,
 window-close evaluation. When an anchor's window closes, the pattern runs over that window's events and
-every match is emitted, each as an `AnchoredPatternMatch` carrying the anchor and the window. The matches
-are the ones the same pattern finds over those events on a backward window, by the rules above (an optional
-argument's alternatives, a trailing `NOT`'s cancellation), so one anchor can give several: `SEQ(?a ; ?b)`
-over `a a b` gives two, one for each `a`. With a `STEP` shorter than the window, an event lies in several
+every match is emitted, each as an `AnchoredPatternMatch` carrying the anchor and the window. The rules
+above (an optional argument's alternatives, a trailing `NOT`'s cancellation) are applied to the window's
+events in timestamp order, so one anchor can give several matches: `SEQ(?a ; ?b)` over `a a b` gives two,
+one for each `a`. Because the order is by timestamp, an event that arrives late but within `LATENESS`
+still matches in its place: pushing `b@300` before `a@100` gives `[a b]` under `[FUTURE 1s LATENESS 1s]`,
+where `[RANGE 1s]`, which matches events as they arrive, gives nothing. With a `STEP` shorter than the window, an event lies in several
 windows, and a match found in each of them is reported once per anchor (an explicit `EMIT` policy is not
 currently supported on directional CEP).
 

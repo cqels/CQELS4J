@@ -142,7 +142,7 @@ electric-vehicle fleet / vehicle-to-grid (V2G) scenario.)
 | [`SlidingWindowTrends`](examples/src/main/java/org/cqels/examples/SlidingWindowTrends.java) | sliding `[SLIDE … STEP …]` windows |
 | [`CountWindow`](examples/src/main/java/org/cqels/examples/CountWindow.java) | count-based `[TRIPLES N]` window |
 | [`DirectionalWindow`](examples/src/main/java/org/cqels/examples/DirectionalWindow.java) | directional/LARS `[FUTURE … EMIT …]` window |
-| [`DirectionalMultiPatternJoin`](examples/src/main/java/org/cqels/examples/DirectionalMultiPatternJoin.java) | `[FUTURE …]` + 2-pattern star join (opt-in, alpha.7) |
+| [`DirectionalMultiPatternJoin`](examples/src/main/java/org/cqels/examples/DirectionalMultiPatternJoin.java) | `[FUTURE …]` + 2-pattern star join (since alpha.7; opt-in at first, runs without the property on alpha.22) |
 | [`CollisionWarningReview`](examples/src/main/java/org/cqels/examples/CollisionWarningReview.java) | combined `[PAST … FUTURE … STEP …]` window: reviewing collision warnings with `SEQ` and `NOT` |
 | [`GroupConcatSummary`](examples/src/main/java/org/cqels/examples/GroupConcatSummary.java) | `GROUP_CONCAT` string aggregation |
 
