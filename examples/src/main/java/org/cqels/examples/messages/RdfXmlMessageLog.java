@@ -67,7 +67,9 @@ import org.eclipse.rdf4j.rio.Rio;
  * <p>The writer reads each message back and refuses it unless it is the same: RDF/XML cannot hold
  * every graph (characters XML 1.0 forbids, an ill-formed {@code rdf:XMLLiteral}, {@code rdf:li},
  * which reads back as {@code rdf:_1}, a predicate with no XML name), and RDF4J writes some of these
- * anyway.
+ * anyway. The comparison is linear (see {@link #sameUpToBlankNodeNames}). {@code rdf:version}, an
+ * RDF 1.2 XML syntax term, is refused as a predicate by the writer and as a property element by
+ * the reader.
  *
  * <p>Note that each message is handed to a fresh RDF4J parser; the log itself is read once, as
  * one continuous stream, which is what the companion tests ask for.
@@ -95,6 +97,8 @@ public final class RdfXmlMessageLog {
     private static final Pattern XML_DECLARATION = Pattern.compile("^\\s*<\\?xml[^?]*\\?>\\s*");
 
     private static final XMLEventFactory EVENTS = XMLEventFactory.newInstance();
+    private static final org.eclipse.rdf4j.model.ValueFactory VF =
+            org.eclipse.rdf4j.model.impl.SimpleValueFactory.getInstance();
 
     // ------------------------------------------------------------------------------------ reading
 
@@ -291,6 +295,49 @@ public final class RdfXmlMessageLog {
         out.append('>');
     }
 
+    /**
+     * Whether {@code back} is {@code original} with its blank nodes renamed, as RDF4J's RDF/XML
+     * writer renames them. A full isomorphism check takes factorial time on alike blank nodes (eight
+     * {@code [] a ex:Heartbeat} took 20 s), so this compares, in linear time, the statements with
+     * blank nodes masked, the number of blank nodes, and each blank node's masked neighbourhood. It
+     * would miss two blank nodes swapping places within an identical neighbourhood, which the
+     * writer does not do; it catches a changed predicate, value or literal, and a split or merged
+     * blank node.
+     */
+    static boolean sameUpToBlankNodeNames(Collection<Statement> original, Collection<Statement> back) {
+        return original.size() == back.size()
+                && masked(original).equals(masked(back))
+                && neighbourhoods(original).equals(neighbourhoods(back));
+    }
+
+    private static String mask(org.eclipse.rdf4j.model.Value v) {
+        return v == null ? "" : v instanceof org.eclipse.rdf4j.model.BNode ? "_" : v.toString();
+    }
+
+    private static String maskedStatement(Statement st) {
+        return mask(st.getSubject()) + " " + mask(st.getPredicate()) + " " + mask(st.getObject()) + " "
+                + mask(st.getContext());
+    }
+
+    private static Map<String, Long> masked(Collection<Statement> statements) {
+        return statements.stream().collect(java.util.stream.Collectors.groupingBy(
+                RdfXmlMessageLog::maskedStatement, java.util.stream.Collectors.counting()));
+    }
+
+    private static Map<String, Long> neighbourhoods(Collection<Statement> statements) {
+        Map<org.eclipse.rdf4j.model.Value, List<String>> around = new java.util.HashMap<>();
+        for (Statement st : statements) {
+            if (st.getSubject() instanceof org.eclipse.rdf4j.model.BNode b) {
+                around.computeIfAbsent(b, k -> new ArrayList<>()).add("S " + maskedStatement(st));
+            }
+            if (st.getObject() instanceof org.eclipse.rdf4j.model.BNode b) {
+                around.computeIfAbsent(b, k -> new ArrayList<>()).add("O " + maskedStatement(st));
+            }
+        }
+        return around.values().stream().map(list -> { list.sort(null); return String.join("\n", list); })
+                .collect(java.util.stream.Collectors.groupingBy(x -> x, java.util.stream.Collectors.counting()));
+    }
+
     private static String qname(QName name) {
         return name.getPrefix() == null || name.getPrefix().isEmpty() ? name.getLocalPart()
                 : name.getPrefix() + ":" + name.getLocalPart();
@@ -323,6 +370,10 @@ public final class RdfXmlMessageLog {
     }
 
     private static void refuseRdf12(StartElement element, int n) {
+        if (element.getName().equals(RDF_VERSION)) {
+            throw new IllegalArgumentException("message " + n + " uses rdf:version as a property element at "
+                    + where(element) + "; RDF 1.2 XML makes it a syntax term, not a property");
+        }
         Attribute parseType = element.getAttributeByName(RDF_PARSE_TYPE);
         String found = parseType != null && parseType.getValue().equals("Triple") ? "rdf:parseType=\"Triple\""
                 : element.getAttributeByName(RDF_ANNOTATION) != null ? "rdf:annotation"
@@ -390,10 +441,13 @@ public final class RdfXmlMessageLog {
                 // RDF/XML cannot hold everything: characters XML 1.0 forbids, an ill-formed
                 // rdf:XMLLiteral, predicates such as rdf:li (read back as rdf:_1) or rdf:nodeID, or
                 // one with no XML name. RDF4J writes some of these anyway, so the message is read
-                // back here and refused unless it is the same.
+                // back here and refused unless it is the same. rdf:version, an RDF 1.2 syntax term,
+                // is refused as a predicate first: RDF4J 4.3.8 would write and read it back.
+                if (model.contains(null, VF.createIRI(RDF + "version"), null)) {
+                    throw new IllegalArgumentException("rdf:version, an RDF 1.2 XML syntax term");
+                }
                 Model back = Rio.parse(new StringReader(text.toString()), "", RDFFormat.RDFXML);
-                problem = org.eclipse.rdf4j.model.util.Models.isomorphic(model, back) ? null
-                        : "it would read back as " + back;
+                problem = sameUpToBlankNodeNames(model, back) ? null : "it would read back as " + back;
             } catch (IOException | RuntimeException e) {
                 problem = e.getMessage();
             }

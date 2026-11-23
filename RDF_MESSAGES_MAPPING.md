@@ -172,8 +172,10 @@ document. The draft leaves some questions open; the choices made here are:
     null, which JSON-LD then drops);
   - a key that is not a string;
   - `.inf` or `.nan`;
-  - a `<<` merge key, which the library merges as YAML 1.1 did, already while reading; in YAML
-    1.2 it is an ordinary key (quoted, `"<<"` is accepted).
+  - an untagged plain `<<` key, which the library merges as YAML 1.1 did, already while reading;
+    in YAML 1.2 it is an ordinary key (`"<<"` or `!!str <<` is accepted). A plain `<<` *value*,
+    a valid YAML 1.2 string, is refused by the library itself (it has no constructor for the
+    merge tag); quote it.
 - **An empty document is refused** rather than guessed at. An empty message is written `{}`.
 - **Library limit:** a bare document after a `...` end marker (valid YAML 1.2) is refused by
   snakeyaml-engine; start the next document with `---`.
@@ -190,13 +192,20 @@ document. The draft leaves some questions open; the choices made here are:
     data.
   - **Read with the 1.0 meaning, without an error.** Input that 1.0 and 1.1 read differently,
     measured against Titanium, a JSON-LD 1.1 processor:
-    - a term whose IRI does not end in a character such as `/` or `#` still works as a prefix
-      (`"ex": "http://example.org/ns"` makes `ex:foo` `http://example.org/nsfoo`; 1.1 needs
-      `"@prefix": true`);
-    - the JSON number `1.0` becomes `xsd:double` (1.1: `xsd:integer`);
-    - `1.2e29` becomes `xsd:integer` (1.1: `xsd:double`).
-  - **Numbers beyond `xsd:double`** (`1e400`) are refused rather than read as the string
-    "Infinity".
+    - any term works as a prefix of a compact IRI. In 1.1, a term does so only if it is
+      defined as a plain string ending in a gen-delim such as `/` or `#`, or has
+      `"@prefix": true`. So `"ex": "http://example.org/ns"`, or an expanded definition
+      `"ex": {"@id": "http://example.org/ns#"}`, makes `ex:foo` `http://example.org/nsfoo`
+      here, and leaves it `ex:foo` in 1.1;
+    - redefining a term that is itself a compact IRI is accepted (1.1: an error);
+    - an `@id` of `"@foo"` (keyword-like) becomes an IRI (1.1: dropped);
+    - a JSON number written with a fraction or an exponent but with a whole value below
+      10²¹ (`1.0`, `1e2`, `1.5e2`) becomes `xsd:double` (1.1: `xsd:integer`);
+    - an integer of 10²¹ or more (`123456789012345678901234567890`) becomes `xsd:integer`
+      (1.1: `xsd:double`).
+  - **Numbers.** Otherwise every number is typed exactly as RDF4J types it read directly. A
+    floating-point number beyond `xsd:double` (`1e400`) is refused rather than read as the string
+    "Infinity"; an integer of any length is kept.
 - **Invalid IRIs.** An `@id` with characters IRIs do not allow (`s t`) is percent-encoded, as RDF4J
   does. The writers refuse such IRIs instead.
 - **Line size.** Jackson's limits apply to a line: 20 million characters in a string, nesting depth
@@ -238,7 +247,14 @@ normalisation leave them as they were.
   - `rdf:nodeID` as a predicate;
   - a predicate with no XML name.
 
-  So the writer reads each message back and refuses it unless it is the same.
+  So the writer reads each message back and refuses it unless it is the same. The comparison runs
+  in linear time: the statements with blank nodes masked, the number of blank nodes, and each
+  blank node's masked neighbourhood. A full graph-isomorphism check would take factorial time on
+  alike blank nodes (eight took 20 s). RDF4J renames blank nodes but does not rewire them, so the
+  only change this comparison can miss is one the writer does not make.
+- **`rdf:version`** is refused as a predicate (writer) and as a property element (reader). RDF 1.2
+  XML makes it a syntax term, and a log that announces `1.2-messages` should be valid RDF 1.2;
+  RDF4J 4.3.8 would write and read it as an ordinary property.
 
 ### 4.5 Server-Sent Events
 
@@ -275,8 +291,8 @@ Beside the suite, there are four more test classes:
 | Test class | Tests | What it covers |
 |---|---|---|
 | [`RdfMessageLogTest`](examples/src/test/java/org/cqels/examples/messages/RdfMessageLogTest.java) | 30 | Turtle/TriG token boundaries checked against RDF4J's own parse, prefix carry, version labels, the RDF 1.2 refusals, writer round trips |
-| [`JsonLdMessageLogTest`](examples/src/test/java/org/cqels/examples/messages/JsonLdMessageLogTest.java) | 18 | NDJSON line rules, context messages, offline contexts, JSON-LD 1.1 refusals (including a property-valued `@index`), numbers beyond `xsd:double`, YAML 1.2 scalars, tags, merge keys, versions and document rules, writer round trips (number spellings, unwritable IRIs) |
-| [`RdfXmlMessageLogTest`](examples/src/test/java/org/cqels/examples/messages/RdfXmlMessageLogTest.java) | 10 | inheritance and overrides, `xmlns=""`, character references, XML literals, content after the log, refusals, round trips, and the writer's read-back check |
+| [`JsonLdMessageLogTest`](examples/src/test/java/org/cqels/examples/messages/JsonLdMessageLogTest.java) | 20 | NDJSON line rules, context messages, offline contexts, JSON-LD 1.1 refusals (including a property-valued `@index`), numbers typed as direct RDF4J types them and those beyond `xsd:double`, YAML 1.2 scalars, tags, merge keys, versions and document rules, writer round trips (number spellings, unwritable IRIs) |
+| [`RdfXmlMessageLogTest`](examples/src/test/java/org/cqels/examples/messages/RdfXmlMessageLogTest.java) | 13 | inheritance and overrides, `xmlns=""`, character references, XML literals, content after the log, `rdf:version`, refusals, round trips, and the writer's read-back check (including its speed on 200 alike blank nodes and a ring of 200) |
 | [`SseMessageChannelTest`](examples/src/test/java/org/cqels/examples/messages/SseMessageChannelTest.java) | 4 | the event-stream rules, UTF-8 and CR line ends, case-insensitive media types, two clients in parallel, and a loopback run with both payload types |
 
 ## 5. The worked examples

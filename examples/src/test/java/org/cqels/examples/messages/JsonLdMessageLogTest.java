@@ -292,4 +292,24 @@ class JsonLdMessageLogTest {
         // quoted, "<<" is an ordinary key, which JSON-LD drops as it is not an IRI
         assertEquals(List.of(1), sizes(yaml("\"@id\": http://e/s\nhttp://e/r: 2\n\"<<\": x\n")));
     }
+
+    // ------------------------------------------------------------------ co-review round 7
+
+    @Test
+    void numbersAreTypedAsDirectRdf4jTypesThem() throws Exception {
+        String big = "1" + "0".repeat(400);
+        for (String n : List.of("1.0", "0.0", "-0.0", "2.0", "-3.0", "1e2", "1.5e2", "10.0", "9007199254740993.0",
+                "1.000000000000000000001", "123456789012345678901234567890", big)) {
+            String line = "{\"@id\":\"http://e/s\",\"http://e/p\":" + n + "}";
+            List<Statement> ours = nd(line + "\n").get(0);
+            Model direct = Rio.parse(new StringReader(line), BASE, RDFFormat.JSONLD);
+            assertMessages(List.of(new java.util.ArrayList<>(direct)), List.of(ours));
+        }
+    }
+
+    @Test
+    void onlyAnUntaggedPlainKeyIsAMergeKey() {
+        assertEquals(List.of(1), sizes(yaml("\"@id\": http://e/s\nhttp://e/r: 2\n!!str <<: x\n")));
+        assertEquals(List.of(1), sizes(yaml("\"@id\": http://e/s\nhttp://e/r: 2\n! <<: x\n")));
+    }
 }

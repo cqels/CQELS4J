@@ -110,9 +110,12 @@ import org.snakeyaml.engine.v2.schema.CoreSchema;
  *       without the context, so it also refuses such a keyword used as a key of an index map,
  *       where JSON-LD 1.0 would read it as data; a keyword alias defined in the context is
  *       rejected by jsonld-java itself. Input that JSON-LD 1.0 and 1.1 read differently is read
- *       with the 1.0 meaning, without an error: a term whose IRI does not end in a gen-delim
- *       still acts as a prefix, the number {@code 1.0} is an {@code xsd:double} and
- *       {@code 1.2e29} an {@code xsd:integer}. A number beyond {@code xsd:double} is refused.</li>
+ *       with the 1.0 meaning, without an error: any term acts as a prefix (1.1 needs a
+ *       gen-delim at the end of a plain-string definition, or {@code @prefix}), a whole-valued
+ *       number written with a fraction or exponent ({@code 1.0}, {@code 1e2}) is an
+ *       {@code xsd:double} (1.1: integer) and an integer of 10^21 or more an {@code xsd:integer}
+ *       (1.1: double); see RDF_MESSAGES_MAPPING.md §4.3. Otherwise numbers are typed as RDF4J
+ *       types them directly; a floating-point number beyond {@code xsd:double} is refused.</li>
  * </ul>
  *
  * <p>The writers emit each message as expanded JSON-LD wrapped in {@code {"@graph": [...]}} (an
@@ -132,8 +135,6 @@ public final class JsonLdMessageLog {
     private static final JsonMapper JSON = JsonMapper.builder()
             .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
             .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
-            // as written, so 1e400 is not turned into the string "Infinity" on the way to jsonld-java
-            .enable(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS)
             .build();
 
     /** JSON-LD 1.1 keywords that a JSON-LD 1.0 processor drops or rejects. */
@@ -337,8 +338,9 @@ public final class JsonLdMessageLog {
                 completed(open);
             } else if (event instanceof ScalarEvent scalar) {
                 boolean key = !open.isEmpty() && open.peek()[0] && open.peek()[1];
-                if (key && scalar.getScalarStyle() == ScalarStyle.PLAIN && scalar.getValue().equals("<<")
-                        || scalar.getTag().filter(t -> t.equals(Tag.MERGE.getValue())).isPresent()) {
+                if (key && scalar.getScalarStyle() == ScalarStyle.PLAIN && scalar.getTag().isEmpty()
+                        && scalar.getValue().equals("<<")
+                        || scalar.getTag().filter(t -> t.equals(Tag.MERGE.getValue()) || t.equals("!!merge")).isPresent()) {
                     throw new IllegalArgumentException("a '<<' merge key, which snakeyaml-engine merges as"
                             + " YAML 1.1 did; in YAML 1.2 it is an ordinary key (quote it as \"<<\")");
                 }
@@ -441,7 +443,9 @@ public final class JsonLdMessageLog {
      * keyword used as a key, and a term definition with its own {@code @context}.
      */
     static void refuseJsonLd11(JsonNode node, String where) {
-        if (node.isNumber() && !Double.isFinite(node.doubleValue())) {
+        // Jackson reads 1e400 as a double Infinity, which it would write back as the string
+        // "Infinity"; integers of any length are kept exactly and are fine
+        if (node.isDouble() && !Double.isFinite(node.doubleValue())) {
             throw new IllegalArgumentException(where + " holds the number " + node.asText()
                     + ", beyond the range of xsd:double");
         }

@@ -191,4 +191,48 @@ class RdfXmlMessageLogTest {
                     st.toString());
         }
     }
+
+    // ------------------------------------------------------------------ co-review round 7
+
+    @org.junit.jupiter.api.Test
+    @org.junit.jupiter.api.Timeout(10)
+    void theReadBackCheckIsFastOnAlikeBlankNodes() {
+        List<Statement> message = new java.util.ArrayList<>();
+        for (int i = 0; i < 200; i++) {
+            message.add(VF.createStatement(VF.createBNode(), VF.createIRI("http://www.w3.org/1999/02/22-rdf-syntax-ns#type"),
+                    VF.createIRI("http://example.org/Heartbeat")));
+        }
+        org.eclipse.rdf4j.model.BNode[] ring = new org.eclipse.rdf4j.model.BNode[200];
+        for (int i = 0; i < ring.length; i++) {
+            ring[i] = VF.createBNode();
+        }
+        for (int i = 0; i < ring.length; i++) {
+            message.add(VF.createStatement(ring[i], VF.createIRI("http://example.org/next"), ring[(i + 1) % ring.length]));
+        }
+        List<List<Statement>> back = RdfXmlMessageLog.parse(RdfXmlMessageLog.write(List.of(message), Map.of()), BASE);
+        // (a full isomorphism check here would itself take factorial time)
+        assertTrue(RdfXmlMessageLog.sameUpToBlankNodeNames(message, back.get(0)));
+    }
+
+    @Test
+    void theCheckSeesASplitOrRewiredBlankNode() {
+        BNode a = VF.createBNode();
+        BNode b = VF.createBNode();
+        org.eclipse.rdf4j.model.IRI p = VF.createIRI("http://example.org/p");
+        org.eclipse.rdf4j.model.IRI q = VF.createIRI("http://example.org/q");
+        List<Statement> original = List.of(VF.createStatement(a, p, VF.createLiteral("1")), VF.createStatement(a, q, VF.createLiteral("2")));
+        List<Statement> split = List.of(VF.createStatement(a, p, VF.createLiteral("1")), VF.createStatement(b, q, VF.createLiteral("2")));
+        assertTrue(RdfXmlMessageLog.sameUpToBlankNodeNames(original, List.of(
+                VF.createStatement(b, p, VF.createLiteral("1")), VF.createStatement(b, q, VF.createLiteral("2")))));
+        org.junit.jupiter.api.Assertions.assertFalse(RdfXmlMessageLog.sameUpToBlankNodeNames(original, split));
+    }
+
+    @Test
+    void rdfVersionIsNotAProperty() {
+        Statement st = VF.createStatement(VF.createIRI("http://example.org/s"),
+                VF.createIRI("http://www.w3.org/1999/02/22-rdf-syntax-ns#version"), VF.createLiteral("1.2"));
+        assertThrows(IllegalArgumentException.class, () -> RdfXmlMessageLog.write(List.of(List.of(st)), Map.of()));
+        assertThrows(IllegalArgumentException.class, () -> xml("", message(
+                "<rdf:Description rdf:about=\"http://example.org/s\"><rdf:version>1.2</rdf:version></rdf:Description>")));
+    }
 }
