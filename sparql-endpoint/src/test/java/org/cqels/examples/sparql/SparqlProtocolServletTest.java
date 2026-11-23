@@ -1471,7 +1471,8 @@ class SparqlProtocolServletTest {
     /**
      * A resolver with a session manager of its own ignored the client silently, and SERVICE ran
      * without its limits. Installed through the manager now; and a servlet whose repository's
-     * client lacks them refuses SERVICE instead of running it.
+     * client lacks them refuses SERVICE instead of running it — and its service description does
+     * not advertise sd:BasicFederatedQuery (an untested gate, found in the Opus co-review of #130).
      */
     @Test
     void serviceRunsOnlyWithItsLimitsInstalled() throws Exception {
@@ -1509,6 +1510,11 @@ class SparqlProtocolServletTest {
             var refused = get(url, q, null);
             assertEquals(503, refused.statusCode(), refused.body());
             assertTrue(refused.body().contains("limitOutboundRequests"), refused.body());
+            // and the service description does not advertise what it would refuse
+            var described = bare(url, "text/turtle");
+            assertEquals(200, described.statusCode(), described.body());
+            assertFalse(description(described, org.eclipse.rdf4j.rio.RDFFormat.TURTLE)
+                    .contains(null, sd("feature"), sd("BasicFederatedQuery")), described.body());
         } finally {
             server.stop();
             bare.close();
