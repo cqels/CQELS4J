@@ -876,11 +876,12 @@ class SparqlProtocolServletTest {
                     + "Content-Length: 1000\r\n\r\nASK").getBytes(StandardCharsets.US_ASCII));
             out.flush();
             String ask = ep.url() + "?query=" + enc("ASK {}");
-            HttpResponse<String> busy = null;
-            for (int i = 0; i < 50 && (busy == null || busy.statusCode() != 503); i++) {   // until the upload holds the slot
-                busy = getWithin(ask, java.time.Duration.ofSeconds(2));
-            }
-            assertEquals(503, busy.statusCode(), "the trickling upload never held the slot");
+            // Waited for on the servlet, not probed with queries: a probe that held the only slot
+            // when the upload arrived had the upload refused at once with 503, and the test then
+            // failed in about half its runs ("never held the slot"; found while running #135).
+            awaitSlotsInUse(servletOf(ep.server), 1);
+            HttpResponse<String> busy = getWithin(ask, java.time.Duration.ofSeconds(2));
+            assertEquals(503, busy.statusCode(), "the trickling upload holds the slot");
             String base = ep.url().substring(0, ep.url().length() - "/sparql".length());
             assertEquals(200, getWithin(base + "/health", java.time.Duration.ofSeconds(2)).statusCode());
             // keep trickling, a byte every 300 ms, until the server answers
