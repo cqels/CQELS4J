@@ -90,6 +90,11 @@ public class CollisionWarningReview {
     static final String BRAKE = Fleet.VSS + "Chassis.Brake.PedalPosition";  // percent
 
     static final String WINDOW = "[PAST 2s FUTURE 1s STEP 1s]";
+    /** WINDOW's STEP in ms; {@link #judge} judges each warning in the one STEP_MS slice up to an anchor. */
+    static final long STEP_MS = 1_000;
+    // Change together with WINDOW: STEP_MS must equal its STEP; the labels ("1-2 s before it",
+    // "(anchor-1s, anchor]") assume PAST 2s / FUTURE 1s; and the closer pushed at the end must be
+    // later than the last window's end, or that window never reports.
 
     /** Per warning (vehicle + event time): what its judging window found, each finding once. */
     private static final Map<String, Set<String>> REVIEW = new TreeMap<>();
@@ -203,13 +208,14 @@ public class CollisionWarningReview {
      */
     private static synchronized void judge(PatternMatch<StreamElement> m, String warningVar, String verdict) {
         if (!(m instanceof AnchoredPatternMatch<StreamElement> am)) {
-            // Only a directional window anchors its matches; fail loudly if WINDOW is changed.
+            // Only a directional window anchors its matches; fail loudly if WINDOW is changed to a
+            // non-directional one.
             throw new IllegalStateException("expected an anchored match from " + WINDOW + ", got " + m);
         }
         StreamElement warning = m.getEvent(warningVar);
         long t = warning.getTimestamp();
         long anchor = am.getAnchor();
-        if (t <= anchor - 1_000 || t > anchor) {
+        if (t <= anchor - STEP_MS || t > anchor) {
             otherWindows++;
             return;
         }
