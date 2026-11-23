@@ -25,15 +25,49 @@ public final class AccessFilters {
     private AccessFilters() { }
 
     /**
+     * The request attribute {@link BearerToken} sets, to {@code Boolean.TRUE}, on a request it lets
+     * through that may only read: one that presented the read token, or none, while a separate
+     * update token is configured. {@link SparqlProtocolServlet} answers an update so marked with
+     * 403. A request without the attribute is not restricted — the servlet checks no tokens itself.
+     */
+    public static final String READ_ONLY = "org.cqels.examples.sparql.readOnly";
+
+    /**
      * {@code Authorization: Bearer <token>}, compared in constant time. A missing or wrong token
      * answers 401 with {@code WWW-Authenticate: Bearer}, so a browser or YASGUI shows a prompt
      * rather than a bare failure.
+     *
+     * <p>With an update token as well, the two are told apart: the update token may do anything,
+     * the read token only read (the request is marked {@link #READ_ONLY}). With an update token and
+     * <em>no</em> read token, a request carrying no token reads as well, and one carrying a token
+     * that is not the update token is still a 401 — a client that believes it holds the update
+     * token learns it does not, rather than being quietly demoted.
      */
     public static final class BearerToken implements Filter {
-        private final byte[] expected;
+        private final byte[] read;     // null: reading needs no token
+        private final byte[] update;   // null: the read token may update too
 
         public BearerToken(String token) {
-            this.expected = token.getBytes(StandardCharsets.UTF_8);
+            this(token, null);
+        }
+
+        /** @param readToken may be {@code null} when {@code updateToken} is set; not both */
+        public BearerToken(String readToken, String updateToken) {
+            readToken = readToken == null || readToken.isBlank() ? null : readToken.strip();
+            updateToken = updateToken == null || updateToken.isBlank() ? null : updateToken.strip();
+            if (readToken == null && updateToken == null) {
+                throw new IllegalArgumentException("a bearer-token filter needs a token");
+            }
+            if (readToken != null && readToken.equals(updateToken)) {
+                // the read token would match as the update token and write: checked here, not only
+                // in EndpointOptions, since an embedding builds this filter directly (found in
+                // co-review of #128)
+                throw new IllegalArgumentException("the update token must differ from the read token");
+            }
+            this.read = readToken == null ? null : readToken.getBytes(StandardCharsets.UTF_8);
+            this.update = updateToken == null ? null : updateToken.getBytes(StandardCharsets.UTF_8);
+            // compared as presented tokens are: stripped. "shared " passed as different from
+            // "shared", and then matched as the update token (found in co-review of #128)
         }
 
         @Override
@@ -42,8 +76,21 @@ public final class AccessFilters {
             HttpServletRequest req = (HttpServletRequest) request;
             HttpServletResponse resp = (HttpServletResponse) response;
             String header = req.getHeader("Authorization");
-            if (header != null && header.regionMatches(true, 0, "Bearer ", 0, 7)
-                    && MessageDigest.isEqual(expected, header.substring(7).trim().getBytes(StandardCharsets.UTF_8))) {
+            byte[] presented = header != null && header.regionMatches(true, 0, "Bearer ", 0, 7)
+                    ? header.substring(7).strip().getBytes(StandardCharsets.UTF_8) : null;
+            if (presented != null) {
+                // both compared, whichever matches, so the time taken does not say which one did
+                boolean isUpdate = update != null && MessageDigest.isEqual(update, presented);
+                boolean isRead = read != null && MessageDigest.isEqual(read, presented);
+                if (isUpdate || isRead) {
+                    if (!isUpdate && update != null) {
+                        req.setAttribute(READ_ONLY, Boolean.TRUE);
+                    }
+                    chain.doFilter(request, response);
+                    return;
+                }
+            } else if (header == null && read == null) {
+                req.setAttribute(READ_ONLY, Boolean.TRUE);   // open reads, token-protected writes
                 chain.doFilter(request, response);
                 return;
             }
@@ -63,8 +110,9 @@ public final class AccessFilters {
      * change is the {@code Host} it sends, which still names the attacker's domain, so a request
      * whose host is not one this endpoint is known by is refused (403).
      *
-     * <p>The launcher installs it whenever no bearer token is set (a token defeats rebinding on
-     * its own: the browser never attaches it for the attacker's page), or when
+     * <p>The launcher installs it whenever no read token is set (a read token defeats rebinding on
+     * its own: the browser never attaches it for the attacker's page; an update token alone does
+     * not, since reads are then open), or when
      * {@code CQELS_SPARQL_ALLOWED_HOSTS} is given. Names compare case-insensitively, without the
      * port and without IPv6 brackets.
      */

@@ -53,7 +53,7 @@ Enumerated from a live `tools/list` against this jar.
 | `save_procedure` | Procedural memory: save a named, runnable procedure (ASP/SHACL/SPARQL/CQELS-QL/Cypher/CEP) with `{{param}}` placeholders. |
 | `list_procedures` | List saved procedures with kind and description. |
 | `run_procedure` | Run a saved procedure by name, binding `{{param}}` values. |
-| `assemble_context` | Working memory: a ranked, budget-bounded context bundle for a task — relevant facts (with KG neighborhood) plus matching procedures. |
+| `assemble_context` | Working memory: a context bundle for a task — relevant facts (with KG neighborhood) and matching procedures, ranked and cut to a budget, plus the most recent events. |
 
 **Query + streaming:**
 
@@ -215,6 +215,12 @@ A client that only needs to **query the graph**, without MCP, can use plain SPAR
 instead: [`../sparql-endpoint/`](../sparql-endpoint/) is a SPARQL 1.1 Protocol endpoint over
 the same kind of embedded engine and the same fleet seed. It answers one-shot queries only;
 continuous queries stay here.
+
+### LangGraph / LangChain agents
+
+[`LANGGRAPH.md`](LANGGRAPH.md) shows how to give a LangGraph agent the published server as its
+long-term memory through LangChain's built-in MCP support: connecting over stdio or HTTP,
+ontology-aware and point-in-time recall, stream watches, durable storage, and per-user memory.
 
 ### Try it
 
