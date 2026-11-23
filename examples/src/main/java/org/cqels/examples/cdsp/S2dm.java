@@ -28,10 +28,19 @@ import java.util.concurrent.atomic.AtomicLong;
  *   GraphQL enum value    -> skos:Concept, member of that enum's collection AND of FieldConcepts
  * </pre>
  *
- * <p>Produced by {@code s2dm generate skos-skeleton --schema Vehicle.graphql --output vss.ttl}.
+ * <p>The shape was read off s2dm's SKOS exporter, {@code skos.py} ({@code generate_skos_skeleton},
+ * which earlier s2dm releases ran as {@code s2dm generate skos-skeleton}). The current command is
+ * {@code s2dm export rdf}, which splits the output in two (measured on s2dm commit {@code d97b449};
+ * see {@code S2DM_MAPPING.md}). Its {@code skos.ttl} keeps the concepts, language-tagged labels and
+ * collections, but differs from what is seeded below in two ways: the second {@code rdf:type}
+ * ({@code s2dm:ObjectType}, {@code s2dm:Field}) is no longer there, because it moved to the
+ * separate {@code data_graph.ttl} with the rest of the schema's structure; and only types and
+ * enums get a {@code skos:definition}, never fields. So the seeded graph corresponds to the
+ * older exporter only.
+ * {@code org.cqels.examples.s2dm.TrailerHealthMonitor} loads both files from a real export.
  * The concepts seeded in {@link #seedConceptGraph} follow the <em>shape</em> the exporter emits —
  * the typing, labelling and collection structure read off its {@code skos.py} — so the demos
- * exercise real s2dm output rather than an invented encoding. The concepts themselves are only
+ * exercise the exporter's encoding rather than an invented one. The concepts themselves are only
  * partly drawn from the repository's schemas ({@code examples/graphql-to-skos/sample.graphql}
  * contributes {@code Vehicle.averageSpeed}; {@code examples/seat-to-vspec} contributes
  * {@code Cabin} and {@code Seat}); {@code Door} and {@code Powertrain} are added here so the
@@ -53,12 +62,14 @@ import java.util.concurrent.atomic.AtomicLong;
  *
  * <p><strong>Instance tags.</strong> VSS explodes repeated structures into paths
  * ({@code Vehicle.Cabin.Door.Row1.DriverSide.IsOpen}). S2DM models the repetition once and tags
- * the instance with a small object — the {@code InCabinZone} pattern from
- * {@code /spec/common_enums.graphql}:
+ * the instance with a small object — the {@code InCabinZone} example from s2dm's data-modelling
+ * guideline ({@code docs-gen/content/docs/data-modeling-guideline/pre-defined-elements.md},
+ * "Common enumeration sets"; at s2dm commit {@code d97b449} it is a documentation example, not a
+ * schema file):
  * <pre>
- *   type InCabinZone { row: InCabinRowEnum!  side: InCabinSideEnum! }
- *   enum InCabinRowEnum  { FRONT REAR }
- *   enum InCabinSideEnum { DRIVER_SIDE PASSENGER_SIDE }
+ *   type InCabinZone { row: InCabinRowEnum!  side: InCabinSide! }
+ *   enum InCabinRowEnum { FRONT REAR }
+ *   enum InCabinSide    { DRIVER_SIDE PASSENGER_SIDE }
  *   type Door { instance: InCabinZone  isOpen: Boolean }
  * </pre>
  * {@link #pushZonedSignal} streams a reading in that shape: one atomic element carrying the
@@ -71,7 +82,7 @@ public final class S2dm {
     public static final String SKOS = "http://www.w3.org/2004/02/skos/core#";
     /** The official COVESA s2dm ontology namespace (see s2dm's skos-mapping-diagram.md). */
     public static final String S2DM = "https://covesa.global/models/s2dm#";
-    /** Concept namespace — the {@code --namespace} argument of {@code s2dm generate skos-skeleton}. */
+    /** Concept namespace — the {@code --namespace} argument of {@code s2dm export rdf}. */
     public static final String CONCEPT = "https://example.org/vss#";
 
     // ---- SKOS terms -----------------------------------------------------------------------
@@ -128,8 +139,8 @@ public final class S2dm {
     private S2dm() { }
 
     /**
-     * Seed the s2dm SKOS concept graph — RDF in the shape a {@code s2dm generate skos-skeleton}
-     * run emits, over a small hand-built vehicle vocabulary rather than the output of an actual
+     * Seed the s2dm SKOS concept graph — RDF in the shape s2dm's SKOS exporter ({@code skos.py})
+     * emits, over a small hand-built vehicle vocabulary rather than the output of an actual
      * schema run (see the class Javadoc for exactly which concepts come from where).
      *
      * <p>Every object type and field becomes a {@code skos:Concept} with a {@code skos:prefLabel}
@@ -193,7 +204,7 @@ public final class S2dm {
     }
 
     /**
-     * One concept in the shape {@code s2dm generate skos-skeleton} actually emits — read off the
+     * One concept in the shape s2dm's SKOS exporter emits — read off the
      * exporter's {@code skos.py} rather than assumed:
      * <ul>
      *   <li>{@code rdf:type skos:Concept} <em>and</em> a second type from the s2dm ontology
