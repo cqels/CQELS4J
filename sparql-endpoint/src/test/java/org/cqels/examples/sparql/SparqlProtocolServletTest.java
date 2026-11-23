@@ -3601,9 +3601,13 @@ class SparqlProtocolServletTest {
                 + "SELECT ?d WHERE { ex:EV-7Q2 ex:depot ?d }");
         assertEquals(200, last.statusCode(), last.body());
         assertTrue(last.body().contains("urn:ex:North"), last.body());
-        // an error further on still names its own line
         var badIri = getCsv(shared.url(), "PREFIX ex: <http://a:b:c/>\nPREFIX ex: <urn:ex:>\nASK {}");
         assertEquals(400, badIri.statusCode(), "a dropped IRI RDF4J refuses is still refused: " + badIri.body());
+        // one RDF4J accepts, though a strict parse would not, is dropped like any other
+        var lenientIri = get(shared.url(), "PREFIX ex: <http://x/%zz>\nPREFIX ex: <urn:ex:>\nASK { ex:EV-7Q2 ex:depot ?d }", null);
+        assertEquals(200, lenientIri.statusCode(), lenientIri.body());
+        assertTrue(lenientIri.body().contains("true"), lenientIri.body());
+        // an error further on still names its own line
         var broken = getCsv(shared.url(), "PREFIX ex: <urn:a:>\nPREFIX ex: <urn:ex:>\nSELECT * WHERE { ?s ?p }");
         assertEquals(400, broken.statusCode(), broken.body());
         assertTrue(broken.body().contains("line 3"), broken.body());
@@ -3669,6 +3673,9 @@ class SparqlProtocolServletTest {
                 "PREFIX a: <http://[x/> PREFIX a: <urn:b> ASK {}")) {
             assertSame(refused, SparqlProtocolServlet.withoutRepeatedPrefixes(refused), refused);
         }
+        // any backslash in a comment, not only an escape, leaves the text alone
+        String backslash = "# see C:\\data\nPREFIX a: <urn:a> PREFIX a: <urn:b> ASK {}";
+        assertSame(backslash, SparqlProtocolServlet.withoutRepeatedPrefixes(backslash));
         // and what the scan does rewrite, RDF4J then accepts
         org.eclipse.rdf4j.query.parser.QueryParserUtil.parseQuery(org.eclipse.rdf4j.query.QueryLanguage.SPARQL,
                 SparqlProtocolServlet.withoutRepeatedPrefixes("prefix ex-1.b: <urn:a>\tPREFIX ex-1.b: <urn:b> ASK { ex-1.b:x ?p ?o }"), null);

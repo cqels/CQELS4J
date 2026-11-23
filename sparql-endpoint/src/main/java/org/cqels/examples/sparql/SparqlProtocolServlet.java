@@ -2000,10 +2000,10 @@ public final class SparqlProtocolServlet extends HttpServlet {
      * any ASCII case, prefix names of ASCII PN_PREFIX characters, and IRIREFs without the
      * characters production [139] excludes. At the first token that is anything else — the query's
      * form, or a declaration it cannot read so — the scan stops, and what it has not read is left
-     * to RDF4J as it was. A backslash inside a comment leaves the whole text as it was: RDF4J
+     * to RDF4J as it was. Any backslash inside a comment leaves the whole text as it was: RDF4J
      * decodes {@code \\uXXXX} escapes before it tokenizes, and an escaped line break ends a
-     * comment there. A declaration it would drop whose IRI RDF4J refuses leaves the text as it
-     * was too. So it never turns text RDF4J would refuse as malformed into text it accepts (found
+     * comment there. A declaration it would drop whose IRI RDF4J refuses
+     * ({@code ParsedIRI.create}, the check RDF4J's resolver runs) leaves the text as it was too. So it never turns text RDF4J would refuse as malformed into text it accepts (found
      * in the Opus co-review of #135: a comment ended by a bare CR or an escaped line break ran the
      * scan into a string literal and blanked part of it; Unicode spaces, a dotless ı and
      * {@code { }} inside an IRI were read as if valid; a dropped IRI went unchecked).
@@ -2080,9 +2080,11 @@ public final class SparqlProtocolServlet extends HttpServlet {
                 try {
                     // RDF4J checks every declared IRI, a dropped one too: one it refuses
                     // (<http://a:b:c/>) must still be refused, not blanked away (found in the Opus
-                    // co-review of #135)
-                    new ParsedIRI(text.substring(spans.get(k)[2], spans.get(k)[3]));
-                } catch (URISyntaxException | RuntimeException e) {
+                    // co-review of #135). ParsedIRI.create, not the constructor: create is what
+                    // RDF4J's resolver runs, and it accepts what the constructor refuses
+                    // (<http://x/%zz>), so the constructor kept such a query a 400 for nothing.
+                    ParsedIRI.create(text.substring(spans.get(k)[2], spans.get(k)[3]));
+                } catch (RuntimeException e) {
                     return text;
                 }
             }
