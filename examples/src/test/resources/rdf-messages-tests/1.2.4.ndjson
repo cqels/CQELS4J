@@ -1,0 +1,3 @@
+{"@context": {"ex": "https://example.org/base/", "name": "ex:baseName"}}
+{"@context": {"label": "ex:label"}, "@type": "ex:Thing", "name": "Alice", "label": "A"}
+{"@type": "ex:Thing", "name": "Bob"}

@@ -19,11 +19,12 @@ import org.cqels.examples.Fleet;
  * editing every such query.
  *
  * <p><strong>The S2DM answer</strong> is to model the structure once and tag the instance, using
- * the {@code InCabinZone} pattern from s2dm's {@code /spec/common_enums.graphql}:
+ * the {@code InCabinZone} example from s2dm's data-modelling guideline
+ * ({@code pre-defined-elements.md}, "Common enumeration sets"; see {@link S2dm}):
  * <pre>
- *   type InCabinZone { row: InCabinRowEnum!  side: InCabinSideEnum! }
- *   enum InCabinRowEnum  { FRONT REAR }
- *   enum InCabinSideEnum { DRIVER_SIDE PASSENGER_SIDE }
+ *   type InCabinZone { row: InCabinRowEnum!  side: InCabinSide! }
+ *   enum InCabinRowEnum { FRONT REAR }
+ *   enum InCabinSide    { DRIVER_SIDE PASSENGER_SIDE }
  *   type Door { instance: InCabinZone  isOpen: Boolean }
  * </pre>
  * There is one {@code Door.isOpen} concept; the row and side travel with the reading as data. The

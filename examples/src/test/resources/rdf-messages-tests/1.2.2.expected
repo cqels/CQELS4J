@@ -1,0 +1,5 @@
+Message 1:
+  empty
+
+Message 2:
+  RDF dataset obtained by interpreting the third JSON object with @context = "https://schema.org/".

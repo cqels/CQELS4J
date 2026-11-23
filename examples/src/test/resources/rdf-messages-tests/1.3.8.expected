@@ -1,0 +1,8 @@
+Message 1:
+  <http://example.org/s> <http://example.org/p> "hello"@en .
+
+Message 2:
+  <http://example.org/s> <http://example.org/p> "czesc"@pl .
+
+Message 3:
+  <http://example.org/s> <http://example.org/p> "bye"@en .

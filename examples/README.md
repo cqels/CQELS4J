@@ -55,6 +55,7 @@ mvn -q exec:java -Dexec.mainClass=org.cqels.examples.SlidingWindowTrends
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.CountWindow
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.DirectionalWindow
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.DirectionalMultiPatternJoin
+mvn -q exec:java -Dexec.mainClass=org.cqels.examples.CollisionWarningReview
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.GroupConcatSummary
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.StreamStaticJoin
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.AdvancedQueryOperators
@@ -68,6 +69,8 @@ mvn -q exec:java -Dexec.mainClass=org.cqels.examples.GeoSpatialFilter
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.SosaObservations
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.VehicleSignalsCdsp
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.RdfMessageIngestion
+mvn -q exec:java -Dexec.mainClass=org.cqels.examples.messages.MessageLogReplay
+mvn -q exec:java -Dexec.mainClass=org.cqels.examples.messages.MessageStreamOverSse
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.ChargerRangeFilter
 
 # Advanced CDSP analytics & CEP (org.cqels.examples.cdsp):
@@ -83,6 +86,9 @@ mvn -q exec:java -Dexec.mainClass=org.cqels.examples.cdsp.CdspDrivingStyle
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.cdsp.S2dmConceptCatalog
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.cdsp.S2dmInstanceZones
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.cdsp.SkosConceptRollup
+
+# S2DM model from a real export (org.cqels.examples.s2dm):
+mvn -q exec:java -Dexec.mainClass=org.cqels.examples.s2dm.TrailerHealthMonitor
 
 # Reasoning showcase (org.cqels.examples.reasoning):
 mvn -q exec:java -Dexec.mainClass=org.cqels.examples.reasoning.TaxonomyEntailment
@@ -115,6 +121,7 @@ in the table + the `Build & run` block above).
 | [`CountWindow`](src/main/java/org/cqels/examples/CountWindow.java) | `[TRIPLES 30]` count-based window | Observations per vehicle over the most recent stream triples (the last N readings, not seconds). |
 | [`DirectionalWindow`](src/main/java/org/cqels/examples/DirectionalWindow.java) | `[FUTURE 2s EMIT EARLY_AND_FINAL]` (LARS) | Forward-looking charge-reading counts per vehicle during a V2G charging burst (running + final rows). |
 | [`DirectionalMultiPatternJoin`](src/main/java/org/cqels/examples/DirectionalMultiPatternJoin.java) | `[FUTURE 2s]` + 2-pattern star join (opt-in, alpha.7) | V2G readiness: join each vehicle's SoC and charge-power readings observed inside the same forward window — behind `cqels.directional.multiPatternSelect=true` (set in `main()`); rows surface per closed window. |
+| [`CollisionWarningReview`](src/main/java/org/cqels/examples/CollisionWarningReview.java) | Combined past-and-future window `[PAST 2s FUTURE 1s STEP 1s]` with `SEQ` and a trailing `NOT`; `[NOW]` beside it | Forward-collision warnings on time to collision (TTC < 2 s). The live warning fires at once under `[NOW]`; a review over the combined window then judges each warning with context from both sides: did the vehicle close in gradually before it, and did the driver brake after it (with the reaction time)? "No brake" is only decided once the window's future second has passed. Anchors sit on a fixed 1 s grid and each window is `(anchor-2s, anchor+1s]`, so each warning appears in three windows; the demo judges it in the one where it falls in the second up to the anchor. |
 | [`GroupConcatSummary`](src/main/java/org/cqels/examples/GroupConcatSummary.java) | `GROUP_CONCAT(…; SEPARATOR=…)` | Per-vehicle observation count + the list of observed VSS signals per 3-second window. |
 
 ### Advanced query patterns
@@ -151,14 +158,15 @@ visible; the ticker instead demonstrates window eviction (the run outlasts the w
 
 The COVESA [S2DM](https://github.com/COVESA/s2dm) (Simplified Semantic Data Modeling) approach
 lets subject-matter experts model in **GraphQL SDL**; its tooling projects that schema into
-**SKOS** RDF (`s2dm generate skos-skeleton`), where each GraphQL type and field becomes a
-`skos:Concept` with a `skos:prefLabel`, a `skos:definition` and collection membership. Because
-that projection is ordinary RDF, it drops straight into CQELS as static context — so a
-continuous query can be written against *modelled concepts* instead of hard-coded VSS signal
-paths. [`S2dm`](src/main/java/org/cqels/examples/cdsp/S2dm.java) holds the shared vocabulary and
-seeds a catalogue in the shape the exporter emits — the typing, language-tagged labelling and
-collection structure are faithful to it; the concepts themselves are only partly drawn from the
-s2dm repository's own schemas, with a couple added to give the rollup a hierarchy.
+**SKOS** RDF, where each GraphQL type and field becomes a `skos:Concept` with a `skos:prefLabel`
+and collection membership. Because that projection is ordinary RDF, it drops straight into CQELS
+as static context — so a continuous query can be written against *modelled concepts* instead of
+hard-coded VSS signal paths. [`S2dm`](src/main/java/org/cqels/examples/cdsp/S2dm.java) holds the
+shared vocabulary and seeds a hand-built catalogue in the shape of s2dm's **older** SKOS exporter
+(once run as `s2dm generate skos-skeleton`): each concept typed `s2dm:ObjectType` or `s2dm:Field`,
+language-tagged labels, a `skos:definition` on fields as well as types, and the collection
+structure. The concepts themselves are only partly drawn from the s2dm repository's own schemas,
+with a couple added to give the rollup a hierarchy.
 
 | Class | CQELS feature | Scenario |
 |-------|---------------|----------|
@@ -178,6 +186,31 @@ s2dm repository's own schemas, with a couple added to give the rollup a hierarch
 > over the static concept graph is still refused. Only `#58` is still open as a limitation. Each
 > demo's Javadoc names what it still works around rather than hiding it — `SkosConceptRollup`
 > names two: `#58`, and paths over the static graph.
+>
+> The current command, `s2dm export rdf`, differs from that older shape in two ways that matter
+> here: it never gives a field a `skos:definition`, so `S2dmConceptCatalog`'s definition join
+> returns no rows for a field observation; and the `s2dm:ObjectType`/`s2dm:Field` typing moved
+> out of `skos.ttl` into a separate `data_graph.ttl`, so a query guarding on it needs both files
+> loaded. See [S2DM_MAPPING.md §5](../S2DM_MAPPING.md#5-what-the-export-does-not-carry).
+
+### S2DM model from a real export (`org.cqels.examples.s2dm`)
+
+Unlike the section above, this demo loads RDF that s2dm itself wrote:
+[`src/main/resources/s2dm/trailer/`](src/main/resources/s2dm/trailer/) holds `skos.ttl` and
+`data_graph.ttl` from `s2dm export rdf` on s2dm's own trailer example, committed as the tool wrote
+them and regenerated offline in Docker by
+[`scripts/s2dm/export-trailer.sh`](../scripts/s2dm/export-trailer.sh). The same script writes
+`supplement.ttl`, which is not s2dm output: field descriptions, default units and instance-tag
+fields that the export drops, read from the same schema by this repository's
+[`scripts/s2dm/supplement.py`](../scripts/s2dm/supplement.py), and `units.ttl`, the schema's unit
+enum values linked to QUDT units with the conversions between them
+([`scripts/s2dm/units.py`](../scripts/s2dm/units.py)).
+[S2DM_MAPPING.md](../S2DM_MAPPING.md) explains what the export contains, what it leaves out, and
+what the supplement and `units.ttl` add.
+
+| Class | CQELS feature | Scenario |
+|-------|---------------|----------|
+| [`TrailerHealthMonitor`](src/main/java/org/cqels/examples/s2dm/TrailerHealthMonitor.java) | Stream–static joins over the s2dm data graph (`s2dm:hasField`, `s2dm:hasOutputType`) and the supplement (`s2x:defaultUnit`, field `skos:definition`); unit conversion by a static join and `BIND` arithmetic; `OPTIONAL` with `FILTER(!BOUND)`; `FILTER` on IRIs; `[TRIPLES 1]` over atomic multi-statement elements; windowed `GROUP BY` joined to static data | Trailer wheel telemetry, each reading tagged with the schema's instance tags (trailer, axle, side, and position from the outside in). Each reading is placed in the model: a tire pressure reading comes back as `VehicleTrailerWheel.tire` → `TrailerWheelTire`, "Tire signals for wheel." Every boolean alarm (`isPressureLow`, `isBrakesWorn`, `isFluidLevelLow`) is caught by asking which fields return `s2dm:Boolean`, so the query names none of them; that holds because every boolean in this schema is a fault flag. A tire pressure sent as 32 PSI is converted to the schema's `KILOPASCAL` with QUDT's factor, 220.63 kPa, and becomes its axle's lowest pressure, which is tracked per trailer and axle in kPa. A pressure sent in percent has no conversion: it is flagged with the field's own description, "Tire pressure in kilo-Pascal.", and not counted. A misspelled field carrying `true` raises no alarm, because the model does not contain it; without the `s2dm:Boolean` guard it would. |
 
 ### Query dialects
 | Class | CQELS feature | Scenario |
@@ -252,6 +285,8 @@ Each demo pairs the derivation with a case that must NOT derive, so the semantic
 | [`SosaObservations`](src/main/java/org/cqels/examples/SosaObservations.java) | W3C [SOSA/SSN](https://www.w3.org/TR/vocab-ssn/) + multi-pattern stream join | Average / count per (vehicle × observed VSS signal) — the `observedProperty` keeps speed and battery readings apart. |
 | [`VehicleSignalsCdsp`](src/main/java/org/cqels/examples/VehicleSignalsCdsp.java) | COVESA [VSS](https://covesa.global/) (CDSP) + `GROUP BY` + `HAVING` | The flagship query: per-vehicle top/average speed over a window, emitting only vehicles that were speeding. |
 | [`RdfMessageIngestion`](src/main/java/org/cqels/examples/RdfMessageIngestion.java) | W3C [RSP CG **RDF Messages**](https://w3c-cg.github.io/rsp/spec/messages) N-Quads envelope (`RdfMessageCodec`, alpha.9) | Decode a `VERSION "1.2-messages"` document into atomic observations and push each as one stream element, so a multi-pattern `[NOW]` query binds two predicates of the *same* observation. |
+| [`MessageLogReplay`](src/main/java/org/cqels/examples/messages/MessageLogReplay.java) (`org.cqels.examples.messages`) | RDF Messages **Turtle** log reader/writer ([`RdfMessageLog`](src/main/java/org/cqels/examples/messages/RdfMessageLog.java)); `[TRIPLES 1]` vs `[RANGE 30s]` | Replay [`cabin-temperatures.ttl`](src/main/resources/messages/cabin-temperatures.ttl): 6 messages, the same `_:r` label in every observation. Read one message at a time, 4 readings; read as one plain document, the labels collide into 1 blank node and the same query returns 16 rows. Results go back out as a message log that re-reads as 4 messages. See [RDF_MESSAGES_MAPPING.md](../RDF_MESSAGES_MAPPING.md). |
+| [`MessageStreamOverSse`](src/main/java/org/cqels/examples/messages/MessageStreamOverSse.java) (`org.cqels.examples.messages`) | RDF Messages over **Server-Sent Events** ([`SseMessageChannel`](src/main/java/org/cqels/examples/messages/SseMessageChannel.java)); NDJSON-LD, YAML-LD and RDF/XML logs in [`JsonLdMessageLog`](src/main/java/org/cqels/examples/messages/JsonLdMessageLog.java) and [`RdfXmlMessageLog`](src/main/java/org/cqels/examples/messages/RdfXmlMessageLog.java) | The same six messages served as `rdf-message` events with JSON-LD payloads, read as they arrive and pushed into the engine: 6 events, 4 readings, as in the replay. |
 
 ## Keeping the caveats honest
 

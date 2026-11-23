@@ -1,0 +1,982 @@
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix trailer: <https://example.org/s2dm/trailer#> .
+
+trailer:Acceleration_Unit_Enum a skos:Collection ;
+    skos:member trailer:Acceleration_Unit_Enum.CENTIMETERS_PER_SECOND_SQUARED,
+        trailer:Acceleration_Unit_Enum.METERS_PER_SECOND_SQUARED ;
+    skos:prefLabel "Acceleration_Unit_Enum"@en .
+
+trailer:Angle_Unit_Enum a skos:Collection ;
+    skos:member trailer:Angle_Unit_Enum.DEGREE ;
+    skos:prefLabel "Angle_Unit_Enum"@en .
+
+trailer:Angularspeed_Unit_Enum a skos:Collection ;
+    skos:member trailer:Angularspeed_Unit_Enum.DEGREE_PER_SECOND,
+        trailer:Angularspeed_Unit_Enum.RADIANS_PER_SECOND ;
+    skos:prefLabel "Angularspeed_Unit_Enum"@en .
+
+trailer:AxlePositionEnum a skos:Collection ;
+    skos:member trailer:AxlePositionEnum.POSITION_1,
+        trailer:AxlePositionEnum.POSITION_10,
+        trailer:AxlePositionEnum.POSITION_11,
+        trailer:AxlePositionEnum.POSITION_12,
+        trailer:AxlePositionEnum.POSITION_13,
+        trailer:AxlePositionEnum.POSITION_14,
+        trailer:AxlePositionEnum.POSITION_15,
+        trailer:AxlePositionEnum.POSITION_2,
+        trailer:AxlePositionEnum.POSITION_3,
+        trailer:AxlePositionEnum.POSITION_4,
+        trailer:AxlePositionEnum.POSITION_5,
+        trailer:AxlePositionEnum.POSITION_6,
+        trailer:AxlePositionEnum.POSITION_7,
+        trailer:AxlePositionEnum.POSITION_8,
+        trailer:AxlePositionEnum.POSITION_9 ;
+    skos:prefLabel "AxlePositionEnum"@en .
+
+trailer:Datetime_Unit_Enum a skos:Collection ;
+    skos:member trailer:Datetime_Unit_Enum.ISO_8601,
+        trailer:Datetime_Unit_Enum.UNIX_TIMESTAMP ;
+    skos:prefLabel "Datetime_Unit_Enum"@en .
+
+trailer:Distancepervolume_Unit_Enum a skos:Collection ;
+    skos:member trailer:Distancepervolume_Unit_Enum.KILOMETERS_PER_LITER,
+        trailer:Distancepervolume_Unit_Enum.MILES_PER_GALLON ;
+    skos:prefLabel "Distancepervolume_Unit_Enum"@en .
+
+trailer:Duration_Unit_Enum a skos:Collection ;
+    skos:member trailer:Duration_Unit_Enum.DAYS,
+        trailer:Duration_Unit_Enum.HOUR,
+        trailer:Duration_Unit_Enum.MILLISECOND,
+        trailer:Duration_Unit_Enum.MINUTE,
+        trailer:Duration_Unit_Enum.MONTHS,
+        trailer:Duration_Unit_Enum.SECOND,
+        trailer:Duration_Unit_Enum.WEEKS,
+        trailer:Duration_Unit_Enum.YEARS ;
+    skos:prefLabel "Duration_Unit_Enum"@en .
+
+trailer:EightOutsideInNumber a skos:Collection ;
+    skos:member trailer:EightOutsideInNumber._1ST,
+        trailer:EightOutsideInNumber._2ND,
+        trailer:EightOutsideInNumber._3RD,
+        trailer:EightOutsideInNumber._4TH,
+        trailer:EightOutsideInNumber._5TH,
+        trailer:EightOutsideInNumber._6TH,
+        trailer:EightOutsideInNumber._7TH,
+        trailer:EightOutsideInNumber._8TH ;
+    skos:prefLabel "EightOutsideInNumber"@en .
+
+trailer:Electriccharge_Unit_Enum a skos:Collection ;
+    skos:member trailer:Electriccharge_Unit_Enum.AMPERE_HOURS ;
+    skos:prefLabel "Electriccharge_Unit_Enum"@en .
+
+trailer:Electriccurrent_Unit_Enum a skos:Collection ;
+    skos:member trailer:Electriccurrent_Unit_Enum.AMPERE ;
+    skos:prefLabel "Electriccurrent_Unit_Enum"@en .
+
+trailer:Energyconsumptionperdistance_Unit_Enum a skos:Collection ;
+    skos:member trailer:Energyconsumptionperdistance_Unit_Enum.KILOWATT_HOURS_PER_100_KILOMETERS,
+        trailer:Energyconsumptionperdistance_Unit_Enum.WATT_HOUR_PER_KM ;
+    skos:prefLabel "Energyconsumptionperdistance_Unit_Enum"@en .
+
+trailer:FieldConcepts a skos:Collection ;
+    skos:member trailer:Acceleration_Unit_Enum.CENTIMETERS_PER_SECOND_SQUARED,
+        trailer:Acceleration_Unit_Enum.METERS_PER_SECOND_SQUARED,
+        trailer:Angle_Unit_Enum.DEGREE,
+        trailer:Angularspeed_Unit_Enum.DEGREE_PER_SECOND,
+        trailer:Angularspeed_Unit_Enum.RADIANS_PER_SECOND,
+        trailer:AxlePositionEnum.POSITION_1,
+        trailer:AxlePositionEnum.POSITION_10,
+        trailer:AxlePositionEnum.POSITION_11,
+        trailer:AxlePositionEnum.POSITION_12,
+        trailer:AxlePositionEnum.POSITION_13,
+        trailer:AxlePositionEnum.POSITION_14,
+        trailer:AxlePositionEnum.POSITION_15,
+        trailer:AxlePositionEnum.POSITION_2,
+        trailer:AxlePositionEnum.POSITION_3,
+        trailer:AxlePositionEnum.POSITION_4,
+        trailer:AxlePositionEnum.POSITION_5,
+        trailer:AxlePositionEnum.POSITION_6,
+        trailer:AxlePositionEnum.POSITION_7,
+        trailer:AxlePositionEnum.POSITION_8,
+        trailer:AxlePositionEnum.POSITION_9,
+        trailer:Datetime_Unit_Enum.ISO_8601,
+        trailer:Datetime_Unit_Enum.UNIX_TIMESTAMP,
+        trailer:Distancepervolume_Unit_Enum.KILOMETERS_PER_LITER,
+        trailer:Distancepervolume_Unit_Enum.MILES_PER_GALLON,
+        trailer:Duration_Unit_Enum.DAYS,
+        trailer:Duration_Unit_Enum.HOUR,
+        trailer:Duration_Unit_Enum.MILLISECOND,
+        trailer:Duration_Unit_Enum.MINUTE,
+        trailer:Duration_Unit_Enum.MONTHS,
+        trailer:Duration_Unit_Enum.SECOND,
+        trailer:Duration_Unit_Enum.WEEKS,
+        trailer:Duration_Unit_Enum.YEARS,
+        trailer:EightOutsideInNumber._1ST,
+        trailer:EightOutsideInNumber._2ND,
+        trailer:EightOutsideInNumber._3RD,
+        trailer:EightOutsideInNumber._4TH,
+        trailer:EightOutsideInNumber._5TH,
+        trailer:EightOutsideInNumber._6TH,
+        trailer:EightOutsideInNumber._7TH,
+        trailer:EightOutsideInNumber._8TH,
+        trailer:Electriccharge_Unit_Enum.AMPERE_HOURS,
+        trailer:Electriccurrent_Unit_Enum.AMPERE,
+        trailer:Energyconsumptionperdistance_Unit_Enum.KILOWATT_HOURS_PER_100_KILOMETERS,
+        trailer:Energyconsumptionperdistance_Unit_Enum.WATT_HOUR_PER_KM,
+        trailer:Force_Unit_Enum.KILO_NEWTON,
+        trailer:Force_Unit_Enum.NEWTON,
+        trailer:Frequency_Unit_Enum.BEATS_PER_MINUTE,
+        trailer:Frequency_Unit_Enum.CYCLES_PER_MINUTE,
+        trailer:Frequency_Unit_Enum.HERTZ,
+        trailer:Illuminance_Unit_Enum.LUX,
+        trailer:InCabinArea2x2.column,
+        trailer:InCabinArea2x2.row,
+        trailer:InCabinArea2x2Input.column,
+        trailer:InCabinArea2x2Input.row,
+        trailer:InCabinArea2x3.column,
+        trailer:InCabinArea2x3.row,
+        trailer:InCabinArea2x3Input.column,
+        trailer:InCabinArea2x3Input.row,
+        trailer:InCabinArea3x3.column,
+        trailer:InCabinArea3x3.row,
+        trailer:InCabinArea3x3Input.column,
+        trailer:InCabinArea3x3Input.row,
+        trailer:Length_Unit_Enum.CENTIMETER,
+        trailer:Length_Unit_Enum.INCH,
+        trailer:Length_Unit_Enum.KILOMETER,
+        trailer:Length_Unit_Enum.METER,
+        trailer:Length_Unit_Enum.MILLIMETER,
+        trailer:Mass_Unit_Enum.GRAM,
+        trailer:Mass_Unit_Enum.KILOGRAM,
+        trailer:Mass_Unit_Enum.POUND,
+        trailer:Massperdistance_Unit_Enum.GRAMS_PER_KILOMETER,
+        trailer:Masspertime_Unit_Enum.GRAMS_PER_SECOND,
+        trailer:Power_Unit_Enum.HORSEPOWER,
+        trailer:Power_Unit_Enum.KILOWATT,
+        trailer:Power_Unit_Enum.WATT,
+        trailer:Pressure_Unit_Enum.KILOPASCAL,
+        trailer:Pressure_Unit_Enum.MILLIBAR,
+        trailer:Pressure_Unit_Enum.PASCAL,
+        trailer:Pressure_Unit_Enum.POUNDS_PER_SQUARE_INCH,
+        trailer:Rating_Unit_Enum.STARS,
+        trailer:Relation_Unit_Enum.DECIBEL,
+        trailer:Relation_Unit_Enum.DECIBEL_MILLIWATT,
+        trailer:Relation_Unit_Enum.NANO_METER_PER_KILOMETER,
+        trailer:Relation_Unit_Enum.PERCENT,
+        trailer:Relation_Unit_Enum.RATIO,
+        trailer:Resistance_Unit_Enum.OHM,
+        trailer:Rotationalspeed_Unit_Enum.REVOLUTIONS_PER_MINUTE,
+        trailer:Temperature_Unit_Enum.DEGREE_CELSIUS,
+        trailer:ThreeColumnsInCabinEnum.DRIVERSIDE,
+        trailer:ThreeColumnsInCabinEnum.MIDDLE,
+        trailer:ThreeColumnsInCabinEnum.PASSENGERSIDE,
+        trailer:ThreeRowsInCabinEnum.ROW1,
+        trailer:ThreeRowsInCabinEnum.ROW2,
+        trailer:ThreeRowsInCabinEnum.ROW3,
+        trailer:ThreeTrailers.TRAILER_1,
+        trailer:ThreeTrailers.TRAILER_2,
+        trailer:ThreeTrailers.TRAILER_3,
+        trailer:Torque_Unit_Enum.NEWTON_METER,
+        trailer:TrailerAxleTag.position,
+        trailer:TrailerTag.instance,
+        trailer:TrailerWheelBrake.fluidLevel,
+        trailer:TrailerWheelBrake.isBrakesWorn,
+        trailer:TrailerWheelBrake.isFluidLevelLow,
+        trailer:TrailerWheelBrake.padWear,
+        trailer:TrailerWheelTag.axle,
+        trailer:TrailerWheelTag.outsideInNumber,
+        trailer:TrailerWheelTag.side,
+        trailer:TrailerWheelTire.isPressureLow,
+        trailer:TrailerWheelTire.pressure,
+        trailer:TrailerWheelTire.temperature,
+        trailer:TwoColumnsInCabinEnum.DRIVERSIDE,
+        trailer:TwoColumnsInCabinEnum.PASSENGERSIDE,
+        trailer:TwoRowsInCabinEnum.ROW1,
+        trailer:TwoRowsInCabinEnum.ROW2,
+        trailer:TwoSides.LEFT,
+        trailer:TwoSides.RIGHT,
+        trailer:Vehicle.maxTowBallWeight,
+        trailer:Vehicle.maxTowWeight,
+        trailer:Vehicle.trailerCount,
+        trailer:Vehicle.trailers,
+        trailer:Vehicle.vin,
+        trailer:VehicleTrailer.axleCount,
+        trailer:VehicleTrailer.axleLoadSum,
+        trailer:VehicleTrailer.axles,
+        trailer:VehicleTrailer.customerTrailerName,
+        trailer:VehicleTrailer.trailer,
+        trailer:VehicleTrailer.trailerKind,
+        trailer:VehicleTrailer.vin,
+        trailer:VehicleTrailerAxle.axleLoad,
+        trailer:VehicleTrailerAxle.axleWidth,
+        trailer:VehicleTrailerAxle.position,
+        trailer:VehicleTrailerAxle.steeringAngle,
+        trailer:VehicleTrailerAxle.tireAspectRatio,
+        trailer:VehicleTrailerAxle.tireDiameter,
+        trailer:VehicleTrailerAxle.tireWidth,
+        trailer:VehicleTrailerAxle.trackWidth,
+        trailer:VehicleTrailerAxle.trailerAxle,
+        trailer:VehicleTrailerAxle.treadWidth,
+        trailer:VehicleTrailerAxle.wheelCount,
+        trailer:VehicleTrailerAxle.wheelDiameter,
+        trailer:VehicleTrailerAxle.wheelWidth,
+        trailer:VehicleTrailerAxle.wheels,
+        trailer:VehicleTrailerKindEnum.CENTER_AXLE_TRAILER,
+        trailer:VehicleTrailerKindEnum.CONVERTER_DOLLY,
+        trailer:VehicleTrailerKindEnum.FULL_TRAILER,
+        trailer:VehicleTrailerKindEnum.LINK_TRAILER,
+        trailer:VehicleTrailerKindEnum.SEMI_TRAILER,
+        trailer:VehicleTrailerKindEnum.TOWING_CENTRE_AXLE_TRAILER,
+        trailer:VehicleTrailerKindEnum.TOWING_FULL_TRAILER,
+        trailer:VehicleTrailerKindEnum.TOWING_SEMI_TRAILER,
+        trailer:VehicleTrailerKindEnum.UNDEFINED,
+        trailer:VehicleTrailerWheel.angularSpeed,
+        trailer:VehicleTrailerWheel.brake,
+        trailer:VehicleTrailerWheel.speed,
+        trailer:VehicleTrailerWheel.tire,
+        trailer:VehicleTrailerWheel.trailerWheel,
+        trailer:Velocity_Unit_Enum.KILOMETER_PER_HOUR,
+        trailer:Velocity_Unit_Enum.METERS_PER_SECOND,
+        trailer:Voltage_Unit_Enum.VOLT,
+        trailer:Volume_Unit_Enum.CUBIC_CENTIMETERS,
+        trailer:Volume_Unit_Enum.LITER,
+        trailer:Volume_Unit_Enum.MILLILITER,
+        trailer:Volumeflowrate_Unit_Enum.LITER_PER_HOUR,
+        trailer:Volumeperdistance_Unit_Enum.LITER_PER_100_KILOMETERS,
+        trailer:Volumeperdistance_Unit_Enum.MILLILITER_PER_100_KILOMETERS,
+        trailer:Work_Unit_Enum.KILOWATT_HOURS ;
+    skos:prefLabel "Field Concepts"@en .
+
+trailer:Force_Unit_Enum a skos:Collection ;
+    skos:member trailer:Force_Unit_Enum.KILO_NEWTON,
+        trailer:Force_Unit_Enum.NEWTON ;
+    skos:prefLabel "Force_Unit_Enum"@en .
+
+trailer:Frequency_Unit_Enum a skos:Collection ;
+    skos:member trailer:Frequency_Unit_Enum.BEATS_PER_MINUTE,
+        trailer:Frequency_Unit_Enum.CYCLES_PER_MINUTE,
+        trailer:Frequency_Unit_Enum.HERTZ ;
+    skos:prefLabel "Frequency_Unit_Enum"@en .
+
+trailer:Illuminance_Unit_Enum a skos:Collection ;
+    skos:member trailer:Illuminance_Unit_Enum.LUX ;
+    skos:prefLabel "Illuminance_Unit_Enum"@en .
+
+trailer:InputObjectConcepts a skos:Collection ;
+    skos:member trailer:InCabinArea2x2Input,
+        trailer:InCabinArea2x3Input,
+        trailer:InCabinArea3x3Input ;
+    skos:prefLabel "Input Object Concepts"@en .
+
+trailer:InterfaceConcepts a skos:Collection ;
+    skos:prefLabel "Interface Concepts"@en .
+
+trailer:Length_Unit_Enum a skos:Collection ;
+    skos:member trailer:Length_Unit_Enum.CENTIMETER,
+        trailer:Length_Unit_Enum.INCH,
+        trailer:Length_Unit_Enum.KILOMETER,
+        trailer:Length_Unit_Enum.METER,
+        trailer:Length_Unit_Enum.MILLIMETER ;
+    skos:prefLabel "Length_Unit_Enum"@en .
+
+trailer:Mass_Unit_Enum a skos:Collection ;
+    skos:member trailer:Mass_Unit_Enum.GRAM,
+        trailer:Mass_Unit_Enum.KILOGRAM,
+        trailer:Mass_Unit_Enum.POUND ;
+    skos:prefLabel "Mass_Unit_Enum"@en .
+
+trailer:Massperdistance_Unit_Enum a skos:Collection ;
+    skos:member trailer:Massperdistance_Unit_Enum.GRAMS_PER_KILOMETER ;
+    skos:prefLabel "Massperdistance_Unit_Enum"@en .
+
+trailer:Masspertime_Unit_Enum a skos:Collection ;
+    skos:member trailer:Masspertime_Unit_Enum.GRAMS_PER_SECOND ;
+    skos:prefLabel "Masspertime_Unit_Enum"@en .
+
+trailer:ObjectConcepts a skos:Collection ;
+    skos:member trailer:InCabinArea2x2,
+        trailer:InCabinArea2x3,
+        trailer:InCabinArea3x3,
+        trailer:TrailerAxleTag,
+        trailer:TrailerTag,
+        trailer:TrailerWheelBrake,
+        trailer:TrailerWheelTag,
+        trailer:TrailerWheelTire,
+        trailer:Vehicle,
+        trailer:VehicleTrailer,
+        trailer:VehicleTrailerAxle,
+        trailer:VehicleTrailerWheel ;
+    skos:prefLabel "Object Concepts"@en .
+
+trailer:Power_Unit_Enum a skos:Collection ;
+    skos:member trailer:Power_Unit_Enum.HORSEPOWER,
+        trailer:Power_Unit_Enum.KILOWATT,
+        trailer:Power_Unit_Enum.WATT ;
+    skos:prefLabel "Power_Unit_Enum"@en .
+
+trailer:Pressure_Unit_Enum a skos:Collection ;
+    skos:member trailer:Pressure_Unit_Enum.KILOPASCAL,
+        trailer:Pressure_Unit_Enum.MILLIBAR,
+        trailer:Pressure_Unit_Enum.PASCAL,
+        trailer:Pressure_Unit_Enum.POUNDS_PER_SQUARE_INCH ;
+    skos:prefLabel "Pressure_Unit_Enum"@en .
+
+trailer:Rating_Unit_Enum a skos:Collection ;
+    skos:member trailer:Rating_Unit_Enum.STARS ;
+    skos:prefLabel "Rating_Unit_Enum"@en .
+
+trailer:Relation_Unit_Enum a skos:Collection ;
+    skos:member trailer:Relation_Unit_Enum.DECIBEL,
+        trailer:Relation_Unit_Enum.DECIBEL_MILLIWATT,
+        trailer:Relation_Unit_Enum.NANO_METER_PER_KILOMETER,
+        trailer:Relation_Unit_Enum.PERCENT,
+        trailer:Relation_Unit_Enum.RATIO ;
+    skos:prefLabel "Relation_Unit_Enum"@en .
+
+trailer:Resistance_Unit_Enum a skos:Collection ;
+    skos:member trailer:Resistance_Unit_Enum.OHM ;
+    skos:prefLabel "Resistance_Unit_Enum"@en .
+
+trailer:Rotationalspeed_Unit_Enum a skos:Collection ;
+    skos:member trailer:Rotationalspeed_Unit_Enum.REVOLUTIONS_PER_MINUTE ;
+    skos:prefLabel "Rotationalspeed_Unit_Enum"@en .
+
+trailer:Temperature_Unit_Enum a skos:Collection ;
+    skos:member trailer:Temperature_Unit_Enum.DEGREE_CELSIUS ;
+    skos:prefLabel "Temperature_Unit_Enum"@en .
+
+trailer:ThreeColumnsInCabinEnum a skos:Collection ;
+    skos:member trailer:ThreeColumnsInCabinEnum.DRIVERSIDE,
+        trailer:ThreeColumnsInCabinEnum.MIDDLE,
+        trailer:ThreeColumnsInCabinEnum.PASSENGERSIDE ;
+    skos:prefLabel "ThreeColumnsInCabinEnum"@en .
+
+trailer:ThreeRowsInCabinEnum a skos:Collection ;
+    skos:member trailer:ThreeRowsInCabinEnum.ROW1,
+        trailer:ThreeRowsInCabinEnum.ROW2,
+        trailer:ThreeRowsInCabinEnum.ROW3 ;
+    skos:prefLabel "ThreeRowsInCabinEnum"@en .
+
+trailer:ThreeTrailers a skos:Collection ;
+    skos:member trailer:ThreeTrailers.TRAILER_1,
+        trailer:ThreeTrailers.TRAILER_2,
+        trailer:ThreeTrailers.TRAILER_3 ;
+    skos:prefLabel "ThreeTrailers"@en .
+
+trailer:Torque_Unit_Enum a skos:Collection ;
+    skos:member trailer:Torque_Unit_Enum.NEWTON_METER ;
+    skos:prefLabel "Torque_Unit_Enum"@en .
+
+trailer:TwoColumnsInCabinEnum a skos:Collection ;
+    skos:member trailer:TwoColumnsInCabinEnum.DRIVERSIDE,
+        trailer:TwoColumnsInCabinEnum.PASSENGERSIDE ;
+    skos:prefLabel "TwoColumnsInCabinEnum"@en .
+
+trailer:TwoRowsInCabinEnum a skos:Collection ;
+    skos:member trailer:TwoRowsInCabinEnum.ROW1,
+        trailer:TwoRowsInCabinEnum.ROW2 ;
+    skos:prefLabel "TwoRowsInCabinEnum"@en .
+
+trailer:TwoSides a skos:Collection ;
+    skos:member trailer:TwoSides.LEFT,
+        trailer:TwoSides.RIGHT ;
+    skos:prefLabel "TwoSides"@en .
+
+trailer:UnionConcepts a skos:Collection ;
+    skos:prefLabel "Union Concepts"@en .
+
+trailer:VehicleTrailerKindEnum a skos:Collection ;
+    skos:member trailer:VehicleTrailerKindEnum.CENTER_AXLE_TRAILER,
+        trailer:VehicleTrailerKindEnum.CONVERTER_DOLLY,
+        trailer:VehicleTrailerKindEnum.FULL_TRAILER,
+        trailer:VehicleTrailerKindEnum.LINK_TRAILER,
+        trailer:VehicleTrailerKindEnum.SEMI_TRAILER,
+        trailer:VehicleTrailerKindEnum.TOWING_CENTRE_AXLE_TRAILER,
+        trailer:VehicleTrailerKindEnum.TOWING_FULL_TRAILER,
+        trailer:VehicleTrailerKindEnum.TOWING_SEMI_TRAILER,
+        trailer:VehicleTrailerKindEnum.UNDEFINED ;
+    skos:prefLabel "VehicleTrailerKindEnum"@en .
+
+trailer:Velocity_Unit_Enum a skos:Collection ;
+    skos:member trailer:Velocity_Unit_Enum.KILOMETER_PER_HOUR,
+        trailer:Velocity_Unit_Enum.METERS_PER_SECOND ;
+    skos:prefLabel "Velocity_Unit_Enum"@en .
+
+trailer:Voltage_Unit_Enum a skos:Collection ;
+    skos:member trailer:Voltage_Unit_Enum.VOLT ;
+    skos:prefLabel "Voltage_Unit_Enum"@en .
+
+trailer:Volume_Unit_Enum a skos:Collection ;
+    skos:member trailer:Volume_Unit_Enum.CUBIC_CENTIMETERS,
+        trailer:Volume_Unit_Enum.LITER,
+        trailer:Volume_Unit_Enum.MILLILITER ;
+    skos:prefLabel "Volume_Unit_Enum"@en .
+
+trailer:Volumeflowrate_Unit_Enum a skos:Collection ;
+    skos:member trailer:Volumeflowrate_Unit_Enum.LITER_PER_HOUR ;
+    skos:prefLabel "Volumeflowrate_Unit_Enum"@en .
+
+trailer:Volumeperdistance_Unit_Enum a skos:Collection ;
+    skos:member trailer:Volumeperdistance_Unit_Enum.LITER_PER_100_KILOMETERS,
+        trailer:Volumeperdistance_Unit_Enum.MILLILITER_PER_100_KILOMETERS ;
+    skos:prefLabel "Volumeperdistance_Unit_Enum"@en .
+
+trailer:Work_Unit_Enum a skos:Collection ;
+    skos:member trailer:Work_Unit_Enum.KILOWATT_HOURS ;
+    skos:prefLabel "Work_Unit_Enum"@en .
+
+trailer:InCabinArea2x2 a skos:Concept ;
+    skos:prefLabel "InCabinArea2x2"@en .
+
+trailer:InCabinArea2x2.column a skos:Concept ;
+    skos:prefLabel "InCabinArea2x2.column"@en .
+
+trailer:InCabinArea2x2.row a skos:Concept ;
+    skos:prefLabel "InCabinArea2x2.row"@en .
+
+trailer:InCabinArea2x2Input a skos:Concept ;
+    skos:prefLabel "InCabinArea2x2Input"@en .
+
+trailer:InCabinArea2x2Input.column a skos:Concept ;
+    skos:prefLabel "InCabinArea2x2Input.column"@en .
+
+trailer:InCabinArea2x2Input.row a skos:Concept ;
+    skos:prefLabel "InCabinArea2x2Input.row"@en .
+
+trailer:InCabinArea2x3 a skos:Concept ;
+    skos:prefLabel "InCabinArea2x3"@en .
+
+trailer:InCabinArea2x3.column a skos:Concept ;
+    skos:prefLabel "InCabinArea2x3.column"@en .
+
+trailer:InCabinArea2x3.row a skos:Concept ;
+    skos:prefLabel "InCabinArea2x3.row"@en .
+
+trailer:InCabinArea2x3Input a skos:Concept ;
+    skos:prefLabel "InCabinArea2x3Input"@en .
+
+trailer:InCabinArea2x3Input.column a skos:Concept ;
+    skos:prefLabel "InCabinArea2x3Input.column"@en .
+
+trailer:InCabinArea2x3Input.row a skos:Concept ;
+    skos:prefLabel "InCabinArea2x3Input.row"@en .
+
+trailer:InCabinArea3x3 a skos:Concept ;
+    skos:prefLabel "InCabinArea3x3"@en .
+
+trailer:InCabinArea3x3.column a skos:Concept ;
+    skos:prefLabel "InCabinArea3x3.column"@en .
+
+trailer:InCabinArea3x3.row a skos:Concept ;
+    skos:prefLabel "InCabinArea3x3.row"@en .
+
+trailer:InCabinArea3x3Input a skos:Concept ;
+    skos:prefLabel "InCabinArea3x3Input"@en .
+
+trailer:InCabinArea3x3Input.column a skos:Concept ;
+    skos:prefLabel "InCabinArea3x3Input.column"@en .
+
+trailer:InCabinArea3x3Input.row a skos:Concept ;
+    skos:prefLabel "InCabinArea3x3Input.row"@en .
+
+trailer:TrailerAxleTag a skos:Concept ;
+    skos:prefLabel "TrailerAxleTag"@en .
+
+trailer:TrailerAxleTag.position a skos:Concept ;
+    skos:prefLabel "TrailerAxleTag.position"@en .
+
+trailer:TrailerTag a skos:Concept ;
+    skos:prefLabel "TrailerTag"@en .
+
+trailer:TrailerTag.instance a skos:Concept ;
+    skos:prefLabel "TrailerTag.instance"@en .
+
+trailer:TrailerWheelBrake a skos:Concept ;
+    skos:definition "Brake signals for wheel" ;
+    skos:note "Content of SKOS definition was inherited from the description of the GraphQL SDL element TrailerWheelBrake whose URI is https://example.org/s2dm/trailer#TrailerWheelBrake." ;
+    skos:prefLabel "TrailerWheelBrake"@en .
+
+trailer:TrailerWheelBrake.fluidLevel a skos:Concept ;
+    skos:prefLabel "TrailerWheelBrake.fluidLevel"@en .
+
+trailer:TrailerWheelBrake.isBrakesWorn a skos:Concept ;
+    skos:prefLabel "TrailerWheelBrake.isBrakesWorn"@en .
+
+trailer:TrailerWheelBrake.isFluidLevelLow a skos:Concept ;
+    skos:prefLabel "TrailerWheelBrake.isFluidLevelLow"@en .
+
+trailer:TrailerWheelBrake.padWear a skos:Concept ;
+    skos:prefLabel "TrailerWheelBrake.padWear"@en .
+
+trailer:TrailerWheelTag a skos:Concept ;
+    skos:prefLabel "TrailerWheelTag"@en .
+
+trailer:TrailerWheelTag.axle a skos:Concept ;
+    skos:prefLabel "TrailerWheelTag.axle"@en .
+
+trailer:TrailerWheelTag.outsideInNumber a skos:Concept ;
+    skos:prefLabel "TrailerWheelTag.outsideInNumber"@en .
+
+trailer:TrailerWheelTag.side a skos:Concept ;
+    skos:prefLabel "TrailerWheelTag.side"@en .
+
+trailer:TrailerWheelTire a skos:Concept ;
+    skos:definition "Tire signals for wheel." ;
+    skos:note "Content of SKOS definition was inherited from the description of the GraphQL SDL element TrailerWheelTire whose URI is https://example.org/s2dm/trailer#TrailerWheelTire." ;
+    skos:prefLabel "TrailerWheelTire"@en .
+
+trailer:TrailerWheelTire.isPressureLow a skos:Concept ;
+    skos:prefLabel "TrailerWheelTire.isPressureLow"@en .
+
+trailer:TrailerWheelTire.pressure a skos:Concept ;
+    skos:prefLabel "TrailerWheelTire.pressure"@en .
+
+trailer:TrailerWheelTire.temperature a skos:Concept ;
+    skos:prefLabel "TrailerWheelTire.temperature"@en .
+
+trailer:Vehicle a skos:Concept ;
+    skos:definition "An object representing a vehicle." ;
+    skos:note "Content of SKOS definition was inherited from the description of the GraphQL SDL element Vehicle whose URI is https://example.org/s2dm/trailer#Vehicle." ;
+    skos:prefLabel "Vehicle"@en .
+
+trailer:Vehicle.maxTowBallWeight a skos:Concept ;
+    skos:prefLabel "Vehicle.maxTowBallWeight"@en .
+
+trailer:Vehicle.maxTowWeight a skos:Concept ;
+    skos:prefLabel "Vehicle.maxTowWeight"@en .
+
+trailer:Vehicle.trailerCount a skos:Concept ;
+    skos:prefLabel "Vehicle.trailerCount"@en .
+
+trailer:Vehicle.trailers a skos:Concept ;
+    skos:prefLabel "Vehicle.trailers"@en .
+
+trailer:Vehicle.vin a skos:Concept ;
+    skos:prefLabel "Vehicle.vin"@en .
+
+trailer:VehicleTrailer a skos:Concept ;
+    skos:definition "A trailer attached to a vehicle and its associated properties." ;
+    skos:note "Content of SKOS definition was inherited from the description of the GraphQL SDL element VehicleTrailer whose URI is https://example.org/s2dm/trailer#VehicleTrailer." ;
+    skos:prefLabel "VehicleTrailer"@en .
+
+trailer:VehicleTrailer.axleCount a skos:Concept ;
+    skos:prefLabel "VehicleTrailer.axleCount"@en .
+
+trailer:VehicleTrailer.axleLoadSum a skos:Concept ;
+    skos:prefLabel "VehicleTrailer.axleLoadSum"@en .
+
+trailer:VehicleTrailer.axles a skos:Concept ;
+    skos:prefLabel "VehicleTrailer.axles"@en .
+
+trailer:VehicleTrailer.customerTrailerName a skos:Concept ;
+    skos:prefLabel "VehicleTrailer.customerTrailerName"@en .
+
+trailer:VehicleTrailer.trailer a skos:Concept ;
+    skos:prefLabel "VehicleTrailer.trailer"@en .
+
+trailer:VehicleTrailer.trailerKind a skos:Concept ;
+    skos:prefLabel "VehicleTrailer.trailerKind"@en .
+
+trailer:VehicleTrailer.vin a skos:Concept ;
+    skos:prefLabel "VehicleTrailer.vin"@en .
+
+trailer:VehicleTrailerAxle a skos:Concept ;
+    skos:definition "Axle signals for vehicles (towing or towed) with 1 to 15 axles" ;
+    skos:note "Content of SKOS definition was inherited from the description of the GraphQL SDL element VehicleTrailerAxle whose URI is https://example.org/s2dm/trailer#VehicleTrailerAxle." ;
+    skos:prefLabel "VehicleTrailerAxle"@en .
+
+trailer:VehicleTrailerAxle.axleLoad a skos:Concept ;
+    skos:prefLabel "VehicleTrailerAxle.axleLoad"@en .
+
+trailer:VehicleTrailerAxle.axleWidth a skos:Concept ;
+    skos:prefLabel "VehicleTrailerAxle.axleWidth"@en .
+
+trailer:VehicleTrailerAxle.position a skos:Concept ;
+    skos:prefLabel "VehicleTrailerAxle.position"@en .
+
+trailer:VehicleTrailerAxle.steeringAngle a skos:Concept ;
+    skos:prefLabel "VehicleTrailerAxle.steeringAngle"@en .
+
+trailer:VehicleTrailerAxle.tireAspectRatio a skos:Concept ;
+    skos:prefLabel "VehicleTrailerAxle.tireAspectRatio"@en .
+
+trailer:VehicleTrailerAxle.tireDiameter a skos:Concept ;
+    skos:prefLabel "VehicleTrailerAxle.tireDiameter"@en .
+
+trailer:VehicleTrailerAxle.tireWidth a skos:Concept ;
+    skos:prefLabel "VehicleTrailerAxle.tireWidth"@en .
+
+trailer:VehicleTrailerAxle.trackWidth a skos:Concept ;
+    skos:prefLabel "VehicleTrailerAxle.trackWidth"@en .
+
+trailer:VehicleTrailerAxle.trailerAxle a skos:Concept ;
+    skos:prefLabel "VehicleTrailerAxle.trailerAxle"@en .
+
+trailer:VehicleTrailerAxle.treadWidth a skos:Concept ;
+    skos:prefLabel "VehicleTrailerAxle.treadWidth"@en .
+
+trailer:VehicleTrailerAxle.wheelCount a skos:Concept ;
+    skos:prefLabel "VehicleTrailerAxle.wheelCount"@en .
+
+trailer:VehicleTrailerAxle.wheelDiameter a skos:Concept ;
+    skos:prefLabel "VehicleTrailerAxle.wheelDiameter"@en .
+
+trailer:VehicleTrailerAxle.wheelWidth a skos:Concept ;
+    skos:prefLabel "VehicleTrailerAxle.wheelWidth"@en .
+
+trailer:VehicleTrailerAxle.wheels a skos:Concept ;
+    skos:prefLabel "VehicleTrailerAxle.wheels"@en .
+
+trailer:VehicleTrailerWheel a skos:Concept ;
+    skos:definition "Wheel signals for axle. Instances. Counted from the center line (3:rd left is on the left side of 2:left in the vehicle direction)" ;
+    skos:note "Content of SKOS definition was inherited from the description of the GraphQL SDL element VehicleTrailerWheel whose URI is https://example.org/s2dm/trailer#VehicleTrailerWheel." ;
+    skos:prefLabel "VehicleTrailerWheel"@en .
+
+trailer:VehicleTrailerWheel.angularSpeed a skos:Concept ;
+    skos:prefLabel "VehicleTrailerWheel.angularSpeed"@en .
+
+trailer:VehicleTrailerWheel.brake a skos:Concept ;
+    skos:prefLabel "VehicleTrailerWheel.brake"@en .
+
+trailer:VehicleTrailerWheel.speed a skos:Concept ;
+    skos:prefLabel "VehicleTrailerWheel.speed"@en .
+
+trailer:VehicleTrailerWheel.tire a skos:Concept ;
+    skos:prefLabel "VehicleTrailerWheel.tire"@en .
+
+trailer:VehicleTrailerWheel.trailerWheel a skos:Concept ;
+    skos:prefLabel "VehicleTrailerWheel.trailerWheel"@en .
+
+trailer:Acceleration_Unit_Enum.CENTIMETERS_PER_SECOND_SQUARED a skos:Concept ;
+    skos:prefLabel "Acceleration_Unit_Enum.CENTIMETERS_PER_SECOND_SQUARED"@en .
+
+trailer:Acceleration_Unit_Enum.METERS_PER_SECOND_SQUARED a skos:Concept ;
+    skos:prefLabel "Acceleration_Unit_Enum.METERS_PER_SECOND_SQUARED"@en .
+
+trailer:Angle_Unit_Enum.DEGREE a skos:Concept ;
+    skos:prefLabel "Angle_Unit_Enum.DEGREE"@en .
+
+trailer:Angularspeed_Unit_Enum.DEGREE_PER_SECOND a skos:Concept ;
+    skos:prefLabel "Angularspeed_Unit_Enum.DEGREE_PER_SECOND"@en .
+
+trailer:Angularspeed_Unit_Enum.RADIANS_PER_SECOND a skos:Concept ;
+    skos:prefLabel "Angularspeed_Unit_Enum.RADIANS_PER_SECOND"@en .
+
+trailer:AxlePositionEnum.POSITION_1 a skos:Concept ;
+    skos:prefLabel "AxlePositionEnum.POSITION_1"@en .
+
+trailer:AxlePositionEnum.POSITION_10 a skos:Concept ;
+    skos:prefLabel "AxlePositionEnum.POSITION_10"@en .
+
+trailer:AxlePositionEnum.POSITION_11 a skos:Concept ;
+    skos:prefLabel "AxlePositionEnum.POSITION_11"@en .
+
+trailer:AxlePositionEnum.POSITION_12 a skos:Concept ;
+    skos:prefLabel "AxlePositionEnum.POSITION_12"@en .
+
+trailer:AxlePositionEnum.POSITION_13 a skos:Concept ;
+    skos:prefLabel "AxlePositionEnum.POSITION_13"@en .
+
+trailer:AxlePositionEnum.POSITION_14 a skos:Concept ;
+    skos:prefLabel "AxlePositionEnum.POSITION_14"@en .
+
+trailer:AxlePositionEnum.POSITION_15 a skos:Concept ;
+    skos:prefLabel "AxlePositionEnum.POSITION_15"@en .
+
+trailer:AxlePositionEnum.POSITION_2 a skos:Concept ;
+    skos:prefLabel "AxlePositionEnum.POSITION_2"@en .
+
+trailer:AxlePositionEnum.POSITION_3 a skos:Concept ;
+    skos:prefLabel "AxlePositionEnum.POSITION_3"@en .
+
+trailer:AxlePositionEnum.POSITION_4 a skos:Concept ;
+    skos:prefLabel "AxlePositionEnum.POSITION_4"@en .
+
+trailer:AxlePositionEnum.POSITION_5 a skos:Concept ;
+    skos:prefLabel "AxlePositionEnum.POSITION_5"@en .
+
+trailer:AxlePositionEnum.POSITION_6 a skos:Concept ;
+    skos:prefLabel "AxlePositionEnum.POSITION_6"@en .
+
+trailer:AxlePositionEnum.POSITION_7 a skos:Concept ;
+    skos:prefLabel "AxlePositionEnum.POSITION_7"@en .
+
+trailer:AxlePositionEnum.POSITION_8 a skos:Concept ;
+    skos:prefLabel "AxlePositionEnum.POSITION_8"@en .
+
+trailer:AxlePositionEnum.POSITION_9 a skos:Concept ;
+    skos:prefLabel "AxlePositionEnum.POSITION_9"@en .
+
+trailer:Datetime_Unit_Enum.ISO_8601 a skos:Concept ;
+    skos:prefLabel "Datetime_Unit_Enum.ISO_8601"@en .
+
+trailer:Datetime_Unit_Enum.UNIX_TIMESTAMP a skos:Concept ;
+    skos:prefLabel "Datetime_Unit_Enum.UNIX_TIMESTAMP"@en .
+
+trailer:Distancepervolume_Unit_Enum.KILOMETERS_PER_LITER a skos:Concept ;
+    skos:prefLabel "Distancepervolume_Unit_Enum.KILOMETERS_PER_LITER"@en .
+
+trailer:Distancepervolume_Unit_Enum.MILES_PER_GALLON a skos:Concept ;
+    skos:prefLabel "Distancepervolume_Unit_Enum.MILES_PER_GALLON"@en .
+
+trailer:Duration_Unit_Enum.DAYS a skos:Concept ;
+    skos:prefLabel "Duration_Unit_Enum.DAYS"@en .
+
+trailer:Duration_Unit_Enum.HOUR a skos:Concept ;
+    skos:prefLabel "Duration_Unit_Enum.HOUR"@en .
+
+trailer:Duration_Unit_Enum.MILLISECOND a skos:Concept ;
+    skos:prefLabel "Duration_Unit_Enum.MILLISECOND"@en .
+
+trailer:Duration_Unit_Enum.MINUTE a skos:Concept ;
+    skos:prefLabel "Duration_Unit_Enum.MINUTE"@en .
+
+trailer:Duration_Unit_Enum.MONTHS a skos:Concept ;
+    skos:prefLabel "Duration_Unit_Enum.MONTHS"@en .
+
+trailer:Duration_Unit_Enum.SECOND a skos:Concept ;
+    skos:prefLabel "Duration_Unit_Enum.SECOND"@en .
+
+trailer:Duration_Unit_Enum.WEEKS a skos:Concept ;
+    skos:prefLabel "Duration_Unit_Enum.WEEKS"@en .
+
+trailer:Duration_Unit_Enum.YEARS a skos:Concept ;
+    skos:prefLabel "Duration_Unit_Enum.YEARS"@en .
+
+trailer:EightOutsideInNumber._1ST a skos:Concept ;
+    skos:prefLabel "EightOutsideInNumber._1ST"@en .
+
+trailer:EightOutsideInNumber._2ND a skos:Concept ;
+    skos:prefLabel "EightOutsideInNumber._2ND"@en .
+
+trailer:EightOutsideInNumber._3RD a skos:Concept ;
+    skos:prefLabel "EightOutsideInNumber._3RD"@en .
+
+trailer:EightOutsideInNumber._4TH a skos:Concept ;
+    skos:prefLabel "EightOutsideInNumber._4TH"@en .
+
+trailer:EightOutsideInNumber._5TH a skos:Concept ;
+    skos:prefLabel "EightOutsideInNumber._5TH"@en .
+
+trailer:EightOutsideInNumber._6TH a skos:Concept ;
+    skos:prefLabel "EightOutsideInNumber._6TH"@en .
+
+trailer:EightOutsideInNumber._7TH a skos:Concept ;
+    skos:prefLabel "EightOutsideInNumber._7TH"@en .
+
+trailer:EightOutsideInNumber._8TH a skos:Concept ;
+    skos:prefLabel "EightOutsideInNumber._8TH"@en .
+
+trailer:Electriccharge_Unit_Enum.AMPERE_HOURS a skos:Concept ;
+    skos:prefLabel "Electriccharge_Unit_Enum.AMPERE_HOURS"@en .
+
+trailer:Electriccurrent_Unit_Enum.AMPERE a skos:Concept ;
+    skos:prefLabel "Electriccurrent_Unit_Enum.AMPERE"@en .
+
+trailer:Energyconsumptionperdistance_Unit_Enum.KILOWATT_HOURS_PER_100_KILOMETERS a skos:Concept ;
+    skos:prefLabel "Energyconsumptionperdistance_Unit_Enum.KILOWATT_HOURS_PER_100_KILOMETERS"@en .
+
+trailer:Energyconsumptionperdistance_Unit_Enum.WATT_HOUR_PER_KM a skos:Concept ;
+    skos:prefLabel "Energyconsumptionperdistance_Unit_Enum.WATT_HOUR_PER_KM"@en .
+
+trailer:Force_Unit_Enum.KILO_NEWTON a skos:Concept ;
+    skos:prefLabel "Force_Unit_Enum.KILO_NEWTON"@en .
+
+trailer:Force_Unit_Enum.NEWTON a skos:Concept ;
+    skos:prefLabel "Force_Unit_Enum.NEWTON"@en .
+
+trailer:Frequency_Unit_Enum.BEATS_PER_MINUTE a skos:Concept ;
+    skos:prefLabel "Frequency_Unit_Enum.BEATS_PER_MINUTE"@en .
+
+trailer:Frequency_Unit_Enum.CYCLES_PER_MINUTE a skos:Concept ;
+    skos:prefLabel "Frequency_Unit_Enum.CYCLES_PER_MINUTE"@en .
+
+trailer:Frequency_Unit_Enum.HERTZ a skos:Concept ;
+    skos:prefLabel "Frequency_Unit_Enum.HERTZ"@en .
+
+trailer:Illuminance_Unit_Enum.LUX a skos:Concept ;
+    skos:prefLabel "Illuminance_Unit_Enum.LUX"@en .
+
+trailer:Length_Unit_Enum.CENTIMETER a skos:Concept ;
+    skos:prefLabel "Length_Unit_Enum.CENTIMETER"@en .
+
+trailer:Length_Unit_Enum.INCH a skos:Concept ;
+    skos:prefLabel "Length_Unit_Enum.INCH"@en .
+
+trailer:Length_Unit_Enum.KILOMETER a skos:Concept ;
+    skos:prefLabel "Length_Unit_Enum.KILOMETER"@en .
+
+trailer:Length_Unit_Enum.METER a skos:Concept ;
+    skos:prefLabel "Length_Unit_Enum.METER"@en .
+
+trailer:Length_Unit_Enum.MILLIMETER a skos:Concept ;
+    skos:prefLabel "Length_Unit_Enum.MILLIMETER"@en .
+
+trailer:Mass_Unit_Enum.GRAM a skos:Concept ;
+    skos:prefLabel "Mass_Unit_Enum.GRAM"@en .
+
+trailer:Mass_Unit_Enum.KILOGRAM a skos:Concept ;
+    skos:prefLabel "Mass_Unit_Enum.KILOGRAM"@en .
+
+trailer:Mass_Unit_Enum.POUND a skos:Concept ;
+    skos:prefLabel "Mass_Unit_Enum.POUND"@en .
+
+trailer:Massperdistance_Unit_Enum.GRAMS_PER_KILOMETER a skos:Concept ;
+    skos:prefLabel "Massperdistance_Unit_Enum.GRAMS_PER_KILOMETER"@en .
+
+trailer:Masspertime_Unit_Enum.GRAMS_PER_SECOND a skos:Concept ;
+    skos:prefLabel "Masspertime_Unit_Enum.GRAMS_PER_SECOND"@en .
+
+trailer:Power_Unit_Enum.HORSEPOWER a skos:Concept ;
+    skos:prefLabel "Power_Unit_Enum.HORSEPOWER"@en .
+
+trailer:Power_Unit_Enum.KILOWATT a skos:Concept ;
+    skos:prefLabel "Power_Unit_Enum.KILOWATT"@en .
+
+trailer:Power_Unit_Enum.WATT a skos:Concept ;
+    skos:prefLabel "Power_Unit_Enum.WATT"@en .
+
+trailer:Pressure_Unit_Enum.KILOPASCAL a skos:Concept ;
+    skos:prefLabel "Pressure_Unit_Enum.KILOPASCAL"@en .
+
+trailer:Pressure_Unit_Enum.MILLIBAR a skos:Concept ;
+    skos:prefLabel "Pressure_Unit_Enum.MILLIBAR"@en .
+
+trailer:Pressure_Unit_Enum.PASCAL a skos:Concept ;
+    skos:prefLabel "Pressure_Unit_Enum.PASCAL"@en .
+
+trailer:Pressure_Unit_Enum.POUNDS_PER_SQUARE_INCH a skos:Concept ;
+    skos:prefLabel "Pressure_Unit_Enum.POUNDS_PER_SQUARE_INCH"@en .
+
+trailer:Rating_Unit_Enum.STARS a skos:Concept ;
+    skos:prefLabel "Rating_Unit_Enum.STARS"@en .
+
+trailer:Relation_Unit_Enum.DECIBEL a skos:Concept ;
+    skos:prefLabel "Relation_Unit_Enum.DECIBEL"@en .
+
+trailer:Relation_Unit_Enum.DECIBEL_MILLIWATT a skos:Concept ;
+    skos:prefLabel "Relation_Unit_Enum.DECIBEL_MILLIWATT"@en .
+
+trailer:Relation_Unit_Enum.NANO_METER_PER_KILOMETER a skos:Concept ;
+    skos:prefLabel "Relation_Unit_Enum.NANO_METER_PER_KILOMETER"@en .
+
+trailer:Relation_Unit_Enum.PERCENT a skos:Concept ;
+    skos:prefLabel "Relation_Unit_Enum.PERCENT"@en .
+
+trailer:Relation_Unit_Enum.RATIO a skos:Concept ;
+    skos:prefLabel "Relation_Unit_Enum.RATIO"@en .
+
+trailer:Resistance_Unit_Enum.OHM a skos:Concept ;
+    skos:prefLabel "Resistance_Unit_Enum.OHM"@en .
+
+trailer:Rotationalspeed_Unit_Enum.REVOLUTIONS_PER_MINUTE a skos:Concept ;
+    skos:prefLabel "Rotationalspeed_Unit_Enum.REVOLUTIONS_PER_MINUTE"@en .
+
+trailer:Temperature_Unit_Enum.DEGREE_CELSIUS a skos:Concept ;
+    skos:prefLabel "Temperature_Unit_Enum.DEGREE_CELSIUS"@en .
+
+trailer:ThreeColumnsInCabinEnum.DRIVERSIDE a skos:Concept ;
+    skos:prefLabel "ThreeColumnsInCabinEnum.DRIVERSIDE"@en .
+
+trailer:ThreeColumnsInCabinEnum.MIDDLE a skos:Concept ;
+    skos:prefLabel "ThreeColumnsInCabinEnum.MIDDLE"@en .
+
+trailer:ThreeColumnsInCabinEnum.PASSENGERSIDE a skos:Concept ;
+    skos:prefLabel "ThreeColumnsInCabinEnum.PASSENGERSIDE"@en .
+
+trailer:ThreeRowsInCabinEnum.ROW1 a skos:Concept ;
+    skos:prefLabel "ThreeRowsInCabinEnum.ROW1"@en .
+
+trailer:ThreeRowsInCabinEnum.ROW2 a skos:Concept ;
+    skos:prefLabel "ThreeRowsInCabinEnum.ROW2"@en .
+
+trailer:ThreeRowsInCabinEnum.ROW3 a skos:Concept ;
+    skos:prefLabel "ThreeRowsInCabinEnum.ROW3"@en .
+
+trailer:ThreeTrailers.TRAILER_1 a skos:Concept ;
+    skos:prefLabel "ThreeTrailers.TRAILER_1"@en .
+
+trailer:ThreeTrailers.TRAILER_2 a skos:Concept ;
+    skos:prefLabel "ThreeTrailers.TRAILER_2"@en .
+
+trailer:ThreeTrailers.TRAILER_3 a skos:Concept ;
+    skos:prefLabel "ThreeTrailers.TRAILER_3"@en .
+
+trailer:Torque_Unit_Enum.NEWTON_METER a skos:Concept ;
+    skos:prefLabel "Torque_Unit_Enum.NEWTON_METER"@en .
+
+trailer:TwoColumnsInCabinEnum.DRIVERSIDE a skos:Concept ;
+    skos:prefLabel "TwoColumnsInCabinEnum.DRIVERSIDE"@en .
+
+trailer:TwoColumnsInCabinEnum.PASSENGERSIDE a skos:Concept ;
+    skos:prefLabel "TwoColumnsInCabinEnum.PASSENGERSIDE"@en .
+
+trailer:TwoRowsInCabinEnum.ROW1 a skos:Concept ;
+    skos:prefLabel "TwoRowsInCabinEnum.ROW1"@en .
+
+trailer:TwoRowsInCabinEnum.ROW2 a skos:Concept ;
+    skos:prefLabel "TwoRowsInCabinEnum.ROW2"@en .
+
+trailer:TwoSides.LEFT a skos:Concept ;
+    skos:prefLabel "TwoSides.LEFT"@en .
+
+trailer:TwoSides.RIGHT a skos:Concept ;
+    skos:prefLabel "TwoSides.RIGHT"@en .
+
+trailer:VehicleTrailerKindEnum.CENTER_AXLE_TRAILER a skos:Concept ;
+    skos:prefLabel "VehicleTrailerKindEnum.CENTER_AXLE_TRAILER"@en .
+
+trailer:VehicleTrailerKindEnum.CONVERTER_DOLLY a skos:Concept ;
+    skos:prefLabel "VehicleTrailerKindEnum.CONVERTER_DOLLY"@en .
+
+trailer:VehicleTrailerKindEnum.FULL_TRAILER a skos:Concept ;
+    skos:prefLabel "VehicleTrailerKindEnum.FULL_TRAILER"@en .
+
+trailer:VehicleTrailerKindEnum.LINK_TRAILER a skos:Concept ;
+    skos:prefLabel "VehicleTrailerKindEnum.LINK_TRAILER"@en .
+
+trailer:VehicleTrailerKindEnum.SEMI_TRAILER a skos:Concept ;
+    skos:prefLabel "VehicleTrailerKindEnum.SEMI_TRAILER"@en .
+
+trailer:VehicleTrailerKindEnum.TOWING_CENTRE_AXLE_TRAILER a skos:Concept ;
+    skos:prefLabel "VehicleTrailerKindEnum.TOWING_CENTRE_AXLE_TRAILER"@en .
+
+trailer:VehicleTrailerKindEnum.TOWING_FULL_TRAILER a skos:Concept ;
+    skos:prefLabel "VehicleTrailerKindEnum.TOWING_FULL_TRAILER"@en .
+
+trailer:VehicleTrailerKindEnum.TOWING_SEMI_TRAILER a skos:Concept ;
+    skos:prefLabel "VehicleTrailerKindEnum.TOWING_SEMI_TRAILER"@en .
+
+trailer:VehicleTrailerKindEnum.UNDEFINED a skos:Concept ;
+    skos:prefLabel "VehicleTrailerKindEnum.UNDEFINED"@en .
+
+trailer:Velocity_Unit_Enum.KILOMETER_PER_HOUR a skos:Concept ;
+    skos:prefLabel "Velocity_Unit_Enum.KILOMETER_PER_HOUR"@en .
+
+trailer:Velocity_Unit_Enum.METERS_PER_SECOND a skos:Concept ;
+    skos:prefLabel "Velocity_Unit_Enum.METERS_PER_SECOND"@en .
+
+trailer:Voltage_Unit_Enum.VOLT a skos:Concept ;
+    skos:prefLabel "Voltage_Unit_Enum.VOLT"@en .
+
+trailer:Volume_Unit_Enum.CUBIC_CENTIMETERS a skos:Concept ;
+    skos:prefLabel "Volume_Unit_Enum.CUBIC_CENTIMETERS"@en .
+
+trailer:Volume_Unit_Enum.LITER a skos:Concept ;
+    skos:prefLabel "Volume_Unit_Enum.LITER"@en .
+
+trailer:Volume_Unit_Enum.MILLILITER a skos:Concept ;
+    skos:prefLabel "Volume_Unit_Enum.MILLILITER"@en .
+
+trailer:Volumeflowrate_Unit_Enum.LITER_PER_HOUR a skos:Concept ;
+    skos:prefLabel "Volumeflowrate_Unit_Enum.LITER_PER_HOUR"@en .
+
+trailer:Volumeperdistance_Unit_Enum.LITER_PER_100_KILOMETERS a skos:Concept ;
+    skos:prefLabel "Volumeperdistance_Unit_Enum.LITER_PER_100_KILOMETERS"@en .
+
+trailer:Volumeperdistance_Unit_Enum.MILLILITER_PER_100_KILOMETERS a skos:Concept ;
+    skos:prefLabel "Volumeperdistance_Unit_Enum.MILLILITER_PER_100_KILOMETERS"@en .
+
+trailer:Work_Unit_Enum.KILOWATT_HOURS a skos:Concept ;
+    skos:prefLabel "Work_Unit_Enum.KILOWATT_HOURS"@en .
+

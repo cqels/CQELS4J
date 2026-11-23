@@ -143,6 +143,7 @@ electric-vehicle fleet / vehicle-to-grid (V2G) scenario.)
 | [`CountWindow`](examples/src/main/java/org/cqels/examples/CountWindow.java) | count-based `[TRIPLES N]` window |
 | [`DirectionalWindow`](examples/src/main/java/org/cqels/examples/DirectionalWindow.java) | directional/LARS `[FUTURE … EMIT …]` window |
 | [`DirectionalMultiPatternJoin`](examples/src/main/java/org/cqels/examples/DirectionalMultiPatternJoin.java) | `[FUTURE …]` + 2-pattern star join (opt-in, alpha.7) |
+| [`CollisionWarningReview`](examples/src/main/java/org/cqels/examples/CollisionWarningReview.java) | combined `[PAST … FUTURE … STEP …]` window: reviewing collision warnings with `SEQ` and `NOT` |
 | [`GroupConcatSummary`](examples/src/main/java/org/cqels/examples/GroupConcatSummary.java) | `GROUP_CONCAT` string aggregation |
 
 **Advanced query patterns**
@@ -166,6 +167,11 @@ electric-vehicle fleet / vehicle-to-grid (V2G) scenario.)
 | [`WetRoadBraking`](examples/src/main/java/org/cqels/examples/cdsp/WetRoadBraking.java) | Context-gated self-join (rain triple gates the reading pair) | Hard braking specifically on a wet road: a > 20 km/h drop fires only when it was raining as braking began. |
 | [`FleetRiskLeaderboard`](examples/src/main/java/org/cqels/examples/cdsp/FleetRiskLeaderboard.java) | Windowed `GROUP BY` + `COUNT(*)`/`AVG` over a multi-pattern join + `HAVING` floor | Rolling per-vehicle risk score: speeding / violent-steering violations per 10 s window. |
 | [`LiveEfficiencyTicker`](examples/src/main/java/org/cqels/examples/cdsp/LiveEfficiencyTicker.java) | `[SLIDE 3s STEP 1s]` sliding window + `GROUP BY` over two co-bound metrics | Live per-vehicle efficiency ticker: trailing average battery power vs speed. |
+
+**S2DM model from a real export** (`org.cqels.examples.s2dm`)
+| Demo | Feature | Scenario |
+|------|---------|----------|
+| [`TrailerHealthMonitor`](examples/src/main/java/org/cqels/examples/s2dm/TrailerHealthMonitor.java) | Stream–static joins over the RDF that COVESA s2dm's own exporter wrote (`data_graph.ttl` + `skos.ttl`), a supplement of units and field descriptions read from the same schema, and QUDT unit conversions, plus a windowed `GROUP BY` over instance tags | Trailer wheel telemetry: each reading is placed in the model (wheel → tire or brake, with its description), every boolean alarm is caught without the query naming one (all three boolean fields in this schema are fault flags), a reading sent in another unit than the schema's (PSI for a kPa field) is converted with QUDT's factors, one that cannot be converted is flagged, and the lowest tire pressure is tracked per trailer and axle in the schema's unit. A misspelled field matches nothing, because the model does not contain it. |
 
 **Query dialects**
 | Demo | Feature |
@@ -203,6 +209,8 @@ electric-vehicle fleet / vehicle-to-grid (V2G) scenario.)
 |------|---------|
 | [`SosaObservations`](examples/src/main/java/org/cqels/examples/SosaObservations.java) | W3C [SOSA/SSN](https://www.w3.org/TR/vocab-ssn/) + [VSSo](https://www.w3.org/TR/vsso/) + VSS: per (vehicle × observed signal) averages |
 | [`VehicleSignalsCdsp`](examples/src/main/java/org/cqels/examples/VehicleSignalsCdsp.java) | flagship COVESA [VSS](https://covesa.global/) speeding detection + `GROUP BY` / `HAVING` |
+| [`MessageLogReplay`](examples/src/main/java/org/cqels/examples/messages/MessageLogReplay.java) (`org.cqels.examples.messages`) | W3C RSP CG [RDF Messages](https://w3c-cg.github.io/rsp/spec/messages): replay a Turtle message log (one message, one atomic element), per-message blank nodes, `[TRIPLES 1]` vs `[RANGE]` across messages, and results written back as a message log |
+| [`MessageStreamOverSse`](examples/src/main/java/org/cqels/examples/messages/MessageStreamOverSse.java) (`org.cqels.examples.messages`) | RDF Messages over Server-Sent Events (§4.1.1): a producer serves each message as one `rdf-message` event with a JSON-LD payload; a consumer pushes each into the engine as one atomic element |
 
 ---
 
@@ -261,6 +269,39 @@ knowledge layer onto CQELS rule by rule — what its RDFox Datalog rules and SPA
 become as continuous queries, which CQELS features the port needs, and which are not ready yet.
 The worked example is runnable:
 [`CdspDrivingStyle`](examples/src/main/java/org/cqels/examples/cdsp/CdspDrivingStyle.java).
+
+## Interoperability with COVESA S2DM
+
+[S2DM_MAPPING.md](S2DM_MAPPING.md) records what [COVESA S2DM](https://github.com/COVESA/s2dm)'s
+RDF export contains, what a continuous query can do with it, and what it leaves out (units,
+`@range`, instance-tag markings, field descriptions). The export is real s2dm output, regenerated
+offline in Docker by [`scripts/s2dm/export-trailer.sh`](scripts/s2dm/export-trailer.sh), which
+also writes two clearly separate files of this repository's own: a supplement with the parts the
+export drops, read from the same schema, and the schema's units linked to QUDT with the
+conversions between them. The
+worked example is
+[`TrailerHealthMonitor`](examples/src/main/java/org/cqels/examples/s2dm/TrailerHealthMonitor.java).
+
+## RDF Messages (W3C RSP CG)
+
+[RDF_MESSAGES_MAPPING.md](RDF_MESSAGES_MAPPING.md) maps the RSP Community Group's
+[RDF Messages](https://w3c-cg.github.io/rsp/spec/messages) draft onto CQELS: one message is one
+atomic stream element, the window decides whether messages are read alone or together, and the
+engine's N-Quads codec covers that log format. It records the measured gaps:
+[#125](https://github.com/cqels/CQELS4J/issues/125),
+[#126](https://github.com/cqels/CQELS4J/issues/126),
+[#133](https://github.com/cqels/CQELS4J/issues/133) and
+[#45](https://github.com/cqels/CQELS4J/issues/45).
+
+It also describes what this repository adds:
+- readers and writers for every log format the draft defines: Turtle, TriG, NDJSON-LD, YAML-LD
+  and RDF/XML, beside the engine's N-Quads;
+- a Server-Sent Events transport;
+- the draft's companion test suite, run in CI.
+
+The worked examples are
+[`MessageLogReplay`](examples/src/main/java/org/cqels/examples/messages/MessageLogReplay.java) and
+[`MessageStreamOverSse`](examples/src/main/java/org/cqels/examples/messages/MessageStreamOverSse.java).
 
 ## Query language and standards
 

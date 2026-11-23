@@ -21,6 +21,18 @@
         <exec.mainClass>org.cqels.examples.HelloCqels</exec.mainClass>
     </properties>
 
+    <dependencyManagement>
+        <dependencies>
+            <!-- rdf4j-rio-jsonld 4.3.8 asks for jackson-core 2.13.5, which Maven would pick over the
+                 engine's 2.18.12 (nearer in the tree) and so break jackson-databind 2.18.12. -->
+            <dependency>
+                <groupId>com.fasterxml.jackson.core</groupId>
+                <artifactId>jackson-core</artifactId>
+                <version>2.18.12</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
     <dependencies>
         <!-- The CQELS engine facade (pulls in cqels-core, windows, CEP, SPARQL/CqelsQL). -->
         <dependency>
@@ -69,6 +81,36 @@
             <version>2.0.16</version>
             <scope>runtime</scope>
         </dependency>
+
+        <!-- Tests for the RDF Message Log reader (org.cqels.examples.messages); same JUnit
+             and surefire versions as sparql-endpoint. -->
+        <!-- RDF Messages demo (org.cqels.examples.messages): the NDJSON-LD, YAML-LD and RDF/XML
+             message logs. Same RDF4J version as the engine. snakeyaml-engine reads YAML 1.2 with
+             its Core schema, so `yes` stays a string (Jackson's YAML reader makes it true).
+             rdf4j-rio-jsonld excludes some httpcomponents artifacts that jsonld-java brought in
+             (fluent-hc, httpmime, httpcore-nio and the OSGi bundles); nothing on the classpath
+             uses them. -->
+        <dependency>
+            <groupId>org.eclipse.rdf4j</groupId>
+            <artifactId>rdf4j-rio-jsonld</artifactId>
+            <version>4.3.8</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.rdf4j</groupId>
+            <artifactId>rdf4j-rio-rdfxml</artifactId>
+            <version>4.3.8</version>
+        </dependency>
+        <dependency>
+            <groupId>org.snakeyaml</groupId>
+            <artifactId>snakeyaml-engine</artifactId>
+            <version>2.10</version>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>5.10.2</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <!-- Served anonymously: no account, no token, no ~/.m2/settings.xml.
@@ -93,6 +135,11 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
                 <version>3.13.0</version>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.2.5</version>
             </plugin>
             <!-- Run an example with:
                  mvn -q compile exec:java -Dexec.mainClass=org.cqels.examples.HelloCqels -->

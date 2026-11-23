@@ -1,0 +1,6 @@
+VERSION "1.2-messages"
+PREFIX ex: <http://example.org/one/>
+ex:s ex:p ex:o .
+MESSAGE
+PREFIX ex: <http://example.org/two/>
+ex:s ex:p ex:o .
