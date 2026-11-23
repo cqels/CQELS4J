@@ -39,12 +39,14 @@ import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
  *       arrives at least 1 s (the {@code FUTURE} extent) after its anchor, in event time. The live
  *       warning ({@code [NOW]}) has no such delay.</li>
  *   <li>A complex-event match carries its anchor and window ({@link AnchoredPatternMatch}). A
- *       windowed aggregate row does not.</li>
+ *       windowed aggregate row does not. The demo prints each window as {@code (a-2s, a+1s]} in
+ *       ms; the engine's own {@code TimeWindow} prints the same window as {@code [start, end)},
+ *       i.e. {@code [a-1999, a+1001)}.</li>
  * </ul>
  *
  * <p><strong>Judging each warning once.</strong> Because the windows overlap, one warning is
  * matched in up to three windows, and in each one it sits at a different place: the earliest
- * window has almost no time after it, the latest almost none before it. The demo judges each
+ * window leaves less than 1 s after it, the latest at most 1 s before it. The demo judges each
  * warning in the one window where it falls in the second up to the anchor, {@code (a-1s, a]}.
  * There it has at least 1 s of history and at least 1 s of follow-up, and less than 2 s of
  * each. Matches from the other windows are counted but not judged. Choosing that window is
@@ -52,8 +54,10 @@ import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
  *
  * <p>This is a review, not a deadline. Because anchors are on a grid, "braked within the window"
  * means within 1–2 s after the warning, depending on where it fell. For an exact per-event
- * deadline ("no brake within 1.5 s of this warning"), use a complex-event query over a backward
- * {@code [RANGE 1500ms]} window instead, as {@code cdsp.DriverAttentionWatchdog} does.
+ * deadline ("no brake within 1.5 s of this warning"), use the same trailing {@code NOT} over a
+ * backward {@code [RANGE 1500ms]} window instead: it reports the warning once an event past
+ * warning + 1.5 s arrives with no brake before it ({@code CQELS-QL_SPEC.md} §7, "A trailing
+ * NOT").
  *
  * <p>Queries, all on one stream:
  * <ol>
@@ -66,12 +70,15 @@ import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
  *       vehicle after the warning before the window ends. This is where the {@code FUTURE} part
  *       earns its delay: "nothing happened" can only be decided once the window is over.</li>
  * </ol>
- * The queries tie the readings to one vehicle with {@code FILTER(STR(?warning) = STR(?brake))};
- * without it, one vehicle's brake would answer another's warning.
+ * The queries tie the readings to one vehicle with {@code FILTER(STR(?warning) = STR(?brake))}.
+ * The demo's data includes EV-3K8 braking again inside EV-9TZ's window: with the filter, EV-9TZ
+ * is still reported as not braking; without it, EV-3K8's brake would answer EV-9TZ's warning.
  *
  * <p>Readings are flat vehicle-subject triples with explicit event timestamps, so the windows are
- * deterministic. {@code ex:timeToCollision} is this demo's own term (VSS has no TTC signal); the
- * brake pedal is VSS {@code Chassis.Brake.PedalPosition}.
+ * deterministic. The brake pedal is VSS {@code Chassis.Brake.PedalPosition}. For time to
+ * collision the demo uses its own {@code ex:timeToCollision}, in seconds, for readability; VSS 6.x
+ * has a comparable signal, {@code ADAS.ObstacleDetection.<instance>.TimeGap} ("time in
+ * milliseconds before potential impact object"), in milliseconds.
  *
  * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.examples.CollisionWarningReview}
  */
@@ -166,6 +173,8 @@ public class CollisionWarningReview {
             // EV-9TZ: closes in (TTC 3.0 -> 1.6) and never brakes.
             push(radar, Fleet.EV3, TTC, 3.0, 5_100);
             push(radar, Fleet.EV3, TTC, 1.6, 5_600);
+            // EV-3K8 brakes again, inside EV-9TZ's window. It must not count as EV-9TZ's reaction.
+            push(radar, Fleet.EV2, BRAKE, 50, 6_000);
             Thread.sleep(300);
 
             // A later reading moves the watermark past the last window's end, so it reports.
@@ -174,13 +183,15 @@ public class CollisionWarningReview {
             Thread.sleep(800);
         }
 
-        System.out.println("\nReview, one line per warning (from the window where it falls in (anchor-1s, anchor]):");
-        REVIEW.forEach((k, v) -> {
-            String before = v.remove("closed in gradually") ? "closed in gradually"
-                    : "no approach reading before it (a cut-in, or a glitch)";
-            System.out.println("  " + k + " : " + before + "; " + String.join("; ", v));
-        });
-        System.out.println("(" + otherWindows + " further matches came from the overlapping windows and were not judged.)");
+        synchronized (CollisionWarningReview.class) {
+            System.out.println("\nReview, one line per warning (from the window where it falls in (anchor-1s, anchor]):");
+            REVIEW.forEach((k, v) -> {
+                String before = v.remove("closed in gradually") ? "closed in gradually"
+                        : "no approach reading (TTC 2-4 s) in the 1-2 s before it (a cut-in, or a glitch)";
+                System.out.println("  " + k + " : " + before + "; " + String.join("; ", v));
+            });
+            System.out.println("(" + otherWindows + " further matches came from the overlapping windows and were not judged.)");
+        }
         System.out.println("\nDone.");
     }
 
@@ -191,7 +202,10 @@ public class CollisionWarningReview {
      * keeps that finding once.
      */
     private static synchronized void judge(PatternMatch<StreamElement> m, String warningVar, String verdict) {
-        AnchoredPatternMatch<StreamElement> am = (AnchoredPatternMatch<StreamElement>) m;
+        if (!(m instanceof AnchoredPatternMatch<StreamElement> am)) {
+            // Only a directional window anchors its matches; fail loudly if WINDOW is changed.
+            throw new IllegalStateException("expected an anchored match from " + WINDOW + ", got " + m);
+        }
         StreamElement warning = m.getEvent(warningVar);
         long t = warning.getTimestamp();
         long anchor = am.getAnchor();
@@ -201,8 +215,8 @@ public class CollisionWarningReview {
         }
         String vehicle = warning.asStatement().getSubject().stringValue().substring(Fleet.EX.length());
         String key = vehicle + " warning @ " + t + " ms";
-        System.out.printf("  [review, window %s around anchor %d ms] %s: %s%n",
-                am.getWindow(), anchor, key, verdict);
+        System.out.printf("  [review, window (%d, %d] around anchor %d ms] %s: %s%n",
+                anchor - 2_000, anchor + 1_000, anchor, key, verdict);
         REVIEW.computeIfAbsent(key, k -> new LinkedHashSet<>()).add(verdict);
     }
 
