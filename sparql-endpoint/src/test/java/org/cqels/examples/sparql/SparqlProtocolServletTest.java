@@ -3602,6 +3602,8 @@ class SparqlProtocolServletTest {
         assertEquals(200, last.statusCode(), last.body());
         assertTrue(last.body().contains("urn:ex:North"), last.body());
         // an error further on still names its own line
+        var badIri = getCsv(shared.url(), "PREFIX ex: <http://a:b:c/>\nPREFIX ex: <urn:ex:>\nASK {}");
+        assertEquals(400, badIri.statusCode(), "a dropped IRI RDF4J refuses is still refused: " + badIri.body());
         var broken = getCsv(shared.url(), "PREFIX ex: <urn:a:>\nPREFIX ex: <urn:ex:>\nSELECT * WHERE { ?s ?p }");
         assertEquals(400, broken.statusCode(), broken.body());
         assertTrue(broken.body().contains("line 3"), broken.body());
@@ -3657,6 +3659,15 @@ class SparqlProtocolServletTest {
                 "PREFIX \u00e9: <urn:a>\nPREFIX \u00e9: <urn:b>\nASK {}",
                 "PREFIX a.: <urn:a>\nPREFIX a.: <urn:b>\nASK {}")) {
             assertSame(loose, SparqlProtocolServlet.withoutRepeatedPrefixes(loose), loose);
+        }
+        // RDF4J decodes \\uXXXX before it tokenizes: an escaped line break ends a comment there,
+        // so a backslash in a comment leaves the text alone (the literal keeps both copies)
+        String escaped = "#note\\u000AINSERT DATA { <urn:s> <urn:p> \"\"\"\nPREFIX a: <urn:a> PREFIX a: <urn:a>\"\"\" }";
+        assertSame(escaped, SparqlProtocolServlet.withoutRepeatedPrefixes(escaped));
+        // a dropped declaration whose IRI RDF4J refuses is not blanked away: it stays a 400
+        for (String refused : List.of("PREFIX a: <http://a:b:c/> PREFIX a: <urn:b> ASK {}",
+                "PREFIX a: <http://[x/> PREFIX a: <urn:b> ASK {}")) {
+            assertSame(refused, SparqlProtocolServlet.withoutRepeatedPrefixes(refused), refused);
         }
         // and what the scan does rewrite, RDF4J then accepts
         org.eclipse.rdf4j.query.parser.QueryParserUtil.parseQuery(org.eclipse.rdf4j.query.QueryLanguage.SPARQL,

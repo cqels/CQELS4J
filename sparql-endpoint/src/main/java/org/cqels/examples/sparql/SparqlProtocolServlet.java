@@ -2000,10 +2000,13 @@ public final class SparqlProtocolServlet extends HttpServlet {
      * any ASCII case, prefix names of ASCII PN_PREFIX characters, and IRIREFs without the
      * characters production [139] excludes. At the first token that is anything else — the query's
      * form, or a declaration it cannot read so — the scan stops, and what it has not read is left
-     * to RDF4J as it was; so it never turns text RDF4J would refuse as malformed into text it
-     * accepts (found in the Opus co-review of #135: a comment ended by a bare CR ran the scan into
-     * a string literal and blanked part of it; Unicode spaces, a dotless ı and {@code { }} inside
-     * an IRI were read as if valid).
+     * to RDF4J as it was. A backslash inside a comment leaves the whole text as it was: RDF4J
+     * decodes {@code \\uXXXX} escapes before it tokenizes, and an escaped line break ends a
+     * comment there. A declaration it would drop whose IRI RDF4J refuses leaves the text as it
+     * was too. So it never turns text RDF4J would refuse as malformed into text it accepts (found
+     * in the Opus co-review of #135: a comment ended by a bare CR or an escaped line break ran the
+     * scan into a string literal and blanked part of it; Unicode spaces, a dotless ı and
+     * {@code { }} inside an IRI were read as if valid; a dropped IRI went unchecked).
      *
      * <p>Removing an earlier declaration changes no other meaning: every use of a prefix comes
      * after the whole prologue, where the last declaration is the one in force, and a {@code BASE}
@@ -2024,6 +2027,13 @@ public final class SparqlProtocolServlet extends HttpServlet {
             } else if (c == '#') {
                 int end = i + 1;
                 while (end < n && text.charAt(end) != '\n' && text.charAt(end) != '\r') {
+                    if (text.charAt(end) == '\\') {
+                        // RDF4J decodes \\uXXXX escapes before it tokenizes, so "\\u000A" ends the
+                        // comment there and not here; read on, the scan blanked text in a literal
+                        // (found in the Opus co-review of #135). Everywhere else a backslash
+                        // already stops the scan; here it leaves the whole text as it was.
+                        return text;
+                    }
                     end++;
                 }
                 if (end >= n) {
@@ -2050,7 +2060,7 @@ public final class SparqlProtocolServlet extends HttpServlet {
                     break;
                 }
                 names.add(text.substring(j, colon));
-                spans.add(new int[] {i, end});
+                spans.add(new int[] {i, end, text.indexOf('<', colon) + 1, end - 1});
                 i = end;
             } else {
                 break;
@@ -2064,6 +2074,18 @@ public final class SparqlProtocolServlet extends HttpServlet {
         }
         if (last.size() == names.size()) {
             return text;
+        }
+        for (int k = 0; k < names.size(); k++) {
+            if (last.get(names.get(k)) != k) {
+                try {
+                    // RDF4J checks every declared IRI, a dropped one too: one it refuses
+                    // (<http://a:b:c/>) must still be refused, not blanked away (found in the Opus
+                    // co-review of #135)
+                    new ParsedIRI(text.substring(spans.get(k)[2], spans.get(k)[3]));
+                } catch (URISyntaxException | RuntimeException e) {
+                    return text;
+                }
+            }
         }
         char[] out = text.toCharArray();
         for (int k = 0; k < names.size(); k++) {
