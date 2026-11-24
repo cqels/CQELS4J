@@ -11,9 +11,9 @@ Everything below was measured against `2.0.0-alpha.22` and the draft dated **22 
 marked preliminary).
 
 The worked examples are
-[`MessageLogReplay`](examples/src/main/java/org/cqels/examples/messages/MessageLogReplay.java)
+[`MessageLogReplay`](playground/src/main/java/org/cqels/playground/messages/MessageLogReplay.java)
 (a message log replayed from a file) and
-[`MessageStreamOverSse`](examples/src/main/java/org/cqels/examples/messages/MessageStreamOverSse.java)
+[`MessageStreamOverSse`](playground/src/main/java/org/cqels/playground/messages/MessageStreamOverSse.java)
 (the same messages over Server-Sent Events).
 
 ## 1. What the draft defines
@@ -54,7 +54,7 @@ The worked examples are
 
 `org.cqels.stream.codec.RdfMessageCodec` (cqels-core) reads and writes N-Quads message logs, which
 covers N-Triples too. The existing
-[`RdfMessageIngestion`](examples/src/main/java/org/cqels/examples/RdfMessageIngestion.java) demo
+[`RdfMessageIngestion`](playground/src/main/java/org/cqels/playground/RdfMessageIngestion.java) demo
 uses it. Measured against the draft's own §2.1.2 examples and some edge cases:
 
 | Case | Codec |
@@ -85,18 +85,18 @@ reading applies (§4.3).
 
 ## 4. What this repository adds
 
-All in `org.cqels.examples.messages`. Every reader returns one `List<Statement>` per message, which
+All in `org.cqels.playground.messages`. Every reader returns one `List<Statement>` per message, which
 is one `push`; every writer's output reads back to the same messages (the RDF/XML writer checks
 each message, since RDF/XML cannot hold every graph).
 
 | Format | Reader and writer | Built on |
 |---|---|---|
-| N-Triples, N-Quads (§2.1) | [`RdfMessageLog`](examples/src/main/java/org/cqels/examples/messages/RdfMessageLog.java) `parse`, `writeNQuads` | the engine codec, with workarounds for #126 |
+| N-Triples, N-Quads (§2.1) | [`RdfMessageLog`](playground/src/main/java/org/cqels/playground/messages/RdfMessageLog.java) `parse`, `writeNQuads` | the engine codec, with workarounds for #126 |
 | Turtle, TriG (§2.1) | `RdfMessageLog` `parse`, `writeTurtle`, `writeTriG` | a tokeniser here, RDF4J per message |
-| NDJSON-LD (§2.2) | [`JsonLdMessageLog`](examples/src/main/java/org/cqels/examples/messages/JsonLdMessageLog.java) `parseNdjson`, `writeNdjson` | Jackson per line, `rdf4j-rio-jsonld` 4.3.8 per message |
+| NDJSON-LD (§2.2) | [`JsonLdMessageLog`](playground/src/main/java/org/cqels/playground/messages/JsonLdMessageLog.java) `parseNdjson`, `writeNdjson` | Jackson per line, `rdf4j-rio-jsonld` 4.3.8 per message |
 | YAML-LD (§2.3) | `JsonLdMessageLog` `parseYaml`, `writeYaml` | snakeyaml-engine (YAML 1.2), `rdf4j-rio-jsonld` per document |
-| RDF/XML (§2.4) | [`RdfXmlMessageLog`](examples/src/main/java/org/cqels/examples/messages/RdfXmlMessageLog.java) `parse`, `write` | StAX, `rdf4j-rio-rdfxml` 4.3.8 per message |
-| Server-Sent Events (§4.1.1) | [`SseMessageChannel`](examples/src/main/java/org/cqels/examples/messages/SseMessageChannel.java) `Producer`, `consume` | the JDK's HTTP server and client |
+| RDF/XML (§2.4) | [`RdfXmlMessageLog`](playground/src/main/java/org/cqels/playground/messages/RdfXmlMessageLog.java) `parse`, `write` | StAX, `rdf4j-rio-rdfxml` 4.3.8 per message |
+| Server-Sent Events (§4.1.1) | [`SseMessageChannel`](playground/src/main/java/org/cqels/playground/messages/SseMessageChannel.java) `Producer`, `consume` | the JDK's HTTP server and client |
 
 ### 4.1 N-Triples and N-Quads
 
@@ -284,12 +284,12 @@ normalisation leave them as they were.
 
 ### 4.6 Tests
 
-[`RdfMessagesTestSuiteTest`](examples/src/test/java/org/cqels/examples/messages/RdfMessagesTestSuiteTest.java)
+[`RdfMessagesTestSuiteTest`](playground/src/test/java/org/cqels/playground/messages/RdfMessagesTestSuiteTest.java)
 runs **every test of the draft's companion
 [RDF Messages Tests](https://w3c-cg.github.io/rsp/spec/messages-tests)** (22 October 2026). It
 runs each in every format the test applies to: 75 test runs, all passing. The inputs and
 expectations are copied byte for byte from the page into
-[`src/test/resources/rdf-messages-tests/`](examples/src/test/resources/rdf-messages-tests/README.md).
+[`src/test/resources/rdf-messages-tests/`](playground/src/test/resources/rdf-messages-tests/README.md).
 Two adaptations, both stated in the test:
 - The NDJSON-LD tests name `https://schema.org/` and `https://example.org/other-vocab/` as
   contexts. Since nothing is fetched, each is served as a stand-in context with that `@vocab`.
@@ -301,15 +301,15 @@ Beside the suite, there are four more test classes:
 
 | Test class | Tests | What it covers |
 |---|---|---|
-| [`RdfMessageLogTest`](examples/src/test/java/org/cqels/examples/messages/RdfMessageLogTest.java) | 30 | Turtle/TriG token boundaries checked against RDF4J's own parse, prefix carry, version labels, the RDF 1.2 refusals, writer round trips |
-| [`JsonLdMessageLogTest`](examples/src/test/java/org/cqels/examples/messages/JsonLdMessageLogTest.java) | 20 | NDJSON line rules, context messages, offline contexts, JSON-LD 1.1 refusals (including a property-valued `@index`), numbers typed as direct RDF4J types them and those beyond `xsd:double`, YAML 1.2 scalars, tags, merge keys, versions and document rules, writer round trips (number spellings, unwritable IRIs) |
-| [`RdfXmlMessageLogTest`](examples/src/test/java/org/cqels/examples/messages/RdfXmlMessageLogTest.java) | 13 | inheritance and overrides, `xmlns=""`, character references, XML literals, content after the log, `rdf:version`, refusals, round trips, and the writer's read-back check (including its speed on 200 alike blank nodes and a ring of 200) |
-| [`SseMessageChannelTest`](examples/src/test/java/org/cqels/examples/messages/SseMessageChannelTest.java) | 4 | the event-stream rules, UTF-8 and CR line ends, case-insensitive media types, two clients in parallel, and a loopback run with both payload types |
+| [`RdfMessageLogTest`](playground/src/test/java/org/cqels/playground/messages/RdfMessageLogTest.java) | 30 | Turtle/TriG token boundaries checked against RDF4J's own parse, prefix carry, version labels, the RDF 1.2 refusals, writer round trips |
+| [`JsonLdMessageLogTest`](playground/src/test/java/org/cqels/playground/messages/JsonLdMessageLogTest.java) | 20 | NDJSON line rules, context messages, offline contexts, JSON-LD 1.1 refusals (including a property-valued `@index`), numbers typed as direct RDF4J types them and those beyond `xsd:double`, YAML 1.2 scalars, tags, merge keys, versions and document rules, writer round trips (number spellings, unwritable IRIs) |
+| [`RdfXmlMessageLogTest`](playground/src/test/java/org/cqels/playground/messages/RdfXmlMessageLogTest.java) | 13 | inheritance and overrides, `xmlns=""`, character references, XML literals, content after the log, `rdf:version`, refusals, round trips, and the writer's read-back check (including its speed on 200 alike blank nodes and a ring of 200) |
+| [`SseMessageChannelTest`](playground/src/test/java/org/cqels/playground/messages/SseMessageChannelTest.java) | 4 | the event-stream rules, UTF-8 and CR line ends, case-insensitive media types, two clients in parallel, and a loopback run with both payload types |
 
 ## 5. The worked examples
 
-[`MessageLogReplay`](examples/src/main/java/org/cqels/examples/messages/MessageLogReplay.java)
-replays [`cabin-temperatures.ttl`](examples/src/main/resources/messages/cabin-temperatures.ttl), a
+[`MessageLogReplay`](playground/src/main/java/org/cqels/playground/messages/MessageLogReplay.java)
+replays [`cabin-temperatures.ttl`](playground/src/main/resources/messages/cabin-temperatures.ttl), a
 Turtle message log: a message describing the stream, four `sosa:Observation` messages whose result
 is the blank node `_:r` (the same label in each), an empty heartbeat, a `MESSAGE # comment`, and a
 `PREFIX ex:` redefined for the second bus. Event time is each message's `sosa:resultTime`.
@@ -324,7 +324,7 @@ is the blank node `_:r` (the same label in each), an empty heartbeat, a `MESSAGE
 
 The fourth row is the draft's case for per-message blank-node scoping, measured.
 
-[`MessageStreamOverSse`](examples/src/main/java/org/cqels/examples/messages/MessageStreamOverSse.java)
+[`MessageStreamOverSse`](playground/src/main/java/org/cqels/playground/messages/MessageStreamOverSse.java)
 serves the same six messages from a producer over Server-Sent Events, with JSON-LD payloads. A
 consumer in the same process reads them as they arrive and pushes each into the engine. The result
 is 6 events, the empty heartbeat among them, and 4 `Reading` rows, the same as the replay.
@@ -344,7 +344,7 @@ is 6 events, the empty heartbeat among them, and 4 `Reading` rows, the same as t
 
 ## 7. Keeping this true
 
-[`CapabilityProbe`](examples/src/main/java/org/cqels/examples/CapabilityProbe.java)
+[`CapabilityProbe`](playground/src/main/java/org/cqels/playground/CapabilityProbe.java)
 (`scripts/ci/capability-probe.sh`, run on every PR) checks the six engine gaps above in both
 directions, so this document and the workarounds cannot outlive a fix unnoticed:
 

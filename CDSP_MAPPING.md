@@ -12,7 +12,7 @@ CQELS below was verified by running it on `2.0.0-alpha.22`.
 > records that "for the application database archetype MongoDB Realm was selected. Support for it
 > is currently a work in progress as part of the playground project backlog." The incumbent CQELS
 > would actually displace is **RDFox**, not a document store. For the S2DM concept layer itself,
-> see the three demos under [`examples/`](examples/README.md#s2dm-concept-layer-orgcqelsexamplescdsp).
+> see the three demos under [`playground/`](playground/README.md#s2dm-concept-layer-orgcqelsplaygroundcdsp).
 
 ---
 
@@ -145,7 +145,7 @@ assemble the segment from the now-orderable pair.
 
 The eight rules' **detection** collapses into a single registration — not the output query's
 segment assembly, which §2.2 explains this does not attempt. That detection is
-[`CdspDrivingStyle`](examples/src/main/java/org/cqels/examples/cdsp/CdspDrivingStyle.java),
+[`CdspDrivingStyle`](playground/src/main/java/org/cqels/playground/cdsp/CdspDrivingStyle.java),
 which runs today:
 
 ```sparql
@@ -278,7 +278,7 @@ CDSP already exposes the data CQELS needs, in two places:
 
 Either way the destination is the same: `DataStream.push(…)` with observations shaped as SOSA.
 Note which helper: the driving-style query reads angle and speed from the SAME
-frame, so it consumes [`Fleet.pushFrame`](examples/src/main/java/org/cqels/examples/Fleet.java),
+frame, so it consumes [`Fleet.pushFrame`](playground/src/main/java/org/cqels/playground/Fleet.java),
 not the one-signal-per-observation `Fleet.pushObservation`. A CDSP feed delivering each signal as
 its own observation would need grouping into frames first — which is where the "latest value"
 problem of §2.1 reappears, and worth designing for before wiring a real feed.

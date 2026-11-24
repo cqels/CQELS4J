@@ -14,7 +14,7 @@ This document focuses on **what CQELS-QL adds on top of SPARQL** — the constru
 plain triple store. The standard SPARQL surface is summarized briefly in
 [§9](#9-standard-sparql-features-supported-as-is); everything before it is the streaming extension.
 
-> Runnable, verified counterparts to most constructs below live in [`examples/`](examples/).
+> Runnable, verified counterparts to most constructs below live in [`playground/`](playground/).
 
 ---
 
@@ -333,7 +333,7 @@ still is, evaluated correctly either way.
 > guards are **not** interchangeable: the exporter makes every enum value a `skos:member` of
 > `FieldConcepts` while typing it `s2dm:EnumValue`, so `?field a s2dm:Field` selects a strict
 > **subset** of the collection. That is why
-> [`S2dmConceptCatalog`](examples/src/main/java/org/cqels/examples/cdsp/S2dmConceptCatalog.java)
+> [`S2dmConceptCatalog`](playground/src/main/java/org/cqels/playground/cdsp/S2dmConceptCatalog.java)
 > still guards on the type — it asks for things the model classifies as fields, not for everything
 > in the collection.
 
@@ -606,7 +606,7 @@ are called out.
   `META-INF/services/org.eclipse.rdf4j.query.algebra.evaluation.function.Function` entry adds
   functions with **zero registration code** — e.g. the `org.cqels:cqels-functions-ext` pack
   (`urn:cqels:fn:levenshtein`, `urn:cqels:fn:haversine`; see the runnable
-  [`ChargerRangeFilter`](examples/) example). Bare keyword names (`year(…)`, `ABS(…)`, …) never
+  [`ChargerRangeFilter`](playground/) example). Bare keyword names (`year(…)`, `ABS(…)`, …) never
   consult the registry — the built-in namespace is frozen — and built-ins plus `geof:` still
   resolve first. A call to an *unregistered* IRI (or with an unbound argument) remains a **silent
   SPARQL type error**: `FILTER` drops the row, `BIND` leaves the variable unbound.
@@ -641,7 +641,7 @@ are called out.
   the query fails rather than answering partially. So the common case of traversing a
   hierarchy held in the **static** graph is still not expressible as a path: write the hops
   explicitly (`?a skos:broader ?mid . ?mid skos:broader ?b .`) for a fixed depth, or use a
-  recursive rule (see the [`BoundedTransitiveClosure`](examples/) example) for unbounded closure.
+  recursive rule (see the [`BoundedTransitiveClosure`](playground/) example) for unbounded closure.
   (Before `2.0.0-alpha.20` a path registered despite a parse error and was silently mis-evaluated;
   alpha.20 and alpha.21 refused every path.)
 - **`FILTER NOT EXISTS { … }`** and, since `2.0.0-alpha.22`, **`FILTER EXISTS { … }`** —
@@ -942,7 +942,7 @@ WHERE {
 }
 ```
 
-More are in [`examples/`](examples/) — those are all runnable and verified against this release
+More are in [`playground/`](playground/) — those are all runnable and verified against this release
 (the named-window snippet above is the exception: it parses but is not yet executable, see [§5](#5-named-windows-rsp-ql)).
 
 ---
