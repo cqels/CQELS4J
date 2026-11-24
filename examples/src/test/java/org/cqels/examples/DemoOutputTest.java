@@ -33,7 +33,8 @@ import org.junit.jupiter.api.TestFactory;
  * properties cannot leak into another. Its standard output (not standard error, where the engine
  * logs) is compared with {@code src/test/resources/expected-output/<class>.txt}. Demos run four at
  * a time; {@code -Ddemo.parallel=N} changes that, for instance to check that none depends on timing
- * under load.
+ * under load. Each demo JVM runs with locale en-US, time zone UTC and UTF-8, so the host's settings
+ * do not change the output.
  *
  * <p>When a demo's output changes on purpose, regenerate its file on JDK 17, the JDK CI uses, and
  * review the diff ({@code Double.toString} changed in JDK 19, and many demos print doubles):
@@ -147,6 +148,11 @@ class DemoOutputTest {
         try {
             Process p = new ProcessBuilder(
                     Paths.get(System.getProperty("java.home"), "bin", "java").toString(),
+                    // demos format numbers with String.format, which follows the default locale
+                    // (en_DE prints 64,0); pin locale, time zone and encoding so output is the same
+                    // on every machine
+                    "-Duser.language=en", "-Duser.country=US", "-Duser.timezone=UTC",
+                    "-Dfile.encoding=UTF-8",
                     "-cp", System.getProperty("java.class.path"), demo)
                     .redirectOutput(out.toFile())
                     .redirectError(err.toFile())
