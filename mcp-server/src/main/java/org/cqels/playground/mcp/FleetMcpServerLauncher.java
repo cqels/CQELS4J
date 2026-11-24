@@ -19,7 +19,7 @@ import java.util.Comparator;
 
 /**
  * Launches the published CQELS MCP server ({@code org.cqels:cqels-mcp}) over stdio, pre-seeded
- * with the <strong>electric-vehicle fleet / V2G</strong> world that the {@code playground/} use —
+ * with the <strong>electric-vehicle fleet / V2G</strong> world that the demos in {@code playground/} use —
  * so an AI client connects to a server that already knows the fleet, its drivers, charging
  * stations and geofenced zones, and can immediately query, watch and reason over them.
  *
