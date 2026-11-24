@@ -68,14 +68,12 @@ class DemoOutputTest {
         return runs.entrySet().stream().map(e -> dynamicTest(e.getKey(), () -> {
             Run run = e.getValue().get();
             Path expectedFile = EXPECTED.resolve(e.getKey() + ".txt");
-            if (UPDATE) {
-                Files.createDirectories(EXPECTED);
-                Files.writeString(expectedFile, run.stdout, StandardCharsets.UTF_8);
-            }
-            if (run.exitCode != 0) {
+            if (run.exitCode != 0) {   // checked first, so update mode never records a failed run's output
                 fail(e.getKey() + " exited with " + run.exitCode + "\n--- stderr ---\n" + tail(run.stderr));
             }
             if (UPDATE) {
+                Files.createDirectories(EXPECTED);
+                Files.writeString(expectedFile, run.stdout, StandardCharsets.UTF_8);
                 return;
             }
             if (!Files.exists(expectedFile)) {
@@ -108,7 +106,11 @@ class DemoOutputTest {
         }
     }
 
-    /** Every class under target/classes with a {@code public static void main(String[])}, minus the exclusions. */
+    /**
+     * Every class under target/classes with a {@code public static void main(String[])}, minus the
+     * exclusions. A class that fails to load is an error, not "not a demo": otherwise a broken new
+     * demo would never be run.
+     */
     private static Map<String, Class<?>> demos() throws IOException {
         Map<String, Class<?>> demos = new TreeMap<>();
         try (Stream<Path> files = Files.walk(CLASSES)) {
@@ -118,14 +120,19 @@ class DemoOutputTest {
                 if (name.contains("$") || EXCLUDED.containsKey(name)) {
                     continue;
                 }
+                Class<?> c;
                 try {
-                    Class<?> c = Class.forName(name, false, DemoOutputTest.class.getClassLoader());
+                    c = Class.forName(name, false, DemoOutputTest.class.getClassLoader());
+                } catch (ClassNotFoundException | LinkageError err) {
+                    throw new IllegalStateException("cannot load " + name + " to see whether it is a demo", err);
+                }
+                try {
                     Method main = c.getMethod("main", String[].class);
                     if (Modifier.isStatic(main.getModifiers())) {
                         demos.put(name, c);
                     }
-                } catch (NoSuchMethodException | ClassNotFoundException | LinkageError ignored) {
-                    // not a demo
+                } catch (NoSuchMethodException notADemo) {
+                    // no main: a helper class
                 }
             }
         }

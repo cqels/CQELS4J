@@ -69,7 +69,7 @@ public class SuddenSwerveDetector {
             pushReading(telemetry, Fleet.EV1, 61, 5, 1_250);
             Thread.sleep(250);
             pushReading(telemetry, Fleet.EV1, 60, -3, 1_500);
-            Thread.sleep(3500);   // let the 3s window drain between phases
+            Thread.sleep(3500);   // pacing; the next reading's event time, 3.5 s on, takes phase 1 out of the 3s window
 
             System.out.println("Phase 2: EV-3K8 swings the wheel -40 -> +70 degrees at parking speed (must NOT match - speed gate).");
             pushReading(telemetry, Fleet.EV2, 15, -40, 5_000);

@@ -96,7 +96,7 @@ public class DriverAttentionWatchdog {
             // Move event time past the 5s RANGE so nothing from scenario 1 is still pending — for a
             // CEP query the window is also the timeout on a partial match. Every reading carries an
             // explicit event time, so the gap is in event time and the demo prints the same every run.
-            System.out.println("\n(event time moves on 5.5s, so the first episode falls out of the 5s window)\n");
+            System.out.println("\n(event time moves on 7s, so the first episode falls out of the 5s window)\n");
 
             // -- Scenario 2: 90 -> 30 -> 75, all EV-7Q2. The 30 IS a braking episode by the SAME
             // vehicle: it satisfies the negated step's own filter (?s2 < 40) AND the correlation
@@ -112,7 +112,7 @@ public class DriverAttentionWatchdog {
             System.out.println("  (no alert: the same vehicle's braking reading matched the negated"
                     + " step NOT ?e2 — the driver reacted, so the sequence was discarded)");
 
-            System.out.println("\n(event time moves on 5.5s, so the second episode falls out of the 5s window)\n");
+            System.out.println("\n(event time moves on 7s, so the second episode falls out of the 5s window)\n");
 
             // -- Scenario 3: EV-3K8 at 90, then EV-9TZ at 75 — two fast readings, but from
             // DIFFERENT vehicles. The STR(?e1)=STR(?e3) guard rejects the cross-vehicle pairing,
@@ -126,7 +126,7 @@ public class DriverAttentionWatchdog {
             System.out.println("  (no alert: the same-vehicle guard STR(?e1)=STR(?e3) rejects a"
                     + " cross-vehicle pairing of the two fast readings)");
 
-            System.out.println("\n(event time moves on 5.5s, so the third episode falls out of the 5s window)\n");
+            System.out.println("\n(event time moves on 7s, so the third episode falls out of the 5s window)\n");
 
             // -- Scenario 4 (correlated negation): EV-7Q2 at 90, EV-3K8 brakes to 30, EV-7Q2 at
             // 75. The braking reading is from a DIFFERENT vehicle, so the guard

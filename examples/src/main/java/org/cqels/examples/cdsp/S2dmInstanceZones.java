@@ -140,22 +140,25 @@ public class S2dmInstanceZones {
                     row/side as data instead of enumerating VSS signal paths.
                     """);
 
+            // Each reading carries an explicit event time (ms), 600 ms apart, so the windowed query
+            // holds the same readings every run.
+
             // Front driver side opens (the driver getting in) — routine.
             System.out.println("push: EV-7Q2 Door.isOpen FRONT/DRIVER_SIDE = 1");
             S2dm.pushZonedSignal(cabin, Fleet.EV1, S2dm.F_DOOR_OPEN,
-                    S2dm.ROW_FRONT, S2dm.SIDE_DRIVER, 1.0);
+                    S2dm.ROW_FRONT, S2dm.SIDE_DRIVER, 1.0, 1_000);
             Thread.sleep(600);
 
             // Rear passenger side opens — the one the interlock cares about.
             System.out.println("\npush: EV-7Q2 Door.isOpen REAR/PASSENGER_SIDE = 1");
             S2dm.pushZonedSignal(cabin, Fleet.EV1, S2dm.F_DOOR_OPEN,
-                    S2dm.ROW_REAR, S2dm.SIDE_PASSENGER, 1.0);
+                    S2dm.ROW_REAR, S2dm.SIDE_PASSENGER, 1.0, 1_600);
             Thread.sleep(600);
 
             // A closed door: present in the stream, filtered out by FILTER(?open > 0).
             System.out.println("\npush: EV-3K8 Door.isOpen FRONT/PASSENGER_SIDE = 0  (closed -> filtered)");
             S2dm.pushZonedSignal(cabin, Fleet.EV2, S2dm.F_DOOR_OPEN,
-                    S2dm.ROW_FRONT, S2dm.SIDE_PASSENGER, 0.0);
+                    S2dm.ROW_FRONT, S2dm.SIDE_PASSENGER, 0.0, 2_200);
             Thread.sleep(600);
 
             // A seat-occupancy reading in the same zone vocabulary — the instance tag is shared
@@ -163,7 +166,7 @@ public class S2dmInstanceZones {
             System.out.println("\npush: EV-7Q2 Seat.isOccupied REAR/PASSENGER_SIDE = 1"
                     + "  (same zone vocabulary, different concept)");
             S2dm.pushZonedSignal(cabin, Fleet.EV1, S2dm.F_SEAT_OCCUPIED,
-                    S2dm.ROW_REAR, S2dm.SIDE_PASSENGER, 1.0);
+                    S2dm.ROW_REAR, S2dm.SIDE_PASSENGER, 1.0, 2_800);
             Thread.sleep(1200);
         }
         System.out.println("\nDone.");

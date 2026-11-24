@@ -112,10 +112,9 @@ four at a time, and compares what each prints with its file in
 test until it has a file, and a file whose demo is gone fails it too.
 
 For that, a demo must print the same thing on every run: nothing that varies between runs (random
-IDs, ports, the wall clock), and windows that hold the same readings every time. Every demo with a
-time window gives each reading an explicit event time, rather than letting the engine stamp it on
-arrival, except `CdspDrivingStyle`, `S2dmInstanceZones` and `TrailerHealthMonitor`. Those three
-still rely on their pauses, which are longer than their windows by a wide margin.
+IDs, ports, the wall clock), and windows that hold the same readings every time. So every demo with
+a time window gives each reading an explicit event time, rather than letting the engine stamp it on
+arrival. The `Thread.sleep` calls only pace the output while you watch; no result depends on them.
 
 When a demo's output changes on purpose, regenerate its file on JDK 17, the JDK CI uses, and review
 the diff:

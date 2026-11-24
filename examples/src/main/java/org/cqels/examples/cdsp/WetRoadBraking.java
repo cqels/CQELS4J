@@ -63,7 +63,7 @@ public class WetRoadBraking {
             pushRoadReading(telemetry, Fleet.EV1, 100, 0, 1_000);
             Thread.sleep(300);
             pushRoadReading(telemetry, Fleet.EV1, 65, 0, 1_300);
-            Thread.sleep(5500);   // let the 5s window drain between phases
+            Thread.sleep(5500);   // pacing; the next reading's event time, 5.5 s on, takes phase 1 out of the 5s window
 
             System.out.println("Phase 2: EV-3K8 eases off in the rain, 80 -> 70 (must NOT match - drop below 20 km/h).");
             pushRoadReading(telemetry, Fleet.EV2, 80, 1, 6_800);
