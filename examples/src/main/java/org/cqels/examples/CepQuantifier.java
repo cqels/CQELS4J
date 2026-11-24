@@ -50,10 +50,13 @@ public class CepQuantifier {
             // three-event match that skipped a weave, and repeated the four-event one — so expect a
             // single line here. That follows from the engine's stated match semantics since alpha.21:
             // each match is a complex event emitted exactly once (CQELS-QL_SPEC.md §7).
+            // Explicit event times, 300 ms apart, so the printed match is the same every run.
+            long t = 1_000;
             for (String ev : new String[]{
                     Fleet.SPEED_DROP, Fleet.LANE_WEAVE, Fleet.LANE_WEAVE, Fleet.SPEED_SPIKE}) {
-                System.out.println("push: " + ev.substring(Fleet.FLEET.length()));
-                Fleet.pushDrivingEvent(events, ev);
+                System.out.println("push: " + ev.substring(Fleet.FLEET.length()) + " @ " + t + " ms");
+                Fleet.pushDrivingEventAt(events, ev, t);
+                t += 300;
                 Thread.sleep(300);
             }
             Thread.sleep(1500);

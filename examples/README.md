@@ -103,6 +103,27 @@ mvn -q exec:java -Dexec.mainClass=org.cqels.examples.CapabilityProbe
 
 Each program prints what it pushes and what the engine emits, then exits on its own.
 
+## Every demo's output is tested
+
+`mvn test` runs [`DemoOutputTest`](src/test/java/org/cqels/examples/DemoOutputTest.java). It runs
+every class with a `main` (except `CapabilityProbe`, which CI runs on its own) in a separate JVM,
+four at a time, and compares what each prints with its file in
+[`src/test/resources/expected-output/`](src/test/resources/expected-output/). A new demo fails the
+test until it has a file, and a file whose demo is gone fails it too.
+
+For that, a demo must print the same thing on every run: nothing that varies between runs (random
+IDs, ports, the wall clock), and windows that hold the same readings every time. Every demo with a
+time window gives each reading an explicit event time, rather than letting the engine stamp it on
+arrival, except `CdspDrivingStyle`, `S2dmInstanceZones` and `TrailerHealthMonitor`. Those three
+still rely on their pauses, which are longer than their windows by a wide margin.
+
+When a demo's output changes on purpose, regenerate its file on JDK 17, the JDK CI uses, and review
+the diff:
+
+```bash
+mvn -q test -Dtest=DemoOutputTest -Dexpected.update=true
+```
+
 ## The scenarios
 
 Grouped by use-case category — add new demos under the matching heading (and list them

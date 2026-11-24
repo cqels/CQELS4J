@@ -1,0 +1,31 @@
+Live warning under [NOW]; review over [PAST 2s FUTURE 1s STEP 1s].
+
+push: vehicle/EV-7Q2 timeToCollision = 3.4 @ t=1100 ms
+push: vehicle/EV-7Q2 timeToCollision = 2.6 @ t=1400 ms
+push: vehicle/EV-7Q2 timeToCollision = 1.8 @ t=1700 ms
+  [WARNING, live] {ttc=1.8, vehicle=vehicle/EV-7Q2}
+push: vehicle/EV-7Q2 Chassis.Brake.PedalPosition = 45.0 @ t=2300 ms
+push: vehicle/EV-3K8 timeToCollision = 6.0 @ t=3200 ms
+  [review, window (0, 3000] around anchor 2000 ms] vehicle/EV-7Q2 warning @ 1700 ms: closed in gradually
+  [review, window (0, 3000] around anchor 2000 ms] vehicle/EV-7Q2 warning @ 1700 ms: closed in gradually
+  [review, window (0, 3000] around anchor 2000 ms] vehicle/EV-7Q2 warning @ 1700 ms: braked after 600 ms
+push: vehicle/EV-3K8 timeToCollision = 1.5 @ t=3500 ms
+  [WARNING, live] {ttc=1.5, vehicle=vehicle/EV-3K8}
+push: vehicle/EV-3K8 Chassis.Brake.PedalPosition = 70.0 @ t=3900 ms
+push: vehicle/EV-9TZ timeToCollision = 3.0 @ t=5100 ms
+  [review, window (2000, 5000] around anchor 4000 ms] vehicle/EV-3K8 warning @ 3500 ms: braked after 400 ms
+push: vehicle/EV-9TZ timeToCollision = 1.6 @ t=5600 ms
+  [WARNING, live] {ttc=1.6, vehicle=vehicle/EV-9TZ}
+push: vehicle/EV-3K8 Chassis.Brake.PedalPosition = 50.0 @ t=6000 ms
+push: closer @ t=10000 ms (moves the watermark; the remaining windows report)
+push: vehicle/EV-7Q2 timeToCollision = 8.0 @ t=10000 ms
+  [review, window (4000, 7000] around anchor 6000 ms] vehicle/EV-9TZ warning @ 5600 ms: closed in gradually
+  [review, window (4000, 7000] around anchor 6000 ms] vehicle/EV-9TZ warning @ 5600 ms: NO BRAKE in the window
+
+Review, one line per warning (from the window where it falls in (anchor-1s, anchor]):
+  vehicle/EV-3K8 warning @ 3500 ms : no approach reading (TTC 2-4 s) in the 1-2 s before it (a cut-in, or a glitch); braked after 400 ms
+  vehicle/EV-7Q2 warning @ 1700 ms : closed in gradually; braked after 600 ms
+  vehicle/EV-9TZ warning @ 5600 ms : closed in gradually; NO BRAKE in the window
+(12 further matches came from the overlapping windows and were not judged.)
+
+Done.

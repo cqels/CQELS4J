@@ -90,11 +90,11 @@ public class CorrelatedFaultCascade {
 
             // -- Scenario 1: EV-7Q2 raises three distinct subsystem alerts -> must match.
             System.out.println("Scenario 1 — one vehicle, three distinct subsystems (should fire):");
-            pushAlert(alerts, Fleet.EV1, INVERTER_OVER_TEMP);
+            pushAlert(alerts, Fleet.EV1, INVERTER_OVER_TEMP, 1_000);
             Thread.sleep(300);
-            pushAlert(alerts, Fleet.EV1, BRAKE_WEAR);
+            pushAlert(alerts, Fleet.EV1, BRAKE_WEAR, 1_300);
             Thread.sleep(300);
-            pushAlert(alerts, Fleet.EV1, TIRE_PRESSURE);
+            pushAlert(alerts, Fleet.EV1, TIRE_PRESSURE, 1_600);
             Thread.sleep(1500);   // let the compound alert print
 
             // -- Scenario 2: the same three alert types, but split across two OTHER vehicles.
@@ -104,11 +104,11 @@ public class CorrelatedFaultCascade {
             // still inside the 15s window and could otherwise correlate with new ones.
             System.out.println(
                     "\nScenario 2 — same alert types, spread across two vehicles (should stay quiet):");
-            pushAlert(alerts, Fleet.EV2, INVERTER_OVER_TEMP);
+            pushAlert(alerts, Fleet.EV2, INVERTER_OVER_TEMP, 3_100);
             Thread.sleep(300);
-            pushAlert(alerts, Fleet.EV3, BRAKE_WEAR);
+            pushAlert(alerts, Fleet.EV3, BRAKE_WEAR, 3_400);
             Thread.sleep(300);
-            pushAlert(alerts, Fleet.EV2, TIRE_PRESSURE);
+            pushAlert(alerts, Fleet.EV2, TIRE_PRESSURE, 3_700);
             Thread.sleep(1500);
             System.out.println("  (no cascade: three distinct alerts, but never three from ONE vehicle —"
                     + " the cross-event same-vehicle guard suppressed the match)");
@@ -121,13 +121,14 @@ public class CorrelatedFaultCascade {
      * a fresh alert-event subject carrying {@code fleet:hasAlert <type>} and
      * {@code fleet:vehicle <vehicle>}. Keeping both triples in one element is what lets the
      * multi-triple CEP matcher bind the alert type AND the vehicle on the same SEQ step —
-     * pushed separately they would never form one event.
+     * pushed separately they would never form one event. The explicit event time (ms) makes the
+     * printed match the same every run.
      */
-    private static void pushAlert(DataStream stream, String vehicle, String alertType) {
+    private static void pushAlert(DataStream stream, String vehicle, String alertType, long timestamp) {
         IRI event = VF.createIRI(Fleet.EX + "alert/" + ALERT_SEQ.incrementAndGet());
         stream.push(List.of(
                 VF.createStatement(event, VF.createIRI(HAS_ALERT), VF.createIRI(alertType)),
-                VF.createStatement(event, VF.createIRI(VEHICLE), VF.createIRI(vehicle))));
+                VF.createStatement(event, VF.createIRI(VEHICLE), VF.createIRI(vehicle))), timestamp);
         System.out.println("push: " + shortId(vehicle) + " "
                 + alertType.substring(Fleet.FLEET.length()));
     }

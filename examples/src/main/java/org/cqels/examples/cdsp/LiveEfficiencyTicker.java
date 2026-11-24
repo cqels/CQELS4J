@@ -54,13 +54,15 @@ public class LiveEfficiencyTicker {
             System.out.println("Power sign is the V2G convention: charging > 0, discharging (driving) < 0.");
             System.out.println("The run outlasts the window, so early ticks age out and the averages track the ramp.\n");
 
+            // Explicit event times, one tick every 400 ms, so each window holds the same ticks every run.
             for (int i = 0; i < 16; i++) {
+                long t = 1_000 + i * 400L;
                 // EV-7Q2 economical: ~ -7.5 kW draw at ~ 50 km/h
-                pushReading(telemetry, Fleet.EV1, i, -7200.0 - i * 100.0, 48.0 + i);
+                pushReading(telemetry, Fleet.EV1, i, -7200.0 - i * 100.0, 48.0 + i, t);
                 // EV-9TZ heavy-footed: ~ -24 kW draw at ~ 95 km/h
-                pushReading(telemetry, Fleet.EV3, i, -23000.0 - i * 250.0, 92.0 + i);
+                pushReading(telemetry, Fleet.EV3, i, -23000.0 - i * 250.0, 92.0 + i, t);
                 // EV-3K8 parked at the depot, V2G charging: +11 kW at speed 0
-                pushReading(telemetry, Fleet.EV2, i, 11000.0, 0.0);
+                pushReading(telemetry, Fleet.EV2, i, 11000.0, 0.0, t);
                 System.out.println("tick " + (i + 1)
                         + ": EV-7Q2 " + (-7200 - i * 100) + "W @ " + (48 + i) + " km/h"
                         + " | EV-9TZ " + (-23000 - i * 250) + "W @ " + (92 + i) + " km/h"
@@ -81,11 +83,11 @@ public class LiveEfficiencyTicker {
      * metrics, so power and speed are co-bound on the same tick.
      */
     private static void pushReading(DataStream stream, String vehicle, int tick,
-                                    double powerW, double speed) {
+                                    double powerW, double speed, long t) {
         String reading = Fleet.EX + "reading/" + vehicle.substring(vehicle.lastIndexOf('/') + 1)
                 + "-" + tick;
-        stream.pushTriple(reading, Fleet.VSS + "Vehicle", vehicle);
-        stream.push(reading, Fleet.CHARGE_POWER, powerW);
-        stream.push(reading, Fleet.SPEED, speed);
+        Fleet.pushTripleAt(stream, reading, Fleet.VSS + "Vehicle", vehicle, t);
+        Fleet.pushAt(stream, reading, Fleet.CHARGE_POWER, powerW, t);
+        Fleet.pushAt(stream, reading, Fleet.SPEED, speed, t);
     }
 }

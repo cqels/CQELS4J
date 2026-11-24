@@ -10,6 +10,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 import org.cqels.engine.CQELSEngine;
 import org.cqels.engine.DataStream;
@@ -74,6 +75,7 @@ import org.eclipse.rdf4j.rio.RDFFormat;
 public class MessageLogReplay {
 
     private static final ValueFactory VF = SimpleValueFactory.getInstance();
+    private static final AtomicLong READING_SEQ = new AtomicLong();   // stable blank-node labels: same output every run
     private static final String LOG = "/messages/cabin-temperatures.ttl";
     private static final String BASE = "https://example.org/fleet/";
     private static final String RESULT_TIME = "http://www.w3.org/ns/sosa/resultTime";
@@ -193,7 +195,7 @@ public class MessageLogReplay {
 
     /** One output message for one result row: a blank-node reading pointing at its observation. */
     static List<Statement> readingMessage(Map<String, Object> row) {
-        BNode reading = VF.createBNode();
+        BNode reading = VF.createBNode("reading" + READING_SEQ.incrementAndGet());
         List<Statement> message = new ArrayList<>();
         message.add(VF.createStatement(reading, VF.createIRI("http://www.w3.org/1999/02/22-rdf-syntax-ns#type"),
                 VF.createIRI(OUT + "CabinReading")));

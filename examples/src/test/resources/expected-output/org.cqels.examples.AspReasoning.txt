@@ -1,0 +1,10 @@
+Engine started. Rule: vehicles reporting telemetry together form a convoy.
+
+push: telemetry from vehicle/EV-7Q2
+push: telemetry from vehicle/EV-3K8
+  convoy -> {v1=https://example.org/fleet/vehicle/EV-3K8, v2=https://example.org/fleet/vehicle/EV-7Q2}
+  convoy -> {v1=https://example.org/fleet/vehicle/EV-7Q2, v2=https://example.org/fleet/vehicle/EV-3K8}
+  convoy -> {v1=https://example.org/fleet/vehicle/EV-3K8, v2=https://example.org/fleet/vehicle/EV-7Q2}
+  convoy -> {v1=https://example.org/fleet/vehicle/EV-7Q2, v2=https://example.org/fleet/vehicle/EV-3K8}
+
+Done.

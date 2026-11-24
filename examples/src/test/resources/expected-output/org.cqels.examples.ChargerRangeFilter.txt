@@ -1,0 +1,10 @@
+Depot charge hub at (48.15, 11.58). Vehicles currently within 5 km:
+  EV-7Q2 at (48.137, 11.575) ~1.5 km  -> should match
+  EV-3K8 at (48.400, 11.900) ~35 km   -> filtered out
+
+  WITHIN 5 km of charge hub -> {km=1.4923818934673785, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+  WITHIN 5 km of charge hub -> {km=1.4923818934673785, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+  WITHIN 5 km of charge hub -> {km=1.4923818934673785, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+  WITHIN 5 km of charge hub -> {km=1.4923818934673785, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+
+Done.

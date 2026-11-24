@@ -1,0 +1,26 @@
+Rule: mission_at_risk(V) :- needs_charge(V), not charging(V).
+
+Start of shift — mission control publishes next-duty reserves:
+push: EV-7Q2 nextDutyReserve 35 %
+push: EV-3K8 nextDutyReserve 50 %
+
+EV-3K8 plugs in at Depot North:
+push: EV-3K8 chargingAt depot-north
+
+Telemetry — EV-7Q2 at 62 % (above its 35 % reserve, nothing derives):
+push: EV-7Q2 SoC 62 %
+
+Telemetry — EV-3K8 drops to 42 % (below its 50 % reserve, but it is charging):
+push: EV-3K8 SoC 42 %
+  needs_charge    -> EV-3K8
+
+Telemetry — EV-7Q2 drops to 28 % (below its 35 % reserve, still on the road):
+push: EV-7Q2 SoC 28 %
+  needs_charge    -> EV-7Q2
+  MISSION AT RISK -> EV-7Q2 (below reserve and NOT charging)
+
+Summary:
+  EV-7Q2 at risk:     true (expected true)
+  EV-3K8 at risk:     false (expected false — needs charge, but `not charging(V)` failed because it is plugged in)
+
+Done.

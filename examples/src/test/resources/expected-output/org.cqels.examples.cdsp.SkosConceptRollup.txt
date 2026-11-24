@@ -1,0 +1,21 @@
+Engine started. Hierarchy: Seat/Door -> Cabin -> Vehicle,
+Powertrain -> Vehicle (skos:broader).
+Observations are pushed against the NARROW concepts only; the queries ask
+about Cabin and Vehicle and are answered by inference.
+
+seeding the skos:broader hierarchy INTO the stream (the reasoner cannot see the static graph):
+
+push: EV-7Q2 ofConcept c:Seat  (narrow — no query mentions Seat)
+  [Cabin rollup] {obs=https://example.org/fleet/s2dm-obs/1}
+  [Vehicle rollup] {obs=https://example.org/fleet/s2dm-obs/1}
+
+push: EV-3K8 ofConcept c:Door  (narrow)
+  [Cabin rollup] {obs=https://example.org/fleet/s2dm-obs/2}
+  [Vehicle rollup] {obs=https://example.org/fleet/s2dm-obs/2}
+
+push: EV-9TZ ofConcept c:Powertrain  (broader=Vehicle only -> must NOT appear under Cabin)
+  [Vehicle rollup] {obs=https://example.org/fleet/s2dm-obs/3}
+
+cascade rounds cut short by the depth cap: 0  (0 = every cascade settled naturally below depth 6)
+
+Done.

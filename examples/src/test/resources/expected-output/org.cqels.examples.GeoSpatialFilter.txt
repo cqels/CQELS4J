@@ -1,0 +1,13 @@
+Engine started. Depot geofence = POLYGON((0 0, 10 0, 10 10, 0 10, 0 0)).
+
+push: vehicle/EV-7Q2 at POINT(2 2)
+  in-depot -> {loc=POINT(2 2), vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+push: vehicle/EV-9TZ at POINT(20 20)
+  in-depot -> {loc=POINT(2 2), vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+  in-depot -> {loc=POINT(2 2), vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+  in-depot -> {loc=POINT(2 2), vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+  in-depot -> {loc=POINT(2 2), vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+  in-depot -> {loc=POINT(2 2), vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+  in-depot -> {loc=POINT(2 2), vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+
+Done.

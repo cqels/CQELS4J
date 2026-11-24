@@ -1,0 +1,21 @@
+Engine started. EV1 (full), EV2 (no SoH, backup contact), EV3 (in maintenance, dropped).
+
+push: vehicle/EV-7Q2 speed = 96 km/h
+  enriched -> {soh=92.0, kmh=96.0, vehicle=https://example.org/fleet/vehicle/EV-7Q2, contact=Alice, headroom=34.0}
+push: vehicle/EV-3K8 speed = 96 km/h
+  enriched -> {soh=92.0, kmh=96.0, vehicle=https://example.org/fleet/vehicle/EV-7Q2, contact=Alice, headroom=34.0}
+  enriched -> {soh=92.0, kmh=96.0, vehicle=https://example.org/fleet/vehicle/EV-7Q2, contact=Alice, headroom=34.0}
+  enriched -> {soh=92.0, kmh=96.0, vehicle=https://example.org/fleet/vehicle/EV-7Q2, contact=Alice, headroom=34.0}
+  enriched -> {soh=92.0, kmh=96.0, vehicle=https://example.org/fleet/vehicle/EV-7Q2, contact=Alice, headroom=34.0}
+  enriched -> {soh=92.0, kmh=96.0, vehicle=https://example.org/fleet/vehicle/EV-7Q2, contact=Alice, headroom=34.0}
+  enriched -> {soh=null, kmh=96.0, vehicle=https://example.org/fleet/vehicle/EV-3K8, contact=Dispatch, headroom=34.0}
+push: vehicle/EV-9TZ speed = 96 km/h
+  enriched -> {soh=92.0, kmh=96.0, vehicle=https://example.org/fleet/vehicle/EV-7Q2, contact=Alice, headroom=34.0}
+  enriched -> {soh=null, kmh=96.0, vehicle=https://example.org/fleet/vehicle/EV-3K8, contact=Dispatch, headroom=34.0}
+  enriched -> {soh=92.0, kmh=96.0, vehicle=https://example.org/fleet/vehicle/EV-7Q2, contact=Alice, headroom=34.0}
+  enriched -> {soh=null, kmh=96.0, vehicle=https://example.org/fleet/vehicle/EV-3K8, contact=Dispatch, headroom=34.0}
+  enriched -> {soh=null, kmh=96.0, vehicle=https://example.org/fleet/vehicle/EV-3K8, contact=Dispatch, headroom=34.0}
+  enriched -> {soh=null, kmh=96.0, vehicle=https://example.org/fleet/vehicle/EV-3K8, contact=Dispatch, headroom=34.0}
+  enriched -> {soh=null, kmh=96.0, vehicle=https://example.org/fleet/vehicle/EV-3K8, contact=Dispatch, headroom=34.0}
+
+Done.

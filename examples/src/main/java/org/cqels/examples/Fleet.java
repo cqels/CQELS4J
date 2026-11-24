@@ -210,6 +210,31 @@ public final class Fleet {
     }
 
     /**
+     * As {@link #pushDrivingEvent}, at an explicit event time (ms). A match's start, end and duration
+     * then come from these times, not from the wall clock, so a demo prints the same match every run.
+     */
+    public static void pushDrivingEventAt(DataStream stream, String eventClass, long timestamp) {
+        stream.push(VF.createIRI(FLEET + "event/" + EVT_SEQ.incrementAndGet()), VF.createIRI(EVENT),
+                VF.createIRI(eventClass), timestamp);
+    }
+
+    /** Push {@code <subject> <predicate> <object>} (an IRI) at an explicit event time (ms). */
+    public static void pushTripleAt(DataStream stream, String subject, String predicate, String object,
+                                    long timestamp) {
+        stream.push(VF.createIRI(subject), VF.createIRI(predicate), VF.createIRI(object), timestamp);
+    }
+
+    /** Push {@code <subject> <predicate> value} (an {@code xsd:double}) at an explicit event time (ms). */
+    public static void pushAt(DataStream stream, String subject, String predicate, double value, long timestamp) {
+        stream.push(VF.createIRI(subject), VF.createIRI(predicate), value, timestamp);
+    }
+
+    /** Push {@code <subject> <predicate> value} (an integer literal) at an explicit event time (ms). */
+    public static void pushAt(DataStream stream, String subject, String predicate, long value, long timestamp) {
+        stream.push(VF.createIRI(subject), VF.createIRI(predicate), value, timestamp);
+    }
+
+    /**
      * Push a location {@code sosa:Observation} whose {@code observedProperty} is {@code vss:CurrentLocation}
      * and whose result is a typed WKT literal — the SOSA-shaped form of a GPS reading, used by the geo demo.
      */

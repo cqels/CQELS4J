@@ -10,6 +10,7 @@ import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Example — the <strong>W3C RSP Community Group "RDF Messages"</strong> stream envelope (CQELS 2.0.0-alpha.22).
@@ -42,6 +43,7 @@ import java.util.List;
 public class RdfMessageIngestion {
 
     private static final ValueFactory VF = SimpleValueFactory.getInstance();
+    private static final AtomicLong OBS_SEQ = new AtomicLong();
     private static final String XSD_DOUBLE = "http://www.w3.org/2001/XMLSchema#double";
 
     public static void main(String[] args) throws InterruptedException {
@@ -87,7 +89,7 @@ public class RdfMessageIngestion {
             // 3. Parse it back (a consumer decoding the stream) and ingest each message atomically with an
             //    explicit event time, so windowed / [NOW] semantics are deterministic.
             List<List<Statement>> messages = RdfMessageCodec.parseNQuads(wire);
-            long eventTime = System.currentTimeMillis();
+            long eventTime = 1_000;   // a fixed base, so the demo prints the same every run
             for (List<Statement> message : messages) {
                 System.out.println("push: one atomic observation (" + message.size() + " triples)");
                 telemetry.push(message, eventTime);
@@ -104,7 +106,7 @@ public class RdfMessageIngestion {
      * fresh observation IRI — the statements of one RDF Message.
      */
     private static List<Statement> socObservation(String sensor, String vehicle, double soc) {
-        IRI obs = VF.createIRI(Fleet.EX + "obs/" + java.util.UUID.randomUUID());
+        IRI obs = VF.createIRI(Fleet.EX + "obs/msg-" + OBS_SEQ.incrementAndGet());
         List<Statement> statements = new ArrayList<>();
         statements.add(VF.createStatement(obs, VF.createIRI(Fleet.RDF_TYPE), VF.createIRI(Fleet.OBSERVATION)));
         statements.add(VF.createStatement(obs, VF.createIRI(Fleet.MADE_BY_SENSOR), VF.createIRI(sensor)));

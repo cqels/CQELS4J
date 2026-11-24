@@ -51,10 +51,11 @@ public class VehicleSignalsCdsp {
             String[][] fleet = {
                     {Fleet.SENSOR_EV1, Fleet.EV1}, {Fleet.SENSOR_EV2, Fleet.EV2}, {Fleet.SENSOR_EV3, Fleet.EV3}};
             double[] base = {90.0, 105.0, 135.0};
+            // Explicit event times, 80 ms apart, so each window holds the same readings every run.
             for (int i = 0; i < 60; i++) {
                 int v = i % fleet.length;
                 double kmh = base[v] + (RANDOM.nextDouble() - 0.5) * 20;
-                Fleet.pushObservation(telemetry, fleet[v][0], fleet[v][1], Fleet.SPEED, kmh);
+                Fleet.pushObservationAt(telemetry, fleet[v][0], fleet[v][1], Fleet.SPEED, kmh, 1_000 + i * 80L);
                 Thread.sleep(80);
             }
             Thread.sleep(1000);

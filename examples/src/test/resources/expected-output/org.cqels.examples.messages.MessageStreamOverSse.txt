@@ -1,0 +1,21 @@
+producer: 6 messages at http://127.0.0.1:<port>/messages (RDF-Message-Content-Type: application/ld+json)
+first event on the wire:
+  event: rdf-message
+  id: 1
+  data: {"@graph":[{"@id":"https://example.org/fleet/depot-a/cabin-log","@type":["https://example.org/fleet/depot-a/MessageLog"],"http://www.w3.org/2000/01/rdf-schema#comment":[{"@value":"Cabin temperature readings, one sosa:Observation per message"}]}]}
+  
+
+event 1: 2 statements at 2026-11-16T08:00:00Z
+event 2: 6 statements at 2026-11-16T08:00:00Z
+  [reading] {obs=depot-a/obs-1, unit=unit:DEG_C, sensor=depot-a/bus-17-front, value=21.5}
+event 3: 6 statements at 2026-11-16T08:00:05Z
+  [reading] {obs=depot-a/obs-2, unit=unit:DEG_C, sensor=depot-a/bus-17-rear, value=24.0}
+event 4: 0 statements (empty: a heartbeat) at 2026-11-16T08:00:05Z
+event 5: 6 statements at 2026-11-16T08:00:10Z
+  [reading] {obs=depot-a/obs-3, unit=unit:DEG_C, sensor=depot-a/bus-17-front, value=22.5}
+event 6: 6 statements at 2026-11-16T08:00:12Z
+  [reading] {obs=depot-b/obs-1, unit=unit:DEG_C, sensor=depot-b/bus-40-front, value=19.0}
+
+consumer: 6 events, 4 readings
+
+Done.

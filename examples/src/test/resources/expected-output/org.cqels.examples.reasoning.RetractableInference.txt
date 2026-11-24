@@ -1,0 +1,26 @@
+RETE network compiled with truth maintenance ON. Rule: coolant > 95 C -> OverheatAlert.
+
+assert: EV-7Q2 coolantTempCelsius 78.0   (below threshold -> must stay quiet)
+  derived: (none)
+assert: EV-7Q2 coolantTempCelsius 104.0
+  derived [overheat-alert] -> EV-7Q2 hasAlert OverheatAlert
+
+--- state BEFORE retraction ---
+  asserted facts (working memory):
+    EV-7Q2 coolantTempCelsius 78.0
+    EV-7Q2 coolantTempCelsius 104.0
+  derived facts:
+    EV-7Q2 hasAlert OverheatAlert
+
+retract: EV-7Q2 coolantTempCelsius 104.0   (sensor glitch — reading withdrawn)
+  no longer derivable -> EV-7Q2 hasAlert OverheatAlert
+
+--- state AFTER retraction ---
+  asserted facts (working memory):
+    EV-7Q2 coolantTempCelsius 78.0
+  derived facts:
+    (none)
+
+The alert vanished with its premise — the 78 C reading alone supports nothing.
+
+Done.
