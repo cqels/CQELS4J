@@ -876,11 +876,12 @@ class SparqlProtocolServletTest {
                     + "Content-Length: 1000\r\n\r\nASK").getBytes(StandardCharsets.US_ASCII));
             out.flush();
             String ask = ep.url() + "?query=" + enc("ASK {}");
-            HttpResponse<String> busy = null;
-            for (int i = 0; i < 50 && (busy == null || busy.statusCode() != 503); i++) {   // until the upload holds the slot
-                busy = getWithin(ask, java.time.Duration.ofSeconds(2));
-            }
-            assertEquals(503, busy.statusCode(), "the trickling upload never held the slot");
+            // Waited for on the servlet, not probed with queries: a probe that held the only slot
+            // when the upload arrived had the upload refused at once with 503, and the test then
+            // failed in about half its runs ("never held the slot"; found while running #135).
+            awaitSlotsInUse(servletOf(ep.server), 1);
+            HttpResponse<String> busy = getWithin(ask, java.time.Duration.ofSeconds(2));
+            assertEquals(503, busy.statusCode(), "the trickling upload holds the slot");
             String base = ep.url().substring(0, ep.url().length() - "/sparql".length());
             assertEquals(200, getWithin(base + "/health", java.time.Duration.ofSeconds(2)).statusCode());
             // keep trickling, a byte every 300 ms, until the server answers
@@ -3580,6 +3581,132 @@ class SparqlProtocolServletTest {
             assertEquals(401, bare(locked.url(), null).statusCode(), "the description is behind the token too");
             assertEquals(200, bare(locked.url(), null, "Authorization", "Bearer s3cret").statusCode());
         }
+    }
+
+    /**
+     * A prefix declared twice in the prologue is a 400 from RDF4J ("Multiple prefix declarations")
+     * but not from Jena or Virtuoso, and rdflib's SPARQLStore prepends some 30 namespaces to every
+     * query (#115). The last declaration now wins; only the prologue is touched.
+     */
+    @Test
+    void aPrefixDeclaredAgainTakesItsLastDeclaration() throws Exception {
+        // rdflib's shape: its defaults first, then the query's own, the same IRI again
+        var same = getCsv(shared.url(), "PREFIX skos: <http://www.w3.org/2004/02/skos/core#>\n"
+                + "PREFIX ex: <urn:ex:>\n"
+                + "PREFIX skos: <http://www.w3.org/2004/02/skos/core#>\n"
+                + "SELECT ?d WHERE { ex:EV-7Q2 ex:depot ?d }");
+        assertEquals(200, same.statusCode(), same.body());
+        assertTrue(same.body().contains("urn:ex:North"), same.body());
+        // another IRI: the last declaration is the one in force, as in Jena
+        var last = getCsv(shared.url(), "prefix ex: <urn:wrong:>\nPREFIX ex: <urn:ex:>\n"
+                + "SELECT ?d WHERE { ex:EV-7Q2 ex:depot ?d }");
+        assertEquals(200, last.statusCode(), last.body());
+        assertTrue(last.body().contains("urn:ex:North"), last.body());
+        var badIri = get(shared.url(), "PREFIX ex: <http://a:b:c/>\nPREFIX ex: <urn:ex:>\nASK {}", null);
+        assertEquals(400, badIri.statusCode(), "a dropped IRI RDF4J refuses is still refused: " + badIri.body());
+        // the same IRI twice is dropped whatever it is: RDF4J judges it as it judges the kept one
+        var sameOdd = get(shared.url(), "PREFIX od: <http://x/%zz>\nPREFIX od: <http://x/%zz>\nPREFIX ex: <urn:ex:>\n"
+                + "ASK { ex:EV-7Q2 ex:depot ?d }", null);
+        assertEquals(200, sameOdd.statusCode(), sameOdd.body());
+        assertTrue(sameOdd.body().contains("true"), sameOdd.body());
+        // another IRI only when it is absolute and strictly valid: a query's resolver would take
+        // <http://x/%zz>, an INSERT DATA block would not, so it is left to RDF4J everywhere
+        var oddFirst = get(shared.url(), "PREFIX ex: <http://x/%zz>\nPREFIX ex: <urn:ex:>\nASK { ex:EV-7Q2 ex:depot ?d }", null);
+        assertEquals(400, oddFirst.statusCode(), oddFirst.body());
+        // an error further on still names its own line
+        var broken = getCsv(shared.url(), "PREFIX ex: <urn:a:>\nPREFIX ex: <urn:ex:>\nSELECT * WHERE { ?s ?p }");
+        assertEquals(400, broken.statusCode(), broken.body());
+        assertTrue(broken.body().contains("line 3"), broken.body());
+        try (Endpoint rw = Endpoint.start(EndpointOptions.defaults().withUpdateEnabled(true), 0)) {
+            var u = post(rw.url(), "application/sparql-update",
+                    "PREFIX ex: <urn:wrong:>\nPREFIX ex: <urn:ex:>\nINSERT DATA { ex:EV-9 ex:depot ex:South }", null);
+            assertEquals(204, u.statusCode(), u.body());
+            var q = getCsv(rw.url(), "SELECT ?d WHERE { <urn:ex:EV-9> <urn:ex:depot> ?d }");
+            assertTrue(q.body().contains("urn:ex:South"), q.body());
+            // an INSERT DATA block wants strictly valid, absolute IRIs, a dropped one's too
+            for (String odd : List.of("http://x/%zz", "rel/")) {
+                var refused = post(rw.url(), "application/sparql-update", "PREFIX ex: <" + odd + ">\nPREFIX ex: <urn:ex:>\n"
+                        + "INSERT DATA { ex:EV-10 ex:depot ex:East }", null);
+                assertEquals(400, refused.statusCode(), odd + ": " + refused.body());
+            }
+            assertFalse(getCsv(rw.url(), "SELECT ?d WHERE { <urn:ex:EV-10> ?p ?d }").body().contains("East"));
+        }
+    }
+
+    /** The prologue scan: what it blanks, and where it stops without touching anything. */
+    @Test
+    void onlyTheLeadingPrologueIsRewritten() {
+        String plain = "PREFIX a: <urn:a> SELECT * {}";
+        assertSame(plain, SparqlProtocolServlet.withoutRepeatedPrefixes(plain));
+        String twice = "PREFIX a: <urn:x>\r\n# note\nBASE <http://b/>\nprefix a:<urn:a>\nSELECT * {}";
+        String once = SparqlProtocolServlet.withoutRepeatedPrefixes(twice);
+        assertEquals(twice.length(), once.length());
+        assertEquals("                 \r\n# note\nBASE <http://b/>\nprefix a:<urn:a>\nSELECT * {}", once);
+        assertEquals(" ".repeat("PREFIX : <urn:a>".length()) + "PREFIX : <urn:b> ASK {}",
+                SparqlProtocolServlet.withoutRepeatedPrefixes("PREFIX : <urn:a>PREFIX : <urn:b> ASK {}"));
+        // nothing past the prologue is read: a body that repeats the words is left alone
+        String body = "PREFIX a: <urn:a> SELECT * { ?s ?p \"PREFIX a: <urn:a>\" } # PREFIX a: <urn:a>";
+        assertSame(body, SparqlProtocolServlet.withoutRepeatedPrefixes(body));
+        // a declaration it cannot read with certainty ends the scan: RDF4J answers for it
+        String unsure = "PREFIX a: # c >\n <urn:a>\nPREFIX a: <urn:a> ASK {}";
+        assertSame(unsure, SparqlProtocolServlet.withoutRepeatedPrefixes(unsure));
+        String update = "PREFIX a: <urn:a> INSERT DATA {} ; PREFIX a: <urn:a> PREFIX a: <urn:a> INSERT DATA {}";
+        assertSame(update, SparqlProtocolServlet.withoutRepeatedPrefixes(update), "only the first operation's prologue");
+    }
+
+    /**
+     * The scan reads the prologue by the grammar, never more loosely (found in the Opus co-review
+     * of #135): a comment ends at CR as well as LF, so it cannot run on into a string literal;
+     * and Unicode spaces, a dotless ı in a keyword, a non-ASCII prefix name or a character IRIREF
+     * excludes stop it, leaving RDF4J to refuse what is malformed.
+     */
+    @Test
+    void thePrologueScanFollowsTheGrammar() {
+        // a bare CR ends the comment: the body begins there, and its literal is never touched
+        String literal = "#c\rSELECT ?x WHERE { ?x <urn:p> \"\"\"\nPREFIX a: <urn:a> PREFIX a: <urn:b>\"\"\" }";
+        assertSame(literal, SparqlProtocolServlet.withoutRepeatedPrefixes(literal));
+        assertEquals("#c\r                 \rPREFIX a: <urn:b>\rASK {}",
+                SparqlProtocolServlet.withoutRepeatedPrefixes("#c\rPREFIX a: <urn:a>\rPREFIX a: <urn:b>\rASK {}"));
+        for (String loose : List.of(
+                "PREFIX\u2028a: <urn:a>\nPREFIX a: <urn:b>\nASK {}",
+                "PREFIX a:\u3000<urn:a>\nPREFIX a: <urn:b>\nASK {}",
+                "PREF\u0131X a: <urn:a>\nPREFIX a: <urn:b>\nASK {}",
+                "PREFIX a: <urn:{x}>\nPREFIX a: <urn:b>\nASK {}",
+                "PREFIX a: <urn:a b>\nPREFIX a: <urn:b>\nASK {}",
+                "PREFIX \u00e9: <urn:a>\nPREFIX \u00e9: <urn:b>\nASK {}",
+                "PREFIX a.: <urn:a>\nPREFIX a.: <urn:b>\nASK {}")) {
+            assertSame(loose, SparqlProtocolServlet.withoutRepeatedPrefixes(loose), loose);
+        }
+        // RDF4J decodes \\uXXXX before it tokenizes: an escaped line break ends a comment there,
+        // so a backslash in a comment leaves the text alone (the literal keeps both copies)
+        String escaped = "#note\\u000AINSERT DATA { <urn:s> <urn:p> \"\"\"\nPREFIX a: <urn:a> PREFIX a: <urn:a>\"\"\" }";
+        assertSame(escaped, SparqlProtocolServlet.withoutRepeatedPrefixes(escaped));
+        // a dropped declaration whose IRI RDF4J refuses is not blanked away: it stays a 400
+        for (String refused : List.of("PREFIX a: <http://a:b:c/> PREFIX a: <urn:b> ASK {}",
+                "PREFIX a: <http://[x/> PREFIX a: <urn:b> ASK {}")) {
+            assertSame(refused, SparqlProtocolServlet.withoutRepeatedPrefixes(refused), refused);
+        }
+        // any backslash in a comment, not only an escape, leaves the text alone
+        String backslash = "# see C:\\data\nPREFIX a: <urn:a> PREFIX a: <urn:b> ASK {}";
+        assertSame(backslash, SparqlProtocolServlet.withoutRepeatedPrefixes(backslash));
+        // and what the scan does rewrite, RDF4J then accepts
+        org.eclipse.rdf4j.query.parser.QueryParserUtil.parseQuery(org.eclipse.rdf4j.query.QueryLanguage.SPARQL,
+                SparqlProtocolServlet.withoutRepeatedPrefixes("prefix ex-1.b: <urn:a>\tPREFIX ex-1.b: <urn:b> ASK { ex-1.b:x ?p ?o }"), null);
+    }
+
+    /** One pass: a 1 MB body of declarations took 4.4 s, in a query slot, when each was searched for again. */
+    @Test
+    void thePrologueScanIsLinear() {
+        StringBuilder q = new StringBuilder();
+        for (int i = 0; i < 150_000; i++) {
+            q.append("PREFIX p").append(i).append(": <urn:x>\n");
+        }
+        q.append("PREFIX p0: <urn:y>\nASK {}");
+        long t0 = System.nanoTime();
+        String out = SparqlProtocolServlet.withoutRepeatedPrefixes(q.toString());
+        long millis = (System.nanoTime() - t0) / 1_000_000;
+        assertTrue(out.startsWith(" ".repeat("PREFIX p0: <urn:x>".length()) + "\n"), "the first p0 is blanked");
+        assertTrue(millis < 2_000, "150,000 declarations took " + millis + " ms");
     }
 
     @SuppressWarnings("unused")
