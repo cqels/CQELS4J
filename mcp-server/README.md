@@ -2,7 +2,7 @@
 
 This module packages the **published CQELS MCP server** — `org.cqels:cqels-mcp` on GitHub
 Packages — as a single runnable jar, wrapped in a thin launcher that seeds the same
-**electric-vehicle fleet / V2G** world the [`playground/`](../playground/) run. An MCP client
+**electric-vehicle fleet / V2G** world the demos in [`playground/`](../playground/) run. An MCP client
 (Claude Desktop, an IDE assistant, or any [Model Context Protocol](https://modelcontextprotocol.io/)
 agent) connects over **stdio** and gets the full production tool surface — agent memory
 (semantic / episodic / procedural / working), continuous CQELS-QL/Cypher stream queries, CEP,

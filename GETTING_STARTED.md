@@ -239,7 +239,7 @@ language, there are two routes today. Which one you need depends on whether the 
 Jena and RDF4J's `SPARQLRepository` work as they do against any other endpoint:
 
 ```bash
-cd sparql-endpoint && mvn -q package
+cd sparql-endpoint && mvn -q package   # from the repository root, not playground/
 CQELS_SPARQL_SEED_FLEET=true java -jar target/cqels-sparql-endpoint.jar
 # prints: listening on http://127.0.0.1:8089/sparql
 ```

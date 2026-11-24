@@ -218,7 +218,7 @@ electric-vehicle fleet / vehicle-to-grid (V2G) scenario.)
 
 [`mcp-server/`](mcp-server/) packages the **published CQELS MCP server**
 (`org.cqels:cqels-mcp`, a [Model Context Protocol](https://modelcontextprotocol.io/) server)
-as a runnable jar behind a thin launcher that seeds the [`playground/`](playground/)'
+as a runnable jar behind a thin launcher that seeds the [`playground/`](playground/) demos'
 **EV-fleet / V2G** world, so an MCP client such as Claude Desktop gets the full production
 tool surface — **25 tools** covering the four agent-memory types
 (`store_memory`/`recall_memory`, episodic `record_event`/`recall_episodes`, procedural
@@ -230,7 +230,7 @@ a fleet knowledge graph already loaded to query, watch, and reason over. Its sin
 dependency is the published `org.cqels:cqels-mcp`.
 
 ```bash
-cd mcp-server
+cd mcp-server            # from the repository root, not playground/
 mvn -q package          # -> target/cqels-mcp-server.jar
 ```
 
@@ -249,7 +249,7 @@ streams join against, as a standard
 `org.cqels:cqels-engine`, like `mcp-server/`, and can seed the same EV-fleet world:
 
 ```bash
-cd sparql-endpoint
+cd sparql-endpoint       # from the repository root, not playground/
 mvn -q package          # -> target/cqels-sparql-endpoint.jar
 CQELS_SPARQL_SEED_FLEET=true java -jar target/cqels-sparql-endpoint.jar
 ```
@@ -314,7 +314,7 @@ Continuous property-graph queries use Cypher (CypherQL).
 📘 **Full language reference: [`CQELS-QL_SPEC.md`](CQELS-QL_SPEC.md)** — focuses on the streaming
 extensions over SPARQL (windows, stream–static joins, CEP; named windows are parsed but not yet
 executed — see the spec), with grammar and examples.
-The [playground/](playground/) are runnable counterparts.
+The demos in [playground/](playground/) are runnable counterparts.
 
 CQELS builds on and interoperates with these standards:
 
