@@ -162,6 +162,15 @@ final class TimedServiceClient extends CloseableHttpClient {
     /** A connection pool and the proxy selector its route planner was built over. */
     private record Pool(CloseableHttpClient client, java.net.ProxySelector routes) { }
 
+    /**
+     * Whether {@code client} is the current pool, without opening one: asked through
+     * {@link #pooled()}, a pool released by a stop was reopened by the request it failed (found in
+     * co-review round 6 of #144).
+     */
+    private synchronized boolean isPool(CloseableHttpClient client) {
+        return pool == client;
+    }
+
     /** The current pool and its selector, read together. */
     private synchronized Pool pooled() {
         return new Pool(pool(), routes);
@@ -502,7 +511,7 @@ final class TimedServiceClient extends CloseableHttpClient {
                 } catch (Refusal | RemoteFailure e) {
                     throw e;
                 } catch (IllegalStateException e) {
-                    if (pooled().client() != sending.client()) {
+                    if (!isPool(sending.client())) {
                         throw new RemoteFailure("the SERVICE client's connections were released while the request was made");
                     }
                     throw e;

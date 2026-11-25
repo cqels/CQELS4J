@@ -1442,9 +1442,16 @@ public final class SparqlProtocolServlet extends HttpServlet {
             // HttpClient (used here before) required. Apache's extractHost reads anything else
             // leniently — ":-2" as no port (port 80), ":+8080" as 8080, "localhost%3a8080" decoded —
             // and LOAD went where the URL did not say, or answered a remote's bad redirect with the
-            // client's 400 (found in co-review round 5 of #144). SERVICE has explicitPortValid for this.
+            // client's 400 (found in co-review round 5 of #144). SERVICE keeps master's behaviour:
+            // its explicitPortValid refuses ":-2", not the decoded forms, which it reaches as Apache
+            // reads them, deciding on that same reading. A Docker Compose name such as sparql_store
+            // has no server authority either: SERVICE reaches it, LOAD does not, as on master.
             if (uri.getHost() == null || uri.getPort() == 0 || uri.getPort() > 65535) {
-                throw new IOException((redirected ? "redirected to <" : "<") + Destinations.origin(uri)
+                // quoted as written, not as Apache reads it: "localhost%3a8080", not "localhost:8080"
+                // (found in co-review round 6 of #144); scheme and authority only, never a path or query
+                String written = (uri.getScheme() == null ? "" : uri.getScheme() + ":")
+                        + (uri.getRawAuthority() == null ? "" : "//" + uri.getRawAuthority());
+                throw new IOException((redirected ? "redirected to <" : "<") + written
                         + ">, which is not a URL with a host and a port that can be fetched");
             }
             org.apache.http.HttpHost target = Destinations.target(uri);

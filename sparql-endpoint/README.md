@@ -449,6 +449,9 @@ anywhere; `http://*` is not a wildcard.
   when a remote redirected to it or a `LOAD` document named it as its context — `SILENT` or not,
   and an update that ran into one is rolled back. A constant `SERVICE` or `LOAD` IRI that no
   entry admits by name is refused before anything runs.
+- **`LOAD` needs a host `java.net.URI` reads as a server**, as it did before: a Docker Compose
+  name with `_`, such as `sparql_store`, can be listed and is reached by `SERVICE`, but `LOAD`
+  of it fails (`502`, `SILENT`: `204`), as do URLs whose port is not plain digits from 1 to 65535.
 - **An origin is matched as written**, lower-cased: `http://localhost:3030` admits neither
   `http://127.0.0.1:3030` nor `https://localhost:3030`. Those fall to `public`, if it is listed,
   which refuses loopback.

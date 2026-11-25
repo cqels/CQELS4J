@@ -1461,6 +1461,9 @@ class SparqlProtocolServletTest {
                 var load = post(fed.url(), "application/sparql-update", "LOAD <" + iri + ">", null);
                 assertEquals(502, load.statusCode(), iri + ": " + load.body());
                 assertTrue(load.body().contains("not a URL with a host and a port"), load.body());
+                // quoted as written, never as Apache would read it
+                assertFalse(load.body().contains("http://localhost:" + source.getAddress().getPort()), load.body());
+                assertFalse(load.body().contains("<http://127.0.0.1:" + source.getAddress().getPort() + ">"), load.body());
                 var silent = post(fed.url(), "application/sparql-update", "LOAD SILENT <" + iri + "> INTO GRAPH <urn:ex:g>", null);
                 assertEquals(204, silent.statusCode(), iri + ": " + silent.body());
             }
@@ -1520,6 +1523,7 @@ class SparqlProtocolServletTest {
             assertThrows(TimedServiceClient.RemoteFailure.class, () -> holder[0].execute(
                     new org.apache.http.client.methods.HttpGet("http://far.probe/sparql?query=SELECT%20*%20%7B%7D")));
             assertEquals(List.of(), resolved, "the request went out through a pool it was not checked for");
+            assertFalse(holder[0].poolOpen(), "the failed request reopened the released pool");
         } finally {
             java.net.ProxySelector.setDefault(before);
             holder[0].release();
