@@ -153,7 +153,7 @@ class DemoOutputTest {
         Path out = Files.createTempFile("demo-", ".out");
         Path err = Files.createTempFile("demo-", ".err");
         try {
-            Process p = new ProcessBuilder(
+            ProcessBuilder pb = new ProcessBuilder(
                     Paths.get(System.getProperty("java.home"), "bin", "java").toString(),
                     // demos format numbers with String.format, which follows the default locale
                     // (en_DE prints 64,0); pin locale, time zone and encoding so output is the same
@@ -161,11 +161,16 @@ class DemoOutputTest {
                     // charset (the host locale does: under LC_ALL=C every em dash prints as '?'),
                     // so stdout.encoding and stderr.encoding are pinned too; JDK 17 ignores them.
                     "-Duser.language=en", "-Duser.country=US", "-Duser.timezone=UTC",
+                    "-Duser.language.format=en", "-Duser.country.format=US",
+                    "-Duser.language.display=en", "-Duser.country.display=US",
                     "-Dfile.encoding=UTF-8", "-Dstdout.encoding=UTF-8", "-Dstderr.encoding=UTF-8",
                     "-cp", System.getProperty("java.class.path"), demo)
                     .redirectOutput(out.toFile())
-                    .redirectError(err.toFile())
-                    .start();
+                    .redirectError(err.toFile());
+            // options the host sets for every JVM reach this one too, and _JAVA_OPTIONS even
+            // overrides the command line: drop them so they cannot change what a demo prints
+            pb.environment().keySet().removeAll(List.of("JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS"));
+            Process p = pb.start();
             if (!p.waitFor(TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
                 p.destroyForcibly();
                 return new Run(-1, Files.readString(out), "timed out after " + TIMEOUT_SECONDS + " s\n"
