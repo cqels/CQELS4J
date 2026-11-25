@@ -1133,6 +1133,10 @@ class SparqlProtocolServletTest {
                     "/data.ttl", respond(200, "text/turtle", "<urn:ex:listed> <urn:ex:p> 1 .\n", 0),
                     "/away", respond(307, "text/plain", "", 0, "Location", other.url()),
                     "/away.ttl", respond(302, "text/plain", "", 0, "Location", other.url() + "/data.ttl"),
+                    "/tolocal", respond(307, "text/plain", "", 0, "Location",
+                            "http://localhost:" + other.server.getAddress().getPort() + "/sparql"),
+                    "/tolocal.ttl", respond(302, "text/plain", "", 0, "Location",
+                            "http://localhost:" + other.server.getAddress().getPort() + "/data.ttl"),
                     "/ctx.jsonld", respond(200, json, "{\"@context\":\"" + other.url() + "/ctx.json\",\"@id\":\"urn:ex:ctx\",\"p\":\"x\"}", 0)));
             String origin = base(listed);
             try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true).withUpdateEnabled(true)
@@ -1169,12 +1173,23 @@ class SparqlProtocolServletTest {
                 assertEquals(0, other.hits.get(), "a request left the listed origin: " + other.received);
             }
             // public and an origin together: the origin is reached, loopback otherwise is not
-            try (Endpoint both = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true)
+            try (Endpoint both = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true).withUpdateEnabled(true)
                     .withFederationDestinations(List.of("public", origin)), 0)) {
                 assertEquals(200, getCsv(both.url(), "SELECT ?x WHERE { SERVICE <" + origin + "/sparql> { ?s ?p ?x } }").statusCode());
                 var q = get(both.url(), "SELECT * WHERE { SERVICE <" + other.url() + "> { ?s ?p ?o } }", null);
                 assertEquals(403, q.statusCode(), q.body());
                 assertTrue(q.body().contains("not a public address"), q.body());
+                // the admitted origin redirects to a name only 'public' admits, which is loopback:
+                // the redirect's own addresses are checked, not the first hop's admission carried on
+                for (String query : List.of("SELECT * WHERE { SERVICE <" + origin + "/tolocal> { ?s ?p ?o } }",
+                        "SELECT * WHERE { SERVICE SILENT <" + origin + "/tolocal> { ?s ?p ?o } }")) {
+                    var r = get(both.url(), query, null);
+                    assertEquals(502, r.statusCode(), r.body());
+                    assertTrue(r.body().contains("not a public address"), r.body());
+                }
+                var load = post(both.url(), "application/sparql-update", "LOAD SILENT <" + origin + "/tolocal.ttl>", null);
+                assertEquals(502, load.statusCode(), load.body());
+                assertTrue(load.body().contains("not a public address"), load.body());
                 assertEquals(0, other.hits.get(), other.received.toString());
             } finally {
                 listed.stop(0);
@@ -1218,6 +1233,92 @@ class SparqlProtocolServletTest {
             assertEquals(2, mixed.resolve("mixed.test").length, "an origin entry's addresses are not checked");
         } finally {
             Destinations.CHECK.remove();
+        }
+    }
+
+    /**
+     * The host decided on is the one the client resolves and connects to. A Docker Compose name
+     * such as {@code sparql_store}, which {@code java.net.URI} cannot read as a server, was refused
+     * even under {@code *} and could not be listed; and in {@code http://a@b_c@listed.test/} a
+     * rebuilt URI read {@code listed.test}, which was listed, while the client resolved
+     * {@code b_c@listed.test} unchecked (both found in co-review round 1 of #144).
+     */
+    @Test
+    void theHostDecidedOnIsTheHostResolved() throws Exception {
+        try (Remote remote = new Remote()) {
+            int port = remote.server.getAddress().getPort();
+            java.util.List<String> resolved = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+            org.apache.http.conn.DnsResolver loopback = host -> {
+                resolved.add(host);
+                return new java.net.InetAddress[] {java.net.InetAddress.getByName("127.0.0.1")};
+            };
+            for (Destinations admitting : List.of(Destinations.ANY, Destinations.parse(List.of("http://SPARQL_store:" + port)))) {
+                TimedServiceClient client = new TimedServiceClient(2000, EndpointOptions.DEFAULT_MAX_SERVICE_BYTES, loopback, admitting);
+                try (var r = client.execute(new org.apache.http.client.methods.HttpGet(
+                        "http://sparql_store:" + port + "/sparql?query=SELECT%20*%20%7B%7D"))) {
+                    assertEquals(200, r.getStatusLine().getStatusCode(), admitting.entries().toString());
+                } finally {
+                    client.release();
+                }
+            }
+            assertEquals(2, remote.hits.get(), remote.received.toString());
+
+            TimedServiceClient listed = new TimedServiceClient(2000, EndpointOptions.DEFAULT_MAX_SERVICE_BYTES, loopback,
+                    Destinations.parse(List.of("public", "http://listed.test:" + port)));
+            try {
+                var refused = assertThrows(TimedServiceClient.Refusal.class, () -> listed.execute(
+                        new org.apache.http.client.methods.HttpGet("http://a@b_c@listed.test:" + port + "/sparql?query=ASK%7B%7D")));
+                assertEquals(403, refused.status, refused.getMessage());
+                assertTrue(refused.getMessage().contains("not a public address"), refused.getMessage());
+            } finally {
+                listed.release();
+            }
+            assertEquals(2, remote.hits.get(), "b_c@listed.test was reached unchecked: " + remote.received);
+            assertTrue(resolved.contains("b_c@listed.test"), resolved.toString());
+        }
+        assertEquals(List.of("http://sparql_store:3030"),
+                EndpointOptions.defaults().withFederationDestinations(List.of("http://sparql_store:3030")).federationDestinations());
+        assertThrows(IllegalArgumentException.class,
+                () -> EndpointOptions.defaults().withFederationDestinations(List.of("http://a@b_c@listed.test")));
+        // under '*' a name java.net.URI cannot read is a request that fails, not a refusal
+        try (Endpoint fed = Endpoint.start(federated().withUpdateEnabled(true), 0)) {
+            var q = get(fed.url(), "SELECT * WHERE { SERVICE <http://no_such_host.invalid:9/sparql> { ?s ?p ?o } }", null);
+            assertEquals(502, q.statusCode(), q.body());
+            var load = post(fed.url(), "application/sparql-update", "LOAD SILENT <http://no_such_host.invalid:9/data.ttl>", null);
+            assertEquals(204, load.statusCode(), load.body());
+        }
+    }
+
+    /**
+     * A LOAD source over the cap is dropped at the cap: closing Apache's stream read the rest of
+     * the body first, so it was downloaded on until the deadline, a 504 instead of the cap's 502
+     * (found in co-review round 1 of #144).
+     */
+    @Test
+    void aLoadSourceOverTheCapIsDroppedAtTheCap() throws Exception {
+        var big = serve(java.util.Map.of("/big.ttl", ex -> {
+            ex.getResponseHeaders().add("Content-Type", "text/turtle");
+            ex.sendResponseHeaders(200, 50L << 20);
+            byte[] chunk = "<urn:ex:big> <urn:ex:p> \"0123456789abcdef\" .\n".repeat(1000).getBytes(StandardCharsets.UTF_8);
+            try {
+                ex.getResponseBody().write(chunk);
+                ex.getResponseBody().flush();
+                Thread.sleep(10_000);   // the rest never comes in time: only a drain would wait for it
+            } catch (InterruptedException | IOException e) {
+                // the endpoint hung up: as it should
+            }
+            ex.close();
+        }));
+        try (Endpoint ep = Endpoint.start(federated().withUpdateEnabled(true).withMaxBufferedBytes(4096)
+                .withMaxExecutionSeconds(5), 0)) {
+            long t0 = System.nanoTime();
+            var r = post(ep.url(), "application/sparql-update", "LOAD <" + base(big) + "/big.ttl>", null);
+            long ms = (System.nanoTime() - t0) / 1_000_000;
+            assertEquals(502, r.statusCode(), r.body());
+            assertTrue(r.body().contains("exceeds 4096 bytes"), r.body());
+            assertTrue(ms < 2_500, "the source was read on past the cap for " + ms + " ms");
+        } finally {
+            big.stop(0);
         }
     }
 

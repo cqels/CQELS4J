@@ -125,23 +125,44 @@ final class Destinations {
             throw new IllegalArgumentException("a federation destination is 'public', '*' or an http(s) origin such as "
                     + "https://example.org:8443, not '" + entry + "'");
         }
-        if (uri.getHost() == null || uri.getRawUserInfo() != null || uri.getRawQuery() != null
+        String authority = uri.getRawAuthority();
+        org.apache.http.HttpHost host = target(uri);
+        if (host == null || authority == null || authority.indexOf('@') >= 0 || uri.getRawQuery() != null
                 || uri.getRawFragment() != null || !(uri.getRawPath() == null || uri.getRawPath().isEmpty()
                 || uri.getRawPath().equals("/"))) {
             throw new IllegalArgumentException("a federation destination names an origin — scheme, host and port, "
                     + "nothing else — not '" + entry + "'");
         }
-        return key(scheme, uri.getHost(), uri.getPort());
+        return key(host);
+    }
+
+    /**
+     * The host a request to {@code uri} goes to, as Apache's client takes it from the URI
+     * ({@code URIUtils.extractHost}), or {@code null} when it names none. Decided on this, not on
+     * {@link URI#getHost()}: a name {@code java.net.URI} cannot read as a server ({@code sparql_store},
+     * a Docker Compose service) has no {@code getHost()} but is reached all the same, and
+     * {@code http://a@b_c@listed.test/} has {@code getHost()} {@code listed.test} once rebuilt, while
+     * Apache resolves {@code b_c@listed.test} (both found in co-review round 1 of #144).
+     */
+    static org.apache.http.HttpHost target(URI uri) {
+        if (uri == null) {
+            return null;
+        }
+        try {
+            return org.apache.http.client.utils.URIUtils.extractHost(uri);
+        } catch (RuntimeException e) {
+            return null;
+        }
     }
 
     /** "scheme://host:port" with the scheme's default port filled in, lower case, IPv6 without brackets. */
-    private static String key(String scheme, String host, int port) {
-        String s = scheme.toLowerCase(Locale.ROOT);
-        String h = host.toLowerCase(Locale.ROOT);
+    private static String key(org.apache.http.HttpHost host) {
+        String s = host.getSchemeName().toLowerCase(Locale.ROOT);
+        String h = host.getHostName().toLowerCase(Locale.ROOT);
         if (h.startsWith("[") && h.endsWith("]")) {
             h = h.substring(1, h.length() - 1);
         }
-        int p = port >= 0 ? port : s.equals("https") ? 443 : 80;
+        int p = host.getPort() >= 0 ? host.getPort() : s.equals("https") ? 443 : 80;
         return s + "://" + h + ":" + p;
     }
 
@@ -151,66 +172,81 @@ final class Destinations {
     }
 
     /**
-     * Whether a request to {@code scheme://host:port} ({@code port} -1 for the scheme's default) may
-     * be made, by name. A destination that is not http or https is {@link Decision#REFUSED}.
+     * Whether a request to {@code host} may be made, by name: the host name exactly as the client
+     * resolves it. A destination that is not http or https is {@link Decision#REFUSED}.
      */
-    Decision decide(String scheme, String host, int port) {
-        if (scheme == null || host == null || host.isEmpty()
-                || !("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme))) {
+    Decision decide(org.apache.http.HttpHost host) {
+        if (host == null || host.getHostName() == null || host.getHostName().isEmpty()
+                || !("http".equalsIgnoreCase(host.getSchemeName()) || "https".equalsIgnoreCase(host.getSchemeName()))) {
             return Decision.REFUSED;
         }
-        if (anywhere || origins.contains(key(scheme, host, port))) {
+        if (anywhere || origins.contains(key(host))) {
             return Decision.ADMITTED;
         }
         return publicHosts ? Decision.IF_PUBLIC : Decision.REFUSED;
     }
 
-    /** As {@link #decide(String, String, int)}, for a URI. */
+    /** As {@link #decide(org.apache.http.HttpHost)}, for {@code scheme://host:port} ({@code port} -1: the scheme's default). */
+    Decision decide(String scheme, String host, int port) {
+        return host == null || scheme == null ? Decision.REFUSED : decide(new org.apache.http.HttpHost(host, port, scheme));
+    }
+
+    /** As {@link #decide(org.apache.http.HttpHost)}, for the host a request to {@code uri} goes to. */
     Decision decide(URI uri) {
-        return uri == null ? Decision.REFUSED : decide(uri.getScheme(), uri.getHost(), uri.getPort());
+        return decide(target(uri));
     }
 
     /**
-     * Why a request to {@code uri} may not be made, or {@code null} when it may — by name, and, for a
-     * destination admitted only by {@code public}, not through a proxy (which would resolve it
+     * Why a request to {@code host} may not be made, or {@code null} when it may — by name, and, for
+     * a destination admitted only by {@code public}, not through a proxy (which would resolve it
      * where its addresses cannot be checked). The addresses themselves are checked when the
      * connection is opened, by {@link Dns}, for as long as {@link #CHECK} is set.
      */
-    String refusal(URI uri) {
-        Decision d = decide(uri);
+    String refusal(org.apache.http.HttpHost host) {
+        Decision d = decide(host);
         if (d == Decision.REFUSED) {
-            return "<" + origin(uri) + "> is not among the federation destinations (CQELS_SPARQL_FEDERATION_DESTINATIONS: "
+            return "<" + origin(host) + "> is not among the federation destinations (CQELS_SPARQL_FEDERATION_DESTINATIONS: "
                     + String.join(",", entries) + ")";
         }
-        if (d == Decision.IF_PUBLIC && proxied(uri)) {
-            return "<" + origin(uri) + "> would be reached through an HTTP proxy, which resolves it where this "
+        if (d == Decision.IF_PUBLIC && proxied(host)) {
+            return "<" + origin(host) + "> would be reached through an HTTP proxy, which resolves it where this "
                     + "endpoint cannot check that it is public; list it in CQELS_SPARQL_FEDERATION_DESTINATIONS";
         }
         return null;
     }
 
-    /** "scheme://host[:port]" of {@code uri}, for messages: never its path or query, which may carry data. */
+    /** As {@link #refusal(org.apache.http.HttpHost)}, for the host a request to {@code uri} goes to. */
+    String refusal(URI uri) {
+        return refusal(target(uri));
+    }
+
+    /** "scheme://host[:port]" of {@code host}, for messages: never a path or query, which may carry data. */
+    static String origin(org.apache.http.HttpHost host) {
+        return host == null ? "" : host.toURI();
+    }
+
+    /** As {@link #origin(org.apache.http.HttpHost)}, for {@code uri}; its scheme alone when it names no host. */
     static String origin(URI uri) {
-        if (uri == null) {
-            return "";
-        }
-        String host = uri.getHost() == null ? "" : uri.getHost();
-        return (uri.getScheme() == null ? "" : uri.getScheme()) + "://" + host + (uri.getPort() >= 0 ? ":" + uri.getPort() : "");
+        org.apache.http.HttpHost host = target(uri);
+        return host != null ? origin(host) : uri == null || uri.getScheme() == null ? "" : uri.getScheme() + ":";
     }
 
     /**
      * Whether the JVM's proxy settings route {@code uri} through an HTTP proxy, as Apache's
      * {@code SystemDefaultRoutePlanner} (what {@code useSystemProperties()} installs) decides it: the
-     * first DIRECT or HTTP entry of the default {@link java.net.ProxySelector}'s answer.
+     * first DIRECT or HTTP entry of the default {@link java.net.ProxySelector}'s answer for
+     * {@code new URI(host.toURI())}, which is what that planner asks it.
      */
-    static boolean proxied(URI uri) {
+    static boolean proxied(org.apache.http.HttpHost host) {
         java.net.ProxySelector selector = java.net.ProxySelector.getDefault();
         if (selector == null) {
             return false;
         }
         List<java.net.Proxy> proxies;
         try {
-            proxies = selector.select(uri);
+            proxies = selector.select(new URI(host.toURI()));
+        } catch (java.net.URISyntaxException e) {
+            return true;   // Apache's planner fails on it too; treated as proxied, which only ever refuses
         } catch (RuntimeException e) {
             return true;   // cannot tell: treated as proxied, which only ever refuses
         }

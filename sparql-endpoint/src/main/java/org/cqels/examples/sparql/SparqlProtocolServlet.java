@@ -1399,7 +1399,12 @@ public final class SparqlProtocolServlet extends HttpServlet {
         org.apache.http.impl.client.CloseableHttpClient client = loadClient();
         for (int redirects = 0; ; redirects++) {
             boolean redirected = redirects > 0;
-            String why = destinations.refusal(uri);
+            // the host Apache takes from the URI and resolves, decided on as it is (see Destinations.target)
+            org.apache.http.HttpHost target = Destinations.target(uri);
+            if (target == null) {
+                throw new IOException((redirected ? "redirected to <" : "<") + Destinations.origin(uri) + ">, which names no host");
+            }
+            String why = destinations.refusal(target);
             if (why != null) {
                 throw new DestinationRefused(redirected, (redirected ? "a redirect to " : "") + why);
             }
@@ -1424,8 +1429,8 @@ public final class SparqlProtocolServlet extends HttpServlet {
             if (timed) {
                 TimedServiceClient.BoundedDns.DEADLINE.set(deadline);
             }
-            Destinations.CHECK.set(destinations.decide(uri) == Destinations.Decision.IF_PUBLIC);
-            try (org.apache.http.client.methods.CloseableHttpResponse response = client.execute(get)) {
+            Destinations.CHECK.set(destinations.decide(target) == Destinations.Decision.IF_PUBLIC);
+            try (org.apache.http.client.methods.CloseableHttpResponse response = client.execute(target, get)) {
                 int status = response.getStatusLine().getStatusCode();
                 org.apache.http.Header location = response.getFirstHeader("Location");
                 if (REDIRECT_STATUSES.contains(status) && location != null) {
@@ -1453,10 +1458,20 @@ public final class SparqlProtocolServlet extends HttpServlet {
                 byte[] body = new byte[0];
                 org.apache.http.HttpEntity entity = response.getEntity();
                 if (entity != null) {
-                    try (InputStream in = entity.getContent()) {
+                    InputStream in = entity.getContent();
+                    try {
                         body = readCapped(in, options.maxBufferedBytes());
                     } finally {
-                        get.abort();   // whatever is left unread goes with the connection, never drained
+                        // Aborted before the stream is closed: closing Apache's stream reads the rest
+                        // of the body to its end, so a source over the cap was downloaded on until
+                        // the deadline (a 504, not the cap's 502) or, with no deadline, for as long
+                        // as it lasted (found in co-review round 1 of #144).
+                        get.abort();
+                        try {
+                            in.close();
+                        } catch (IOException ignored) {
+                            // aborted underneath: closed all the same
+                        }
                     }
                 }
                 java.util.Map<String, List<String>> headers = new java.util.TreeMap<>(String.CASE_INSENSITIVE_ORDER);

@@ -657,20 +657,15 @@ final class TimedServiceClient extends CloseableHttpClient {
      * match.
      */
     private void admit(HttpHost host, boolean redirected, Budget budget) throws Refusal {
-        String name = host.getHostName();
-        String bracketed = name.indexOf(':') >= 0 && !name.startsWith("[") ? "[" + name + "]" : name;
-        java.net.URI uri;
-        try {
-            uri = new java.net.URI(host.getSchemeName() + "://" + bracketed + (host.getPort() >= 0 ? ":" + host.getPort() : "") + "/");
-        } catch (java.net.URISyntaxException e) {
-            uri = null;
-        }
-        String why = uri == null ? "<" + host.getSchemeName() + "://" + name + "> is not a destination this endpoint can check"
-                : destinations.refusal(uri);
+        // Decided on the HttpHost Apache resolves and connects to, as it is: rebuilt as a
+        // java.net.URI, "sparql_store" had no host and was refused even under '*', and
+        // "b_c@listed.test" read as "listed.test" and skipped the address check (both found in
+        // co-review round 1 of #144).
+        String why = destinations.refusal(host);
         if (why != null) {
             throw trip(budget, new Refusal(redirected ? 502 : 403, (redirected ? "a SERVICE endpoint redirected to " : "SERVICE: ") + why));
         }
-        Destinations.CHECK.set(destinations.decide(uri) == Destinations.Decision.IF_PUBLIC);
+        Destinations.CHECK.set(destinations.decide(host) == Destinations.Decision.IF_PUBLIC);
     }
 
     private static final java.util.Set<Integer> REDIRECTS = java.util.Set.of(301, 302, 303, 307, 308);
