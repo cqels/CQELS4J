@@ -1105,6 +1105,9 @@ public final class SparqlProtocolServlet extends HttpServlet {
         } catch (DestinationRefused e) {
             fail(resp, e.status, "LOAD: " + e.getMessage());
             return;
+        } catch (Stopping e) {
+            fail(resp, HttpServletResponse.SC_SERVICE_UNAVAILABLE, "LOAD <" + source + ">: " + e.getMessage());
+            return;
         } catch (IOException | IllegalArgumentException e) {
             loadFailed(resp, load, HttpServletResponse.SC_BAD_GATEWAY, "LOAD <" + source + "> failed: " + e.getMessage());
             return;
@@ -1161,7 +1164,9 @@ public final class SparqlProtocolServlet extends HttpServlet {
                  | java.io.UncheckedIOException e) {
             // UncheckedIOException: the parser's own I/O failures, such as an XML encoding the
             // runtime does not know, which escaped LOAD SILENT as a 500 (found in co-review of #123)
-            if (contexts.refused != null) {
+            if (contexts.stopping) {
+                fail(resp, HttpServletResponse.SC_SERVICE_UNAVAILABLE, "LOAD <" + source + ">: the endpoint is stopping");
+            } else if (contexts.refused != null) {
                 fail(resp, HttpServletResponse.SC_BAD_GATEWAY, "LOAD <" + source + ">: a JSON-LD context: "
                         + contexts.refused.getMessage());
             } else if (contexts.timedOut) {
@@ -1201,6 +1206,8 @@ public final class SparqlProtocolServlet extends HttpServlet {
         volatile boolean timedOut;
         /** A context, or its alternate, that the federation destinations do not admit. */
         volatile DestinationRefused refused;
+        /** A context fetch {@link #destroy()} cut off. */
+        volatile boolean stopping;
 
         ContextLoader(long deadline) {
             this.deadline = deadline;
@@ -1251,6 +1258,9 @@ public final class SparqlProtocolServlet extends HttpServlet {
                 throw new com.github.jsonldjava.core.JsonLdError(refused, url + " did not answer in time");
             } catch (DestinationRefused e) {
                 this.refused = e;
+                throw new com.github.jsonldjava.core.JsonLdError(refused, e.getMessage());
+            } catch (Stopping e) {
+                stopping = true;
                 throw new com.github.jsonldjava.core.JsonLdError(refused, e.getMessage());
             } catch (IOException | IllegalArgumentException e) {
                 throw new com.github.jsonldjava.core.JsonLdError(refused, url + ": " + e.getMessage());
@@ -1373,6 +1383,28 @@ public final class SparqlProtocolServlet extends HttpServlet {
         }
     }
 
+    /**
+     * Called with the redirect count before each request of a LOAD fetch after the first; for
+     * tests, which stop the servlet there. Always {@code null} outside them.
+     */
+    static volatile java.util.function.IntConsumer beforeLoadHop;
+
+    /** A fetch the servlet's {@link #destroy()} cut off: answered 503, as any request that outlives it. */
+    static final class Stopping extends IOException {
+        Stopping() {
+            super("the endpoint is stopping");
+        }
+    }
+
+    /** The LOAD client's own credentials store, which must stay empty; for tests. */
+    private transient volatile org.apache.http.impl.client.BasicCredentialsProvider loadClientCredentials;
+
+    /** Whether the LOAD client's own credentials store holds anything; for tests. */
+    boolean loadClientHoldsCredentials() {
+        var c = loadClientCredentials;
+        return c != null && c.getCredentials(org.apache.http.auth.AuthScope.ANY) != null;
+    }
+
     /** Redirects one LOAD fetch follows, at most: what Java's {@code HttpClient}, used here before, followed. */
     static final int MAX_LOAD_REDIRECTS = 5;
 
@@ -1430,7 +1462,17 @@ public final class SparqlProtocolServlet extends HttpServlet {
                 TimedServiceClient.BoundedDns.DEADLINE.set(deadline);
             }
             Destinations.CHECK.set(destinations.decide(target) == Destinations.Decision.IF_PUBLIC);
-            try (org.apache.http.client.methods.CloseableHttpResponse response = client.execute(target, get)) {
+            java.util.function.IntConsumer hook = beforeLoadHop;
+            if (hook != null && redirected) {
+                hook.accept(redirects);
+            }
+            // A context of its own, with credentials of its own: Apache copies a URL's user:pass@
+            // into the context's credentials store, which was otherwise the client's, kept for its
+            // lifetime, one entry per host a client named (found in co-review round 2 of #144).
+            // Nothing is ever sent from it: the client has no authentication schemes.
+            org.apache.http.client.protocol.HttpClientContext context = org.apache.http.client.protocol.HttpClientContext.create();
+            context.setCredentialsProvider(new org.apache.http.impl.client.BasicCredentialsProvider());
+            try (org.apache.http.client.methods.CloseableHttpResponse response = client.execute(target, get, context)) {
                 int status = response.getStatusLine().getStatusCode();
                 org.apache.http.Header location = response.getFirstHeader("Location");
                 if (REDIRECT_STATUSES.contains(status) && location != null) {
@@ -1481,6 +1523,14 @@ public final class SparqlProtocolServlet extends HttpServlet {
                 return new Fetched(status, uri, java.net.http.HttpHeaders.of(headers, (k, v) -> true), body);
             } catch (Destinations.NotPublic e) {
                 throw new DestinationRefused(redirected, (redirected ? "a redirect to " : "") + e.getMessage());
+            } catch (IllegalStateException e) {
+                // "Connection pool shut down": destroy() closed the client under a fetch still in
+                // progress, which ended as a 500 (found in co-review round 2 of #144). A request
+                // already out when it did fails as an IOException instead; both are a 503 below.
+                if (loadClient != client) {
+                    throw new Stopping();
+                }
+                throw new IOException(e.getMessage(), e);
             } catch (IOException e) {
                 // The client's own socket, connect and name-lookup timeouts are the same deadline,
                 // and can come a moment before the timer: a timeout either way
@@ -1491,6 +1541,9 @@ public final class SparqlProtocolServlet extends HttpServlet {
                 }
                 if (timeout && timed) {
                     throw new java.util.concurrent.TimeoutException();
+                }
+                if (loadClient != client) {
+                    throw new Stopping();   // destroy() closed the client under this request: its connection with it
                 }
                 throw e;
             } finally {
@@ -1531,6 +1584,7 @@ public final class SparqlProtocolServlet extends HttpServlet {
         synchronized (this) {
             if (loadClient == null) {
                 int millis = (int) Math.min(Integer.MAX_VALUE, Math.max(0, options.maxExecutionSeconds()) * 1000L);
+                loadClientCredentials = new org.apache.http.impl.client.BasicCredentialsProvider();
                 loadClient = org.apache.http.impl.client.HttpClientBuilder.create()
                         .useSystemProperties()
                         .setDnsResolver(new Destinations.Dns(new TimedServiceClient.BoundedDns(
@@ -1541,7 +1595,7 @@ public final class SparqlProtocolServlet extends HttpServlet {
                         .disableCookieManagement()
                         .setDefaultAuthSchemeRegistry(org.apache.http.config.RegistryBuilder
                                 .<org.apache.http.auth.AuthSchemeProvider>create().build())
-                        .setDefaultCredentialsProvider(new org.apache.http.impl.client.BasicCredentialsProvider())
+                        .setDefaultCredentialsProvider(loadClientCredentials)
                         .setDefaultRequestConfig(org.apache.http.client.config.RequestConfig.custom()
                                 .setConnectTimeout(millis)
                                 .setConnectionRequestTimeout(millis)

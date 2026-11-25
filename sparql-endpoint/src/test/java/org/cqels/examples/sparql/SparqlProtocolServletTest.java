@@ -1280,12 +1280,83 @@ class SparqlProtocolServletTest {
                 EndpointOptions.defaults().withFederationDestinations(List.of("http://sparql_store:3030")).federationDestinations());
         assertThrows(IllegalArgumentException.class,
                 () -> EndpointOptions.defaults().withFederationDestinations(List.of("http://a@b_c@listed.test")));
-        // under '*' a name java.net.URI cannot read is a request that fails, not a refusal
-        try (Endpoint fed = Endpoint.start(federated().withUpdateEnabled(true), 0)) {
-            var q = get(fed.url(), "SELECT * WHERE { SERVICE <http://no_such_host.invalid:9/sparql> { ?s ?p ?o } }", null);
-            assertEquals(502, q.statusCode(), q.body());
-            var load = post(fed.url(), "application/sparql-update", "LOAD SILENT <http://no_such_host.invalid:9/data.ttl>", null);
+        // under '*' a name java.net.URI cannot read is a request that fails, not a refusal; a stub
+        // resolver, so that no name leaves this machine
+        TimedServiceClient unresolved = new TimedServiceClient(2000, EndpointOptions.DEFAULT_MAX_SERVICE_BYTES, host -> {
+            throw new java.net.UnknownHostException(host);
+        }, Destinations.ANY);
+        try {
+            assertThrows(TimedServiceClient.RemoteFailure.class, () -> unresolved.execute(new org.apache.http.client.methods.HttpGet(
+                    "http://no_such_host.invalid:9/sparql?query=SELECT%20*%20%7B%7D")));
+        } finally {
+            unresolved.release();
+        }
+        assertEquals(null, Destinations.ANY.refusal(URI.create("http://no_such_host.invalid:9/data.ttl")));
+    }
+
+    /**
+     * A {@code user:pass@} in a SERVICE or LOAD URL is never sent, and is not kept either: Apache
+     * copied it into the client's own credentials store, one entry per host, for the client's
+     * lifetime (found in co-review round 2 of #144).
+     */
+    @Test
+    void credentialsInAUrlAreNotKept() throws Exception {
+        try (Remote remote = new Remote()) {
+            TimedServiceClient client = new TimedServiceClient(2000);
+            try (var r = client.execute(new org.apache.http.client.methods.HttpGet("http://user:secret@127.0.0.1:"
+                    + remote.server.getAddress().getPort() + "/sparql?query=SELECT%20*%20%7B%7D"))) {
+                assertEquals(200, r.getStatusLine().getStatusCode());
+            } finally {
+                client.release();
+            }
+            assertFalse(client.holdsCredentials(), "the SERVICE client kept a URL's password");
+        }
+        java.util.List<String> authorization = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+        var data = serve(java.util.Map.of("/data.ttl", ex -> {
+            authorization.addAll(ex.getRequestHeaders().getOrDefault("Authorization", List.of()));
+            respond(200, "text/turtle", "<urn:ex:cred> <urn:ex:p> 1 .\n", 0).handle(ex);
+        }));
+        try (Endpoint ep = Endpoint.start(federated().withUpdateEnabled(true), 0)) {
+            var load = post(ep.url(), "application/sparql-update",
+                    "LOAD <http://user:secret@127.0.0.1:" + data.getAddress().getPort() + "/data.ttl>", null);
             assertEquals(204, load.statusCode(), load.body());
+            assertEquals(List.of(), authorization, "a URL's credentials were sent");
+            assertFalse(servletOf(ep.server()).loadClientHoldsCredentials(), "the LOAD client kept a URL's password");
+        } finally {
+            data.stop(0);
+        }
+    }
+
+    /**
+     * A LOAD that the servlet's {@code destroy()} cuts off between two requests is answered 503,
+     * as any request outliving it, not 500 "Connection pool shut down" — and {@code SILENT} does
+     * not turn it into a 204 (found in co-review round 2 of #144).
+     */
+    @Test
+    void aLoadCutOffByStoppingIsA503() throws Exception {
+        var source = serve(java.util.Map.of(
+                "/later.ttl", respond(302, "text/plain", "", 1_500, "Location", "/data.ttl"),
+                "/now.ttl", respond(302, "text/plain", "", 0, "Location", "/data.ttl"),
+                "/data.ttl", respond(200, "text/turtle", "<urn:ex:late> <urn:ex:p> 1 .\n", 0)));
+        try (Endpoint ep = Endpoint.start(federated().withUpdateEnabled(true), 0)) {
+            var pending = HttpClient.newHttpClient().sendAsync(HttpRequest.newBuilder(URI.create(ep.url()))
+                    .header("Content-Type", "application/sparql-update")
+                    .POST(HttpRequest.BodyPublishers.ofString("LOAD SILENT <" + base(source) + "/later.ttl>")).build(),
+                    HttpResponse.BodyHandlers.ofString());
+            Thread.sleep(500);   // the first request is out, waiting for its redirect
+            servletOf(ep.server()).destroy();
+            var r = pending.get(10, java.util.concurrent.TimeUnit.SECONDS);
+            assertEquals(503, r.statusCode(), r.body());
+        }
+        // stopped between two requests of one fetch: the next finds the client closed
+        try (Endpoint ep = Endpoint.start(federated().withUpdateEnabled(true), 0)) {
+            SparqlProtocolServlet servlet = servletOf(ep.server());
+            SparqlProtocolServlet.beforeLoadHop = hop -> servlet.destroy();
+            var r = post(ep.url(), "application/sparql-update", "LOAD SILENT <" + base(source) + "/now.ttl>", null);
+            assertEquals(503, r.statusCode(), r.body());
+        } finally {
+            SparqlProtocolServlet.beforeLoadHop = null;
+            source.stop(0);
         }
     }
 
@@ -1357,7 +1428,10 @@ class SparqlProtocolServletTest {
         assertEquals(List.of("public"), EndpointOptions.defaults().withFederationDestinations(List.of()).federationDestinations());
         assertEquals(List.of("public"), EndpointOptions.defaults().withFederationDestinations(null).federationDestinations());
         for (String bad : List.of("example.org", "ftp://example.org", "https://example.org/sparql", "https://user@example.org",
-                "https://example.org?x=1", "https://example.org#f", "https://", "http://exa mple.org")) {
+                "https://example.org?x=1", "https://example.org#f", "https://", "http://exa mple.org",
+                // round 2: no port a connection can use, no host
+                "http://internal.test:0", "http://internal.test:99999", "HTTP://*", "http://*.example.org",
+                "http://example.org.", "http://[zz::1]")) {
             assertThrows(IllegalArgumentException.class,
                     () -> EndpointOptions.defaults().withFederationDestinations(List.of(bad)), bad);
         }

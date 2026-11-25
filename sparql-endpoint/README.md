@@ -398,8 +398,9 @@ Still true, and worth knowing before enabling it:
 - **No credentials go to a remote, ever.** Not the client's own token or cookies, not a
   `user:pass@` in the endpoint's URL, not the JVM's `Authenticator`: the client has no
   authentication schemes, so even a remote that asks gets nothing (Apache sent the URL's
-  `user:pass` on its second request when challenged, before this). A remote that needs
-  credentials cannot be queried, and neither can one behind a proxy that does.
+  `user:pass` on its second request when challenged, before this). Nor is a URL's `user:pass@`
+  kept, by `SERVICE` or `LOAD`: it was stored in the client for the client's lifetime. A remote
+  that needs credentials cannot be queried, and neither can one behind a proxy that does.
 - **The JVM's proxy settings apply** (`http.proxyHost`, `https.proxyHost`, `http.nonProxyHosts`),
   to `LOAD` as to `SERVICE`. A destination that only `public` admits is refused through a proxy:
   the proxy resolves it, where its addresses cannot be checked. List it as an origin, or use `*`
@@ -428,7 +429,8 @@ a `LOAD` source names) may send requests. Each entry is one of:
 | `*` | anywhere, as before the list existed |
 
 Entries combine: `public,http://localhost:3030` reaches public hosts and one local service. A
-mistyped entry stops start-up.
+mistyped entry stops start-up: anything but `public`, `*` or an `http(s)` origin naming a host
+(a name or an IP literal; `http://*` is not a wildcard) and, if any, a port from 1 to 65535.
 
 - **Checked on the addresses connected to.** The check is in the name resolver the HTTP client
   connects through, so the addresses checked are the ones the socket is opened to: a name that

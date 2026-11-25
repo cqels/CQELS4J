@@ -303,7 +303,7 @@ final class TimedServiceClient extends CloseableHttpClient {
                     .disableAutomaticRetries()
                     .setDefaultAuthSchemeRegistry(org.apache.http.config.RegistryBuilder
                             .<org.apache.http.auth.AuthSchemeProvider>create().build())
-                    .setDefaultCredentialsProvider(new org.apache.http.impl.client.BasicCredentialsProvider())
+                    .setDefaultCredentialsProvider(poolCredentials)
                     .setDefaultRequestConfig(RequestConfig.custom()
                             .setCookieSpec("standard")   // what RDF4J's own client sets
                             .setConnectTimeout(timeoutMillis)
@@ -312,6 +312,29 @@ final class TimedServiceClient extends CloseableHttpClient {
                     .build();
         }
         return pool;
+    }
+
+    /** The pool's own credentials store, which must stay empty; for tests. */
+    private final org.apache.http.impl.client.BasicCredentialsProvider poolCredentials =
+            new org.apache.http.impl.client.BasicCredentialsProvider();
+
+    /** Whether the pool's own credentials store holds anything; for tests. */
+    boolean holdsCredentials() {
+        return poolCredentials.getCredentials(org.apache.http.auth.AuthScope.ANY) != null;
+    }
+
+    /**
+     * {@code context} with a credentials store of its own for one request. Apache copies a URL's
+     * {@code user:pass@} into the context's store, which was otherwise the pool's, kept for its
+     * lifetime: one entry per host named, passwords included (found in co-review round 2 of #144).
+     * Nothing is ever sent from it, since there are no authentication schemes.
+     */
+    private static HttpContext ownCredentials(HttpContext context) {
+        org.apache.http.client.protocol.HttpClientContext own = context == null
+                ? org.apache.http.client.protocol.HttpClientContext.create()
+                : org.apache.http.client.protocol.HttpClientContext.adapt(context);
+        own.setCredentialsProvider(new org.apache.http.impl.client.BasicCredentialsProvider());
+        return own;
     }
 
     /** Whether a connection pool is open; for tests. */
@@ -458,7 +481,7 @@ final class TimedServiceClient extends CloseableHttpClient {
                 admit(host, redirects > 0, budget);
                 CloseableHttpResponse response;
                 try {
-                    response = pool().execute(host, hop, context);
+                    response = pool().execute(host, hop, ownCredentials(context));
                 } catch (Refusal | RemoteFailure e) {
                     throw e;
                 } catch (Destinations.NotPublic e) {

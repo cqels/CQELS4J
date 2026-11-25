@@ -133,6 +133,18 @@ final class Destinations {
             throw new IllegalArgumentException("a federation destination names an origin — scheme, host and port, "
                     + "nothing else — not '" + entry + "'");
         }
+        // A port must be one a connection can use: Apache's route planner reads 0 as the scheme's
+        // default, so "http://internal.test:0" admitted port 80, which it does not name; 99999 could
+        // never match. And a host must be a name or an IP literal: "HTTP://*" read as "any http"
+        // admitted only a host named "*" (found in co-review round 2 of #144).
+        int port = host.getPort();
+        String name = host.getHostName();
+        String bare = name.startsWith("[") && name.endsWith("]") ? name.substring(1, name.length() - 1) : name;
+        if (port == 0 || port < -1 || port > 65535 || bare.isEmpty()
+                || !(bare.indexOf(':') >= 0 ? bare.matches("[0-9A-Fa-f:.]+") : bare.matches("[A-Za-z0-9_-]+(\\.[A-Za-z0-9_-]+)*"))) {
+            throw new IllegalArgumentException("a federation destination names a host and, if any, a port from 1 to "
+                    + "65535, not '" + entry + "'");
+        }
         return key(host);
     }
 
