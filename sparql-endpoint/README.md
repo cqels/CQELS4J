@@ -157,8 +157,8 @@ All settings are environment variables, named like the MCP server's `CQELS_MCP_H
 | `414` | a GET whose request line is over 8 KB (Jetty's limit); POST the query instead |
 | `415` | unknown POST `Content-Type` or charset |
 | `500` | evaluation failed, or the request ran out of heap (see *Memory*) |
-| `503` | execution limit exceeded by a query or an update (as Fuseki answers), a request arriving while the endpoint stops, every query slot busy (then with `Retry-After: 1`), a JSON-LD / NDJSON-LD result larger than `CQELS_SPARQL_MAX_BUFFERED_BYTES` with no `MAX_ROWS` set (with one, it is truncated instead), `SERVICE` while the repository's `SERVICE` client lacks the endpoint's limits (an embedding that skipped `limitOutboundRequests`), or a query needing more than `CQELS_SPARQL_MAX_SERVICE_REQUESTS` `SERVICE` requests |
-| `502` | a `LOAD` source failed: an HTTP error, a redirect to anything but `http`/`https`, a body over `CQELS_SPARQL_MAX_BUFFERED_BYTES`, or no parseable RDF (`LOAD SILENT`: `204`, nothing changed); a `SERVICE` endpoint failed: unreachable, an HTTP error (quoted: `answered HTTP 403: …`), a format other than SPARQL JSON, a malformed result, an answer that breaks off, a redirect off `http`/`https` or from `https` to `http`, or answers over `CQELS_SPARQL_MAX_SERVICE_BYTES` |
+| `503` | execution limit exceeded by a query or an update (as Fuseki answers), a request arriving while the endpoint stops, a `LOAD` the endpoint's stop cuts off (`SILENT` or not), every query slot busy (then with `Retry-After: 1`), a JSON-LD / NDJSON-LD result larger than `CQELS_SPARQL_MAX_BUFFERED_BYTES` with no `MAX_ROWS` set (with one, it is truncated instead), `SERVICE` while the repository's `SERVICE` client lacks the endpoint's limits (an embedding that skipped `limitOutboundRequests`), or a query needing more than `CQELS_SPARQL_MAX_SERVICE_REQUESTS` `SERVICE` requests |
+| `502` | a `LOAD` source failed: an HTTP error, a redirect to anything but `http`/`https`, a body over `CQELS_SPARQL_MAX_BUFFERED_BYTES`, or no parseable RDF (`LOAD SILENT`: `204`, nothing changed); a `SERVICE` or `LOAD` redirect, or a `LOAD` document's JSON-LD context, to a destination `CQELS_SPARQL_FEDERATION_DESTINATIONS` refuses (`SILENT` or not); a `SERVICE` endpoint failed: unreachable, an HTTP error (quoted: `answered HTTP 403: …`), a format other than SPARQL JSON, a malformed result, an answer that breaks off, a redirect off `http`/`https` or from `https` to `http`, or answers over `CQELS_SPARQL_MAX_SERVICE_BYTES` |
 | `504` | a `SERVICE` or `LOAD` target did not answer within `CQELS_SPARQL_MAX_EXECUTION_SECONDS` — for `SERVICE`, counted from the start of the query, for all its calls together |
 
 A result streams as it is produced, so the status is sent with the first buffer. If the
@@ -430,7 +430,9 @@ a `LOAD` source names) may send requests. Each entry is one of:
 
 Entries combine: `public,http://localhost:3030` reaches public hosts and one local service. A
 mistyped entry stops start-up: anything but `public`, `*` or an `http(s)` origin naming a host
-(a name or an IP literal; `http://*` is not a wildcard) and, if any, a port from 1 to 65535.
+and, if any, a port written as digits from 1 to 65535. A host is an IPv4 literal, an IPv6
+literal without a zone id, or ASCII dot-separated labels of letters, digits, `-` and `_` with
+no trailing dot (an internationalized name in its `xn--` form); `http://*` is not a wildcard.
 
 - **Checked on the addresses connected to.** The check is in the name resolver the HTTP client
   connects through, so the addresses checked are the ones the socket is opened to: a name that

@@ -121,7 +121,8 @@ import java.util.function.Supplier;
  * HEAD, POST and OPTIONS; 406 no acceptable result format; 408 body not
  * received within {@code maxUploadSeconds}; 413 body over the limit; 415 unknown POST content
  * type or charset; 500 evaluation failure or the heap exhausted; 503 execution time exceeded or
- * every query slot busy (then with {@code Retry-After}); 502 a SERVICE or LOAD target failed, or
+ * every query slot busy (then with {@code Retry-After}), or a LOAD cut off by {@link #destroy()};
+ * 502 a SERVICE or LOAD target failed, or
  * redirected to a destination refused; 504 a SERVICE or LOAD target did not
  * answer in time. A failure after the response is committed — the execution limit tripping
  * mid-stream — aborts the response instead.

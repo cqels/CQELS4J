@@ -1431,9 +1431,16 @@ class SparqlProtocolServletTest {
                 "https://example.org?x=1", "https://example.org#f", "https://", "http://exa mple.org",
                 // round 2: no port a connection can use, no host
                 "http://internal.test:0", "http://internal.test:99999", "HTTP://*", "http://*.example.org",
-                "http://example.org.", "http://[zz::1]")) {
+                "http://example.org.", "http://[zz::1]",
+                // round 3: a port written otherwise than as digits ("-1" read as no port: port 80)
+                "http://internal.test:-1", "http://sparql_store:-1", "http://sparql_store:+3030")) {
             assertThrows(IllegalArgumentException.class,
                     () -> EndpointOptions.defaults().withFederationDestinations(List.of(bad)), bad);
+        }
+        // what the README says is accepted
+        for (String good : List.of("http://xn--bcher-kva.example", "http://single", "HTTP://UPPER.example:8080",
+                "http://10.0.0.5:8080", "http://[::ffff:10.0.0.1]:3030", "http://sparql_store:3030", "http://host:")) {
+            EndpointOptions.defaults().withFederationDestinations(List.of(good));
         }
         Destinations d = Destinations.parse(List.of("HTTPS://Example.ORG:443/", "http://[::1]:3030", "http://10.0.0.5"));
         assertEquals(Destinations.Decision.ADMITTED, d.decide(URI.create("https://example.org/sparql")));

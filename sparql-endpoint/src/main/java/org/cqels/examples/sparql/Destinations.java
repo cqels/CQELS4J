@@ -138,6 +138,13 @@ final class Destinations {
         // never match. And a host must be a name or an IP literal: "HTTP://*" read as "any http"
         // admitted only a host named "*" (found in co-review round 2 of #144).
         int port = host.getPort();
+        // and the port as written: digits only. Apache reads a registry authority's port with
+        // Integer.parseInt, so "sparql_store:-1" was port -1, "no port", and admitted port 80
+        // (found in co-review round 3 of #144)
+        int colon = authority.lastIndexOf(':');
+        if (colon > authority.lastIndexOf(']') && !authority.substring(colon + 1).matches("[0-9]*")) {
+            port = 0;   // refused below
+        }
         String name = host.getHostName();
         String bare = name.startsWith("[") && name.endsWith("]") ? name.substring(1, name.length() - 1) : name;
         if (port == 0 || port < -1 || port > 65535 || bare.isEmpty()
