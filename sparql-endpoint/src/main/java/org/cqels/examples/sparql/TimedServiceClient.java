@@ -159,9 +159,12 @@ final class TimedServiceClient extends CloseableHttpClient {
     /** The proxy selector {@link #pool} routes by, captured with it; guarded by this. */
     private java.net.ProxySelector routes;
 
-    private synchronized java.net.ProxySelector routes() {
-        pool();
-        return routes;
+    /** A connection pool and the proxy selector its route planner was built over. */
+    private record Pool(CloseableHttpClient client, java.net.ProxySelector routes) { }
+
+    /** The current pool and its selector, read together. */
+    private synchronized Pool pooled() {
+        return new Pool(pool(), routes);
     }
 
     private final org.apache.http.conn.DnsResolver dns;
@@ -487,11 +490,21 @@ final class TimedServiceClient extends CloseableHttpClient {
                 throw timedOut(new IOException("deadline reached before the request was sent"), timeoutUsed, budget);
             }
             for (int redirects = 0; ; redirects++) {
-                admit(host, redirects > 0, budget);
+                // The pool and the selector it routes by, taken together: checked against one
+                // selector and sent through a pool rebuilt over another after a release() in
+                // between, a destination only 'public' admits went through a proxy unchecked
+                // (found in co-review round 5 of #144). A pool released meanwhile fails the request.
+                Pool sending = pooled();
+                admit(host, redirects > 0, budget, sending.routes());
                 CloseableHttpResponse response;
                 try {
-                    response = pool().execute(host, hop, ownCredentials(context));
+                    response = sending.client().execute(host, hop, ownCredentials(context));
                 } catch (Refusal | RemoteFailure e) {
+                    throw e;
+                } catch (IllegalStateException e) {
+                    if (pooled().client() != sending.client()) {
+                        throw new RemoteFailure("the SERVICE client's connections were released while the request was made");
+                    }
                     throw e;
                 } catch (Destinations.NotPublic e) {
                     // refused by the resolver, on the addresses the connection would have used
@@ -688,12 +701,12 @@ final class TimedServiceClient extends CloseableHttpClient {
      * {@link #refusedRedirect} answers. Tripped either way: SILENT must not turn it into an empty
      * match.
      */
-    private void admit(HttpHost host, boolean redirected, Budget budget) throws Refusal {
+    private void admit(HttpHost host, boolean redirected, Budget budget, java.net.ProxySelector routes) throws Refusal {
         // Decided on the HttpHost Apache resolves and connects to, as it is: rebuilt as a
         // java.net.URI, "sparql_store" had no host and was refused even under '*', and
         // "b_c@listed.test" read as "listed.test" and skipped the address check (both found in
         // co-review round 1 of #144).
-        String why = destinations.refusal(host, routes());
+        String why = destinations.refusal(host, routes);
         if (why != null) {
             throw trip(budget, new Refusal(redirected ? 502 : 403, (redirected ? "a SERVICE endpoint redirected to " : "SERVICE: ") + why));
         }

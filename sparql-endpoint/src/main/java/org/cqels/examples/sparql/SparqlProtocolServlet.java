@@ -1162,7 +1162,9 @@ public final class SparqlProtocolServlet extends HttpServlet {
                 }
             });
         } catch (org.eclipse.rdf4j.rio.RDFParseException | org.eclipse.rdf4j.rio.RDFHandlerException
-                 | java.io.UncheckedIOException e) {
+                 | java.io.UncheckedIOException | IllegalArgumentException e) {
+            // IllegalArgumentException: a base IRI the parser refuses, the source's own URL; a
+            // remote's doing, not the client's 400 (found in co-review round 5 of #144)
             // UncheckedIOException: the parser's own I/O failures, such as an XML encoding the
             // runtime does not know, which escaped LOAD SILENT as a 500 (found in co-review of #123)
             if (contexts.stopping) {
@@ -1436,6 +1438,15 @@ public final class SparqlProtocolServlet extends HttpServlet {
         for (int redirects = 0; ; redirects++) {
             boolean redirected = redirects > 0;
             // the host Apache takes from the URI and resolves, decided on as it is (see Destinations.target)
+            // Only a URL with a server authority java.net.URI reads, and a port in range, as Java's
+            // HttpClient (used here before) required. Apache's extractHost reads anything else
+            // leniently — ":-2" as no port (port 80), ":+8080" as 8080, "localhost%3a8080" decoded —
+            // and LOAD went where the URL did not say, or answered a remote's bad redirect with the
+            // client's 400 (found in co-review round 5 of #144). SERVICE has explicitPortValid for this.
+            if (uri.getHost() == null || uri.getPort() == 0 || uri.getPort() > 65535) {
+                throw new IOException((redirected ? "redirected to <" : "<") + Destinations.origin(uri)
+                        + ">, which is not a URL with a host and a port that can be fetched");
+            }
             org.apache.http.HttpHost target = Destinations.target(uri);
             if (target == null) {
                 throw new IOException((redirected ? "redirected to <" : "<") + Destinations.origin(uri) + ">, which names no host");

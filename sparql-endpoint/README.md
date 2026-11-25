@@ -402,8 +402,10 @@ Still true, and worth knowing before enabling it:
   kept, by `SERVICE` or `LOAD`: it was stored in the client for the client's lifetime. A remote
   that needs credentials cannot be queried, and neither can one behind a proxy that does.
 - **The JVM's proxy settings apply** (`http.proxyHost`, `https.proxyHost`, `http.nonProxyHosts`),
-  to `LOAD` as to `SERVICE`, as they stand when each client is first used: a later
-  `ProxySelector.setDefault` does not reroute it. A destination that only `public` admits is refused through a proxy:
+  to `LOAD` as to `SERVICE`. Each client keeps the default `ProxySelector` it was built with
+  (when first used, and again after a Jetty restart): the proxy properties are read through it
+  on every request, but a later `ProxySelector.setDefault` does not reroute a client until it is
+  rebuilt. A destination that only `public` admits is refused through a proxy:
   the proxy resolves it, where its addresses cannot be checked. List it as an origin, or use `*`
   and let the proxy enforce its own policy.
   A proxy is the operator's to choose, so it is trusted further than a remote: when an `https`

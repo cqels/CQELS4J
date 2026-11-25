@@ -1438,6 +1438,95 @@ class SparqlProtocolServletTest {
     }
 
     /**
+     * LOAD fetches only a URL with a server authority and a port in range, as Java's client did:
+     * Apache reads the rest leniently, so a redirect to {@code :-2} went to port 80, one to
+     * {@code :+PORT} was fetched and its base IRI then failed the parser as the client's 400,
+     * SILENT or not, and {@code localhost%3aPORT} was decoded and loaded (found in co-review round 5
+     * of #144). Each is a failed source again: 502, and 204 under SILENT.
+     */
+    @Test
+    void loadFetchesOnlyUrlsWithAServerAuthority() throws Exception {
+        java.util.concurrent.atomic.AtomicInteger fetched = new java.util.concurrent.atomic.AtomicInteger();
+        var source = serve(java.util.Map.of(
+                "/ok.ttl", ex -> {
+                    fetched.incrementAndGet();
+                    respond(200, "text/turtle", "<urn:ex:lenient> <urn:ex:p> 1 .\n", 0).handle(ex);
+                },
+                "/neg", respond(302, "text/plain", "", 0, "Location", "http://127.0.0.1:-2/ok.ttl"),
+                "/plus", ex -> respond(302, "text/plain", "", 0, "Location",
+                        "http://127.0.0.1:+" + ex.getLocalAddress().getPort() + "/ok.ttl").handle(ex)));
+        try (Endpoint fed = Endpoint.start(federated().withUpdateEnabled(true), 0)) {
+            for (String iri : List.of(base(source) + "/neg", base(source) + "/plus",
+                    "http://localhost%3a" + source.getAddress().getPort() + "/ok.ttl")) {
+                var load = post(fed.url(), "application/sparql-update", "LOAD <" + iri + ">", null);
+                assertEquals(502, load.statusCode(), iri + ": " + load.body());
+                assertTrue(load.body().contains("not a URL with a host and a port"), load.body());
+                var silent = post(fed.url(), "application/sparql-update", "LOAD SILENT <" + iri + "> INTO GRAPH <urn:ex:g>", null);
+                assertEquals(204, silent.statusCode(), iri + ": " + silent.body());
+            }
+            assertEquals(0, fetched.get(), "a URL read leniently was fetched");
+            assertFalse(ask(fed.url(), "ASK { { <urn:ex:lenient> ?p ?o } UNION { GRAPH ?g { <urn:ex:lenient> ?p ?o } } }"));
+        } finally {
+            source.stop(0);
+        }
+    }
+
+    /**
+     * A SERVICE request is checked against the selector of the pool that sends it. A release()
+     * between the check and the send rebuilt the pool over another default selector, and a
+     * destination only {@code public} admits, checked as direct, went through a proxy (found in
+     * co-review round 5 of #144). Now a pool released meanwhile fails the request.
+     */
+    @Test
+    void aServiceRequestIsSentByThePoolItWasCheckedFor() throws Exception {
+        java.net.ProxySelector before = java.net.ProxySelector.getDefault();
+        java.util.List<String> resolved = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+        TimedServiceClient[] holder = new TimedServiceClient[1];
+        java.net.ProxySelector viaProxy = new java.net.ProxySelector() {
+            @Override
+            public List<java.net.Proxy> select(URI uri) {
+                return List.of(new java.net.Proxy(java.net.Proxy.Type.HTTP,
+                        java.net.InetSocketAddress.createUnresolved("proxy.probe", 3128)));
+            }
+
+            @Override
+            public void connectFailed(URI uri, java.net.SocketAddress sa, IOException ioe) {
+            }
+        };
+        // direct, but its first answer stands in for another thread releasing the pool and
+        // changing the JVM's default between the check and the send
+        java.net.ProxySelector racing = new java.net.ProxySelector() {
+            private final java.util.concurrent.atomic.AtomicBoolean first = new java.util.concurrent.atomic.AtomicBoolean(true);
+
+            @Override
+            public List<java.net.Proxy> select(URI uri) {
+                if (first.getAndSet(false)) {
+                    holder[0].release();
+                    java.net.ProxySelector.setDefault(viaProxy);
+                }
+                return List.of(java.net.Proxy.NO_PROXY);
+            }
+
+            @Override
+            public void connectFailed(URI uri, java.net.SocketAddress sa, IOException ioe) {
+            }
+        };
+        java.net.ProxySelector.setDefault(racing);
+        holder[0] = new TimedServiceClient(2000, EndpointOptions.DEFAULT_MAX_SERVICE_BYTES, host -> {
+            resolved.add(host);
+            return new java.net.InetAddress[] {java.net.InetAddress.getByName("127.0.0.1")};
+        }, Destinations.PUBLIC_ONLY);
+        try {
+            assertThrows(TimedServiceClient.RemoteFailure.class, () -> holder[0].execute(
+                    new org.apache.http.client.methods.HttpGet("http://far.probe/sparql?query=SELECT%20*%20%7B%7D")));
+            assertEquals(List.of(), resolved, "the request went out through a pool it was not checked for");
+        } finally {
+            java.net.ProxySelector.setDefault(before);
+            holder[0].release();
+        }
+    }
+
+    /**
      * A LOAD source over the cap is dropped at the cap: closing Apache's stream read the rest of
      * the body first, so it was downloaded on until the deadline, a 504 instead of the cap's 502
      * (found in co-review round 1 of #144).
