@@ -62,6 +62,11 @@ final class TimedServiceClient extends CloseableHttpClient {
      */
     static volatile java.util.function.Consumer<HttpRequest> beforePublish;
 
+    /** Runs {@code abort} after {@code nanos} on the deadline timer; the servlet's LOAD fetch uses it too. */
+    static ScheduledFuture<?> schedule(Runnable abort, long nanos) {
+        return DEADLINES.schedule(abort, nanos, TimeUnit.NANOSECONDS);
+    }
+
     /** Deadlines armed and not yet fired or cancelled; for tests. */
     static int armedDeadlines() {
         return DEADLINES.getQueue().size();
@@ -154,10 +159,15 @@ final class TimedServiceClient extends CloseableHttpClient {
 
     private final org.apache.http.conn.DnsResolver dns;
 
+    /** Where requests may go; see {@link Destinations}. */
+    private final Destinations destinations;
+
+    /** For tests: SERVICE requests go anywhere ({@code *}), to the test's own loopback servers. */
     TimedServiceClient(int timeoutMillis) {
         this(timeoutMillis, EndpointOptions.DEFAULT_MAX_SERVICE_BYTES);
     }
 
+    /** For tests, as {@link #TimedServiceClient(int)}. */
     TimedServiceClient(int timeoutMillis, long maxResponseBytes) {
         this(timeoutMillis, maxResponseBytes, org.apache.http.impl.conn.SystemDefaultDnsResolver.INSTANCE);
     }
@@ -167,12 +177,20 @@ final class TimedServiceClient extends CloseableHttpClient {
         this(timeoutMillis, EndpointOptions.DEFAULT_MAX_SERVICE_BYTES, dns);
     }
 
+    /** For tests, as {@link #TimedServiceClient(int)}. */
     TimedServiceClient(int timeoutMillis, long maxResponseBytes, org.apache.http.conn.DnsResolver dns) {
+        this(timeoutMillis, maxResponseBytes, dns, Destinations.ANY);
+    }
+
+    TimedServiceClient(int timeoutMillis, long maxResponseBytes, org.apache.http.conn.DnsResolver dns,
+                       Destinations destinations) {
         this.timeoutMillis = timeoutMillis;
         this.maxResponseBytes = maxResponseBytes;
+        this.destinations = destinations;
         // always wrapped: a query's budget can set a deadline even when this client has none
-        // (found in co-review of #129); with neither, the lookup runs unbounded as before
-        this.dns = new BoundedDns(dns, timeoutMillis);
+        // (found in co-review of #129); with neither, the lookup runs unbounded as before. The
+        // destination check is outermost, on the thread that set Destinations.CHECK.
+        this.dns = new Destinations.Dns(new BoundedDns(dns, timeoutMillis));
     }
 
     /**
@@ -437,11 +455,16 @@ final class TimedServiceClient extends CloseableHttpClient {
                 throw timedOut(new IOException("deadline reached before the request was sent"), timeoutUsed, budget);
             }
             for (int redirects = 0; ; redirects++) {
+                admit(host, redirects > 0, budget);
                 CloseableHttpResponse response;
                 try {
                     response = pool().execute(host, hop, context);
                 } catch (Refusal | RemoteFailure e) {
                     throw e;
+                } catch (Destinations.NotPublic e) {
+                    // refused by the resolver, on the addresses the connection would have used
+                    throw trip(budget, new Refusal(redirects > 0 ? 502 : 403, (redirects > 0
+                            ? "a SERVICE endpoint redirected to " : "SERVICE: ") + e.getMessage()));
                 } catch (IOException e) {
                     throw failure(e, fired, timeoutUsed, budget, host, "could not be reached");
                 } catch (Error e) {
@@ -621,7 +644,33 @@ final class TimedServiceClient extends CloseableHttpClient {
         } finally {
             deadline.cancel(false);
             BoundedDns.DEADLINE.remove();
+            Destinations.CHECK.remove();
         }
+    }
+
+    /**
+     * Refuses a request to {@code host} that {@link #destinations} does not admit by name, and
+     * otherwise sets {@link Destinations#CHECK} for its connection: on, when only {@code public}
+     * admits it, so that the resolver refuses it unless every address is public. A refused first
+     * request is the caller's 403; a refused redirect is the remote's doing, a 502, as
+     * {@link #refusedRedirect} answers. Tripped either way: SILENT must not turn it into an empty
+     * match.
+     */
+    private void admit(HttpHost host, boolean redirected, Budget budget) throws Refusal {
+        String name = host.getHostName();
+        String bracketed = name.indexOf(':') >= 0 && !name.startsWith("[") ? "[" + name + "]" : name;
+        java.net.URI uri;
+        try {
+            uri = new java.net.URI(host.getSchemeName() + "://" + bracketed + (host.getPort() >= 0 ? ":" + host.getPort() : "") + "/");
+        } catch (java.net.URISyntaxException e) {
+            uri = null;
+        }
+        String why = uri == null ? "<" + host.getSchemeName() + "://" + name + "> is not a destination this endpoint can check"
+                : destinations.refusal(uri);
+        if (why != null) {
+            throw trip(budget, new Refusal(redirected ? 502 : 403, (redirected ? "a SERVICE endpoint redirected to " : "SERVICE: ") + why));
+        }
+        Destinations.CHECK.set(destinations.decide(uri) == Destinations.Decision.IF_PUBLIC);
     }
 
     private static final java.util.Set<Integer> REDIRECTS = java.util.Set.of(301, 302, 303, 307, 308);
