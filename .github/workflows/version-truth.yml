@@ -189,7 +189,8 @@ jobs:
       # Exit 3 means "could not run" (toolchain or mirror unreachable), not "the docs are
       # wrong" -- same convention as the gate's --online tier. Still fails, log says re-run.
       - run: scripts/ci/capability-probe.sh
-      # The examples' own unit tests (the RDF Message Log reader, org.cqels.examples.messages).
+      # The examples' own tests: the RDF Message Log reader (org.cqels.examples.messages) and
+      # DemoOutputTest, which runs every demo and compares its output with expected-output/.
       - run: mvn -q -B -f examples/pom.xml test
 
   # The SPARQL endpoint is the one project here with real product code — a servlet

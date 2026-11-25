@@ -33,8 +33,8 @@ import org.junit.jupiter.api.TestFactory;
  * properties cannot leak into another. Its standard output (not standard error, where the engine
  * logs) is compared with {@code src/test/resources/expected-output/<class>.txt}. Demos run four at
  * a time; {@code -Ddemo.parallel=N} changes that, for instance to check that none depends on timing
- * under load. Each demo JVM runs with locale en-US, time zone UTC and UTF-8, so the host's settings
- * do not change the output.
+ * under load. Each demo JVM runs with locale en-US, time zone UTC and UTF-8 output, so the host's
+ * settings do not change what it prints. Line endings are compared as LF, so a CRLF checkout passes.
  *
  * <p>When a demo's output changes on purpose, regenerate its file on JDK 17, the JDK CI uses, and
  * review the diff ({@code Double.toString} changed in JDK 19, and many demos print doubles):
@@ -53,6 +53,7 @@ class DemoOutputTest {
     private static final int PARALLEL = Integer.getInteger("demo.parallel", 4);
     private static final long TIMEOUT_SECONDS = 180;
     private static final Path CLASSES = Paths.get("target", "classes");
+    private static final Path SOURCES = Paths.get("src", "main", "java");
     private static final Path EXPECTED = Paths.get("src", "test", "resources", "expected-output");
     private static final Path ACTUAL = Paths.get("target", "demo-output");
     private static final boolean UPDATE = Boolean.getBoolean("expected.update");
@@ -80,7 +81,10 @@ class DemoOutputTest {
             if (!Files.exists(expectedFile)) {
                 fail("no expected output for " + e.getKey() + ": run with -Dexpected.update=true and review it");
             }
-            String expected = Files.readString(expectedFile, StandardCharsets.UTF_8);
+            // .gitattributes keeps these files LF, but a checkout made without it (or a tool that
+            // ignores it, with Git for Windows' core.autocrlf=true) has CRLF: compare as LF, as the
+            // demo's own output is
+            String expected = Files.readString(expectedFile, StandardCharsets.UTF_8).replace("\r\n", "\n");
             if (!expected.equals(run.stdout)) {
                 Files.createDirectories(ACTUAL);
                 Files.writeString(ACTUAL.resolve(e.getKey() + ".txt"), run.stdout, StandardCharsets.UTF_8);
@@ -121,6 +125,9 @@ class DemoOutputTest {
                 if (name.contains("$") || EXCLUDED.containsKey(name)) {
                     continue;
                 }
+                if (!Files.exists(SOURCES.resolve(CLASSES.relativize(p).toString().replaceAll("\\.class$", ".java")))) {
+                    continue;   // compiled earlier, source since deleted (no mvn clean): not a demo any more
+                }
                 Class<?> c;
                 try {
                     c = Class.forName(name, false, DemoOutputTest.class.getClassLoader());
@@ -150,9 +157,11 @@ class DemoOutputTest {
                     Paths.get(System.getProperty("java.home"), "bin", "java").toString(),
                     // demos format numbers with String.format, which follows the default locale
                     // (en_DE prints 64,0); pin locale, time zone and encoding so output is the same
-                    // on every machine
+                    // on every machine. From JDK 19 on, file.encoding no longer sets System.out's
+                    // charset (the host locale does: under LC_ALL=C every em dash prints as '?'),
+                    // so stdout.encoding and stderr.encoding are pinned too; JDK 17 ignores them.
                     "-Duser.language=en", "-Duser.country=US", "-Duser.timezone=UTC",
-                    "-Dfile.encoding=UTF-8",
+                    "-Dfile.encoding=UTF-8", "-Dstdout.encoding=UTF-8", "-Dstderr.encoding=UTF-8",
                     "-cp", System.getProperty("java.class.path"), demo)
                     .redirectOutput(out.toFile())
                     .redirectError(err.toFile())
