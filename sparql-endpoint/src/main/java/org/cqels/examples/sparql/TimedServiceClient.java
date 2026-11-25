@@ -156,6 +156,13 @@ final class TimedServiceClient extends CloseableHttpClient {
         }
     };
     private CloseableHttpClient pool;   // guarded by this
+    /** The proxy selector {@link #pool} routes by, captured with it; guarded by this. */
+    private java.net.ProxySelector routes;
+
+    private synchronized java.net.ProxySelector routes() {
+        pool();
+        return routes;
+    }
 
     private final org.apache.http.conn.DnsResolver dns;
 
@@ -296,8 +303,10 @@ final class TimedServiceClient extends CloseableHttpClient {
      */
     private synchronized CloseableHttpClient pool() {
         if (pool == null) {
+            routes = Destinations.currentSelector();
             pool = HttpClientBuilder.create()
                     .useSystemProperties()
+                    .setRoutePlanner(Destinations.routePlanner(routes))
                     .setDnsResolver(dns)
                     .disableRedirectHandling()
                     .disableAutomaticRetries()
@@ -684,7 +693,7 @@ final class TimedServiceClient extends CloseableHttpClient {
         // java.net.URI, "sparql_store" had no host and was refused even under '*', and
         // "b_c@listed.test" read as "listed.test" and skipped the address check (both found in
         // co-review round 1 of #144).
-        String why = destinations.refusal(host);
+        String why = destinations.refusal(host, routes());
         if (why != null) {
             throw trip(budget, new Refusal(redirected ? 502 : 403, (redirected ? "a SERVICE endpoint redirected to " : "SERVICE: ") + why));
         }

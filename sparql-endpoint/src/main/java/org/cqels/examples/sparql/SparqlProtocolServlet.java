@@ -1397,6 +1397,9 @@ public final class SparqlProtocolServlet extends HttpServlet {
         }
     }
 
+    /** The proxy selector the LOAD client routes by, captured with it (set before the client is published). */
+    private transient volatile java.net.ProxySelector loadRoutes;
+
     /** The LOAD client's own credentials store, which must stay empty; for tests. */
     private transient volatile org.apache.http.impl.client.BasicCredentialsProvider loadClientCredentials;
 
@@ -1437,7 +1440,7 @@ public final class SparqlProtocolServlet extends HttpServlet {
             if (target == null) {
                 throw new IOException((redirected ? "redirected to <" : "<") + Destinations.origin(uri) + ">, which names no host");
             }
-            String why = destinations.refusal(target);
+            String why = destinations.refusal(target, loadRoutes);
             if (why != null) {
                 throw new DestinationRefused(redirected, (redirected ? "a redirect to " : "") + why);
             }
@@ -1586,8 +1589,10 @@ public final class SparqlProtocolServlet extends HttpServlet {
             if (loadClient == null) {
                 int millis = (int) Math.min(Integer.MAX_VALUE, Math.max(0, options.maxExecutionSeconds()) * 1000L);
                 loadClientCredentials = new org.apache.http.impl.client.BasicCredentialsProvider();
+                loadRoutes = Destinations.currentSelector();
                 loadClient = org.apache.http.impl.client.HttpClientBuilder.create()
                         .useSystemProperties()
+                        .setRoutePlanner(Destinations.routePlanner(loadRoutes))
                         .setDnsResolver(new Destinations.Dns(new TimedServiceClient.BoundedDns(
                                 org.apache.http.impl.conn.SystemDefaultDnsResolver.INSTANCE, millis)))
                         .disableRedirectHandling()
@@ -1772,7 +1777,10 @@ public final class SparqlProtocolServlet extends HttpServlet {
                 } catch (java.net.URISyntaxException e) {
                     return;   // left to the request, which fails on it
                 }
-                if (destinations.decide(uri) == Destinations.Decision.REFUSED) {
+                // a host-less IRI is left to the request, which fails on it (LOAD SILENT: 204, as
+                // before); refused here, it was "<> is not among the destinations" even under '*'
+                // (found in co-review round 4 of #144)
+                if (Destinations.target(uri) != null && destinations.decide(uri) == Destinations.Decision.REFUSED) {
                     found[0] = what + ": " + destinations.refusal(uri);
                 }
             }

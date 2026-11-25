@@ -402,7 +402,8 @@ Still true, and worth knowing before enabling it:
   kept, by `SERVICE` or `LOAD`: it was stored in the client for the client's lifetime. A remote
   that needs credentials cannot be queried, and neither can one behind a proxy that does.
 - **The JVM's proxy settings apply** (`http.proxyHost`, `https.proxyHost`, `http.nonProxyHosts`),
-  to `LOAD` as to `SERVICE`. A destination that only `public` admits is refused through a proxy:
+  to `LOAD` as to `SERVICE`, as they stand when each client is first used: a later
+  `ProxySelector.setDefault` does not reroute it. A destination that only `public` admits is refused through a proxy:
   the proxy resolves it, where its addresses cannot be checked. List it as an origin, or use `*`
   and let the proxy enforce its own policy.
   A proxy is the operator's to choose, so it is trusted further than a remote: when an `https`
@@ -432,7 +433,8 @@ Entries combine: `public,http://localhost:3030` reaches public hosts and one loc
 mistyped entry stops start-up: anything but `public`, `*` or an `http(s)` origin naming a host
 and, if any, a port written as digits from 1 to 65535. A host is an IPv4 literal, an IPv6
 literal without a zone id, or ASCII dot-separated labels of letters, digits, `-` and `_` with
-no trailing dot (an internationalized name in its `xn--` form); `http://*` is not a wildcard.
+no trailing dot (an internationalized name in its `xn--` form), with no percent-encoding
+anywhere; `http://*` is not a wildcard.
 
 - **Checked on the addresses connected to.** The check is in the name resolver the HTTP client
   connects through, so the addresses checked are the ones the socket is opened to: a name that

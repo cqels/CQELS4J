@@ -1361,6 +1361,83 @@ class SparqlProtocolServletTest {
     }
 
     /**
+     * Under {@code *}, an IRI that names no host is a request that fails, not a refusal: it was
+     * "&lt;&gt; is not among the federation destinations (…: *)", and {@code LOAD SILENT} of it a
+     * 403 where it had been a 204 (found in co-review round 4 of #144).
+     */
+    @Test
+    void aHostlessIriIsAFailureNotARefusal() throws Exception {
+        try (Endpoint fed = Endpoint.start(federated().withUpdateEnabled(true), 0)) {
+            for (String iri : List.of("http:///x.ttl", "http://@/x.ttl")) {
+                var silent = post(fed.url(), "application/sparql-update", "LOAD SILENT <" + iri + ">", null);
+                assertEquals(204, silent.statusCode(), iri + ": " + silent.body());
+                var load = post(fed.url(), "application/sparql-update", "LOAD <" + iri + ">", null);
+                assertEquals(502, load.statusCode(), iri + ": " + load.body());
+                assertFalse(load.body().contains("is not among"), load.body());
+            }
+        }
+    }
+
+    /**
+     * The proxy check asks the proxy selector the client routes by, captured when the client was
+     * built, as Apache's planner captures it: asking the JVM's current default, it disagreed with
+     * the route once the default changed — a destination only {@code public} admits passed as
+     * direct and went through the proxy, which resolves it unchecked (found in co-review round 4
+     * of #144). Here the proxy is on loopback, so the wrong path is refused too, but by the
+     * resolver ("not a public address"), not by the proxy rule.
+     */
+    @Test
+    void theProxyCheckAsksTheSelectorTheClientRoutesBy() throws Exception {
+        String far = "198.51.100.7";   // never connected to: refused before any connection
+        java.net.ProxySelector before = java.net.ProxySelector.getDefault();
+        java.net.ProxySelector viaProxy = new java.net.ProxySelector() {
+            @Override
+            public List<java.net.Proxy> select(URI uri) {
+                return far.equals(uri.getHost())
+                        ? List.of(new java.net.Proxy(java.net.Proxy.Type.HTTP, new java.net.InetSocketAddress("127.0.0.1", 9)))
+                        : List.of(java.net.Proxy.NO_PROXY);
+            }
+
+            @Override
+            public void connectFailed(URI uri, java.net.SocketAddress sa, IOException ioe) {
+            }
+        };
+        java.net.ProxySelector direct = new java.net.ProxySelector() {
+            @Override
+            public List<java.net.Proxy> select(URI uri) {
+                return List.of(java.net.Proxy.NO_PROXY);
+            }
+
+            @Override
+            public void connectFailed(URI uri, java.net.SocketAddress sa, IOException ioe) {
+            }
+        };
+        TimedServiceClient client = new TimedServiceClient(2000, EndpointOptions.DEFAULT_MAX_SERVICE_BYTES,
+                org.apache.http.impl.conn.SystemDefaultDnsResolver.INSTANCE, Destinations.PUBLIC_ONLY);
+        try (Endpoint ep = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true).withUpdateEnabled(true), 0)) {
+            java.net.ProxySelector.setDefault(viaProxy);
+            // the clients are built now, routing through the proxy for 'far'
+            var first = assertThrows(TimedServiceClient.Refusal.class, () -> client.execute(
+                    new org.apache.http.client.methods.HttpGet("http://" + far + "/sparql?query=SELECT%20*%20%7B%7D")));
+            assertTrue(first.getMessage().contains("proxy"), first.getMessage());
+            var firstLoad = post(ep.url(), "application/sparql-update", "LOAD <http://" + far + "/x.ttl>", null);
+            assertEquals(403, firstLoad.statusCode(), firstLoad.body());
+            assertTrue(firstLoad.body().contains("proxy"), firstLoad.body());
+
+            java.net.ProxySelector.setDefault(direct);   // the default changes; the clients' routes do not
+            var later = assertThrows(TimedServiceClient.Refusal.class, () -> client.execute(
+                    new org.apache.http.client.methods.HttpGet("http://" + far + "/sparql?query=SELECT%20*%20%7B%7D")));
+            assertTrue(later.getMessage().contains("proxy"), later.getMessage());
+            var laterLoad = post(ep.url(), "application/sparql-update", "LOAD <http://" + far + "/x.ttl>", null);
+            assertEquals(403, laterLoad.statusCode(), laterLoad.body());
+            assertTrue(laterLoad.body().contains("proxy"), laterLoad.body());
+        } finally {
+            java.net.ProxySelector.setDefault(before);
+            client.release();
+        }
+    }
+
+    /**
      * A LOAD source over the cap is dropped at the cap: closing Apache's stream read the rest of
      * the body first, so it was downloaded on until the deadline, a 504 instead of the cap's 502
      * (found in co-review round 1 of #144).
@@ -1433,7 +1510,9 @@ class SparqlProtocolServletTest {
                 "http://internal.test:0", "http://internal.test:99999", "HTTP://*", "http://*.example.org",
                 "http://example.org.", "http://[zz::1]",
                 // round 3: a port written otherwise than as digits ("-1" read as no port: port 80)
-                "http://internal.test:-1", "http://sparql_store:-1", "http://sparql_store:+3030")) {
+                "http://internal.test:-1", "http://sparql_store:-1", "http://sparql_store:+3030",
+                // round 4: the same, percent-encoded past the checks on the raw text
+                "http://localhost%3a-1", "http://sparql_store%3a-1", "http://localhost%3A+80", "http://a%40localhost:3030")) {
             assertThrows(IllegalArgumentException.class,
                     () -> EndpointOptions.defaults().withFederationDestinations(List.of(bad)), bad);
         }

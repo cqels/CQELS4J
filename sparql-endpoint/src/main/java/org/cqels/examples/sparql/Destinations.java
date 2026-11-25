@@ -127,7 +127,11 @@ final class Destinations {
         }
         String authority = uri.getRawAuthority();
         org.apache.http.HttpHost host = target(uri);
-        if (host == null || authority == null || authority.indexOf('@') >= 0 || uri.getRawQuery() != null
+        // No '%' either: Apache reads a registry authority decoded, so "localhost%3a-1" was port -1
+        // and "a%40localhost" userinfo, past the checks on the raw text (found in co-review round 4
+        // of #144). A host name has no use for one; an IPv6 zone id is refused anyway.
+        if (host == null || authority == null || authority.indexOf('@') >= 0 || authority.indexOf('%') >= 0
+                || uri.getRawQuery() != null
                 || uri.getRawFragment() != null || !(uri.getRawPath() == null || uri.getRawPath().isEmpty()
                 || uri.getRawPath().equals("/"))) {
             throw new IllegalArgumentException("a federation destination names an origin — scheme, host and port, "
@@ -222,12 +226,26 @@ final class Destinations {
      * connection is opened, by {@link Dns}, for as long as {@link #CHECK} is set.
      */
     String refusal(org.apache.http.HttpHost host) {
+        return refusal(host, java.net.ProxySelector.getDefault());
+    }
+
+    /**
+     * As {@link #refusal(org.apache.http.HttpHost)}, with {@code selector} the proxy selector the
+     * client that will make the request routes by — captured when that client was built, as
+     * Apache's {@code SystemDefaultRoutePlanner} captures it — so that the check and the route
+     * cannot disagree when the JVM's default selector changes later (found in co-review round 4
+     * of #144).
+     */
+    String refusal(org.apache.http.HttpHost host, java.net.ProxySelector selector) {
+        if (host == null) {
+            return "the IRI names no host";
+        }
         Decision d = decide(host);
         if (d == Decision.REFUSED) {
             return "<" + origin(host) + "> is not among the federation destinations (CQELS_SPARQL_FEDERATION_DESTINATIONS: "
                     + String.join(",", entries) + ")";
         }
-        if (d == Decision.IF_PUBLIC && proxied(host)) {
+        if (d == Decision.IF_PUBLIC && proxied(host, selector)) {
             return "<" + origin(host) + "> would be reached through an HTTP proxy, which resolves it where this "
                     + "endpoint cannot check that it is public; list it in CQELS_SPARQL_FEDERATION_DESTINATIONS";
         }
@@ -251,13 +269,11 @@ final class Destinations {
     }
 
     /**
-     * Whether the JVM's proxy settings route {@code uri} through an HTTP proxy, as Apache's
-     * {@code SystemDefaultRoutePlanner} (what {@code useSystemProperties()} installs) decides it: the
-     * first DIRECT or HTTP entry of the default {@link java.net.ProxySelector}'s answer for
-     * {@code new URI(host.toURI())}, which is what that planner asks it.
+     * Whether {@code selector} routes {@code host} through an HTTP proxy, as Apache's
+     * {@code SystemDefaultRoutePlanner} decides it: the first DIRECT or HTTP entry of the selector's
+     * answer for {@code new URI(host.toURI())}, which is what that planner asks it.
      */
-    static boolean proxied(org.apache.http.HttpHost host) {
-        java.net.ProxySelector selector = java.net.ProxySelector.getDefault();
+    static boolean proxied(org.apache.http.HttpHost host, java.net.ProxySelector selector) {
         if (selector == null) {
             return false;
         }
@@ -278,6 +294,22 @@ final class Destinations {
             }
         }
         return false;
+    }
+
+    /**
+     * The route planner the outbound clients are built with: the JVM's default proxy selector as it
+     * is now, held — the same instance {@link #refusal(org.apache.http.HttpHost, java.net.ProxySelector)}
+     * is given for that client's requests. With no default selector, none is used.
+     */
+    static java.net.ProxySelector currentSelector() {
+        java.net.ProxySelector s = java.net.ProxySelector.getDefault();
+        return s != null ? s : java.net.ProxySelector.of(null);
+    }
+
+    /** Apache's system route planner over {@code selector}, fixed, not re-read from the JVM. */
+    static org.apache.http.conn.routing.HttpRoutePlanner routePlanner(java.net.ProxySelector selector) {
+        return new org.apache.http.impl.conn.SystemDefaultRoutePlanner(
+                org.apache.http.impl.conn.DefaultSchemePortResolver.INSTANCE, selector);
     }
 
     /**
