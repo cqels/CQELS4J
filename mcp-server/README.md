@@ -2,7 +2,7 @@
 
 This module packages the **published CQELS MCP server** — `org.cqels:cqels-mcp` on GitHub
 Packages — as a single runnable jar, wrapped in a thin launcher that seeds the same
-**electric-vehicle fleet / V2G** world the [`examples/`](../examples/) run. An MCP client
+**electric-vehicle fleet / V2G** world the demos in [`playground/`](../playground/) run. An MCP client
 (Claude Desktop, an IDE assistant, or any [Model Context Protocol](https://modelcontextprotocol.io/)
 agent) connects over **stdio** and gets the full production tool surface — agent memory
 (semantic / episodic / procedural / working), continuous CQELS-QL/Cypher stream queries, CEP,
@@ -10,7 +10,7 @@ RDFS/OWL reasoning, SHACL validation and standing SHACL invariants, ASP solving 
 ASP rules, decision lineage, and fail-closed governance — with a fleet knowledge graph already
 loaded, so there is something to query, watch, and reason over from the first tool call.
 
-The launcher ([`FleetMcpServerLauncher`](src/main/java/org/cqels/examples/mcp/FleetMcpServerLauncher.java))
+The launcher ([`FleetMcpServerLauncher`](src/main/java/org/cqels/playground/mcp/FleetMcpServerLauncher.java))
 does exactly two things — in an order that leaves no startup race:
 
 1. **Seeds the V2G world first.** It writes the examples' fleet background graph — three

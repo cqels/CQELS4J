@@ -43,9 +43,9 @@ PIN=2.0.0-alpha.18
 newfix() {
   local v=${1:-$PIN} d
   d=$(mktemp -d "$WORK/fix.XXXXXX")
-  mkdir -p "$d/examples" "$d/mcp-server" "$d/sparql-endpoint"
+  mkdir -p "$d/playground" "$d/mcp-server" "$d/sparql-endpoint"
 
-  for p in examples mcp-server; do
+  for p in playground mcp-server; do
     cat > "$d/$p/pom.xml" <<EOF
 <project>
     <properties>
@@ -492,7 +492,7 @@ prov "CQELS-QL_SPEC.md:346  '  since \`X\` registering … fails loud'" \
   '  since `2.0.0-alpha.13` registering a query containing `MINUS` **fails loud** with a hint to rewrite it'
 prov "README.md:155         '(honored since CQELS X)' inside a table cell" \
   '| [`DriverAttentionWatchdog`](x.java) | guards, including on the negated step (honored since CQELS 2.0.0-alpha.13) | Driver-attention watchdog. |'
-prov "examples/README.md:129 '(guards on negated steps are honored since CQELS X)'" \
+prov "playground/README.md:129 '(guards on negated steps are honored since CQELS X)'" \
   '| [`DriverAttentionWatchdog`](x.java) | cross-event `STR()` guards (guards on negated steps are honored since CQELS 2.0.0-alpha.13) | watchdog. |'
 prov "ChargerRangeFilter.java:9  ' * <p>Since {@code X} the engine…'" \
   ' * <p>Since {@code 2.0.0-alpha.11} the engine resolves an explicit function-IRI call it does not'
@@ -766,8 +766,8 @@ prov_md "'Before \`X\` was the latest release, …' is history, not a stale stam
 # broke the moment block-continuity was enforced. A fixture that tests the wrong
 # file type is not testing the case it names.
 d=$(newfix)
-mkdir -p "$d/examples/src/main/java/org/cqels/examples/cdsp"
-cat > "$d/examples/src/main/java/org/cqels/examples/cdsp/DriverAttentionWatchdog.java" <<'EOF'
+mkdir -p "$d/playground/src/main/java/org/cqels/playground/cdsp"
+cat > "$d/playground/src/main/java/org/cqels/playground/cdsp/DriverAttentionWatchdog.java" <<'EOF'
 /**
  * <em>other</em> vehicle braking elsewhere in the fleet no longer suppresses the alert. Since
  * CQELS {@code 2.0.0-alpha.13}, cross-event FILTER guards on negated steps are honored; before
@@ -1323,12 +1323,12 @@ echo
 echo "the pin itself — a usage error (exit 2), not a report of 19 stale docs"
 
 for bad in '${revision}' '2.0.0-alpha-SNAPSHOT' '2.0.0' 'not a version'; do
-  d=$(newfix); sed -i.bak "s|<cqels.version>$PIN|<cqels.version>$bad|" "$d/examples/pom.xml" "$d/mcp-server/pom.xml" "$d/sparql-endpoint/pom.xml"
+  d=$(newfix); sed -i.bak "s|<cqels.version>$PIN|<cqels.version>$bad|" "$d/playground/pom.xml" "$d/mcp-server/pom.xml" "$d/sparql-endpoint/pom.xml"
   check 2 "pin '$bad' is rejected" "$d"
 done
 
 d=$(newfix)
-sed -i.bak "s|<cqels.version>$PIN</cqels.version>|<cqels.version>$PIN</cqels.version><cqels.version>$PIN</cqels.version>|" "$d/examples/pom.xml"
+sed -i.bak "s|<cqels.version>$PIN</cqels.version>|<cqels.version>$PIN</cqels.version><cqels.version>$PIN</cqels.version>|" "$d/playground/pom.xml"
 check 2 "two <cqels.version> elements is an ambiguous pin" "$d"
 
 # A value the extractor cannot read must be a usage error, not a silent
@@ -1338,7 +1338,7 @@ check 2 "two <cqels.version> elements is an ambiguous pin" "$d"
 # became the pin and the gate printed "identical in both poms" about two poms
 # that were not (codex round 3). It matters which pom: only the first one hits
 # the sentinel, so both are pinned.
-for pom in examples mcp-server; do
+for pom in playground mcp-server; do
   d=$(newfix)
   python3 - "$d/$pom/pom.xml" <<'PY'
 import sys

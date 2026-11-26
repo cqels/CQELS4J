@@ -12,7 +12,7 @@
 #   links           ~6 HEAD requests. Red = a channel this repo names is gone.
 #                   Kept separate so a network red is never confused for the
 #                   offline one; exit 3 (inconclusive) is a re-run, not a defect.
-#   capability-truth builds examples/ and asserts the engine behaviour this repo
+#   capability-truth builds playground/ and asserts the engine behaviour this repo
 #                   documents. Red = a caveat is no longer true (upstream fixed
 #                   it and the prose now lies), or a relied-on feature regressed.
 #   sparql-endpoint builds sparql-endpoint/ with its tests, then drives the shaded
@@ -172,7 +172,7 @@ jobs:
   # scripts/ci/capability-probe.sh asserts both directions and names the files to edit.
   #
   # Runs on PRs too, unlike tools-reality: a PR is exactly where a new caveat gets written,
-  # and a caveat that was never true should not be merged. It only builds examples/ (seconds),
+  # and a caveat that was never true should not be merged. It only builds playground/ (seconds),
   # not the 64 MB shaded server, so it is cheap enough for that.
   capability-truth:
     needs: version-truth
@@ -189,14 +189,14 @@ jobs:
       # Exit 3 means "could not run" (toolchain or mirror unreachable), not "the docs are
       # wrong" -- same convention as the gate's --online tier. Still fails, log says re-run.
       - run: scripts/ci/capability-probe.sh
-      # The examples' own tests: the RDF Message Log reader (org.cqels.examples.messages) and
+      # The demos' own tests: the RDF Message Log reader (org.cqels.playground.messages) and
       # DemoOutputTest, which runs every demo and compares its output with expected-output/.
-      - run: mvn -q -B -f examples/pom.xml test
+      - run: mvn -q -B -f playground/pom.xml test
 
   # The SPARQL endpoint is the one project here with real product code — a servlet
   # with security filters (origin, Host, token) and protocol handling, 130 tests on a
   # real Jetty and engine. Until this job existed they ran on nobody's machine but
-  # the author's: version-truth never builds Java, capability-truth builds examples/
+  # the author's: version-truth never builds Java, capability-truth builds playground/
   # only, and tools-reality's deep tier packages the jar with -DskipTests because its
   # question is the README, not the servlet. Runs on PRs because a PR is where a
   # regression lands; ~1-2 min, cheap enough. smoke.sh then drives the shaded jar the

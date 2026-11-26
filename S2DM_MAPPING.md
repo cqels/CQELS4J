@@ -8,7 +8,7 @@ what CQELS can load as background data and join live streams against.
 This document records what s2dm produces, how this repository obtains real s2dm output, what that
 output lets a continuous query do, what it does not carry, and how this repository fills part of
 that gap from the same schema. The worked example is
-[`TrailerHealthMonitor`](examples/src/main/java/org/cqels/examples/s2dm/TrailerHealthMonitor.java).
+[`TrailerHealthMonitor`](playground/src/main/java/org/cqels/playground/s2dm/TrailerHealthMonitor.java).
 
 Everything below was measured against s2dm commit
 [`d97b449`](https://github.com/COVESA/s2dm/tree/d97b449a7cd4bee9298eb9868545eded68f975d2)
@@ -36,7 +36,7 @@ Everything below was measured against s2dm commit
 [`scripts/s2dm/export-trailer.sh`](scripts/s2dm/export-trailer.sh) runs
 `s2dm export rdf` on s2dm's own trailer example schema
 (`examples/trailer/full_schema.graphl`) and writes the result to
-[`examples/src/main/resources/s2dm/trailer/`](examples/src/main/resources/s2dm/trailer/). Two
+[`playground/src/main/resources/s2dm/trailer/`](playground/src/main/resources/s2dm/trailer/). Two
 of the files there, `skos.ttl` and `data_graph.ttl`, are committed exactly as s2dm wrote them. The
 other two are not s2dm output: the same script writes `supplement.ttl` and `units.ttl` with this
 repository's own extractions (§6).
@@ -113,7 +113,7 @@ The `s2dm:` terms live at `https://covesa.global/models/s2dm#`. The concepts liv
 
 ## 4. The worked example
 
-[`TrailerHealthMonitor`](examples/src/main/java/org/cqels/examples/s2dm/TrailerHealthMonitor.java)
+[`TrailerHealthMonitor`](playground/src/main/java/org/cqels/playground/s2dm/TrailerHealthMonitor.java)
 loads both exported files, the supplement and the unit conversions (§6) as background data and streams wheel readings
 from a truck with trailers. Each reading is one atomic element: the s2dm field it reports, the
 vehicle, the value, the four instance tags the schema declares for a wheel (trailer; and axle,
@@ -144,7 +144,7 @@ what rejects it, not the filter on the value.
   model which parts of a reading identify the instance. The demo knows it from the schema.
 - **Field descriptions.** See §3. A query that wants to explain a field has to use its owning
   type's definition, as `PlacedReading` does.
-  [`S2dmConceptCatalog`](examples/src/main/java/org/cqels/examples/cdsp/S2dmConceptCatalog.java)
+  [`S2dmConceptCatalog`](playground/src/main/java/org/cqels/playground/cdsp/S2dmConceptCatalog.java)
   joins on field definitions, which s2dm's older SKOS exporter (`s2dm generate skos-skeleton`)
   wrote and the current one does not, so over a real export its first query returns no rows for a
   field observation. (An observation tagged with a described type still matches; the query does
@@ -154,11 +154,11 @@ what rejects it, not the filter on the value.
   `s2dm:Field` in the SKOS file; the current one puts that typing only in `data_graph.ttl`.
   `S2dmConceptCatalog`'s second query guards on `s2dm:Field`, so it needs both files loaded.
 - **`skos:broader`.** Not written anywhere. The hierarchy that
-  [`SkosConceptRollup`](examples/src/main/java/org/cqels/examples/cdsp/SkosConceptRollup.java)
+  [`SkosConceptRollup`](playground/src/main/java/org/cqels/playground/cdsp/SkosConceptRollup.java)
   rolls up is asserted by that demo; the structure s2dm does export is `s2dm:hasField` and
   `s2dm:hasOutputType`.
 
-The `org.cqels.examples.cdsp.S2dm*` demos predate this mapping. Their concept graph is hand-built
+The `org.cqels.playground.cdsp.S2dm*` demos predate this mapping. Their concept graph is hand-built
 in the shape of the older SKOS exporter, over a vocabulary partly taken from s2dm's examples.
 
 Units, `@range` and instances are written by other s2dm exporters (§2, item 3), but none of
@@ -267,7 +267,7 @@ What it is not: s2dm's own linking. A schema built on s2dm's QUDT-generated enum
   model pushed into the stream first.
 - **A windowed `GROUP BY` re-reports on every arrival.** `LowestPressure` prints its current
   groups each time any reading arrives, including readings it filters out. See "Reading the
-  output" in [examples/README.md](examples/README.md).
+  output" in [playground/README.md](playground/README.md).
 
 ## 8. Regenerating
 
@@ -280,7 +280,7 @@ docker rmi cqels4j-s2dm:d97b449
 ```
 
 The first command needs `git`, `curl` and `docker` and rewrites the four files in
-`examples/src/main/resources/s2dm/trailer/`. QUDT's release is pinned by `QUDT_TAG` and the
+`playground/src/main/resources/s2dm/trailer/`. QUDT's release is pinned by `QUDT_TAG` and the
 downloaded file's `QUDT_SHA256` in the same script; to move to another release, change both. The second removes the image afterwards. To move to a
 newer s2dm, change `S2DM_COMMIT` in the script, re-run it, and re-check §2–§6 against the new
 output.

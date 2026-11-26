@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regenerate examples/src/main/resources/s2dm/trailer/{skos,data_graph}.ttl with COVESA s2dm,
+# Regenerate playground/src/main/resources/s2dm/trailer/{skos,data_graph}.ttl with COVESA s2dm,
 # supplement.ttl with this repository's own scripts/s2dm/supplement.py (what the RDF export
 # leaves out of the same schema: field descriptions, units, @range, instance-tag fields), and
 # units.ttl with scripts/s2dm/units.py (the schema's unit enum values linked to QUDT units, with
@@ -24,7 +24,7 @@ IMAGE="cqels4j-s2dm:${S2DM_COMMIT:0:7}"
 
 here=$(cd "$(dirname "$0")" && pwd)
 repo=$(cd "$here/../.." && pwd)
-dest="$repo/examples/src/main/resources/s2dm/trailer"
+dest="$repo/playground/src/main/resources/s2dm/trailer"
 work=$(mktemp -d "${TMPDIR:-/tmp}/s2dm-export.XXXXXX")
 trap 'rm -rf -- "$work"' EXIT
 

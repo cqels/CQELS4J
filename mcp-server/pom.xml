@@ -4,7 +4,7 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>org.cqels.examples</groupId>
+    <groupId>org.cqels.playground</groupId>
     <artifactId>cqels-mcp-server-example</artifactId>
     <version>0.2.0</version>
     <packaging>jar</packaging>
@@ -18,7 +18,7 @@
         <maven.compiler.release>17</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <cqels.version>2.0.0-alpha.22</cqels.version>
-        <mainClass>org.cqels.examples.mcp.FleetMcpServerLauncher</mainClass>
+        <mainClass>org.cqels.playground.mcp.FleetMcpServerLauncher</mainClass>
     </properties>
 
     <dependencies>
