@@ -44,12 +44,12 @@ public class ComplexEventPattern {
             engine.start();
             System.out.println("Watching for: a sharp speed drop, then a sharp speed spike.\n");
 
-            // Drop -> Spike : matches.
-            System.out.println("push: SpeedDropEvent");
-            Fleet.pushDrivingEvent(events, Fleet.SPEED_DROP);
+            // Drop -> Spike : matches. Explicit event times, so the printed match is the same every run.
+            System.out.println("push: SpeedDropEvent @ 1000 ms");
+            Fleet.pushDrivingEventAt(events, Fleet.SPEED_DROP, 1_000);
             Thread.sleep(300);
-            System.out.println("push: SpeedSpikeEvent");
-            Fleet.pushDrivingEvent(events, Fleet.SPEED_SPIKE);
+            System.out.println("push: SpeedSpikeEvent @ 1300 ms");
+            Fleet.pushDrivingEventAt(events, Fleet.SPEED_SPIKE, 1_300);
             Thread.sleep(1000);
         }
         System.out.println("\nDone.");

@@ -1,0 +1,15 @@
+Watching for: a > 20 km/h speed drop when the first reading reports rain.
+
+Phase 1: EV-7Q2 brakes hard on a DRY road, 100 -> 65 (must NOT match - rain gate).
+push: EV-7Q2 speed=100.0 rain=0.0
+push: EV-7Q2 speed=65.0 rain=0.0
+Phase 2: EV-3K8 eases off in the rain, 80 -> 70 (must NOT match - drop below 20 km/h).
+push: EV-3K8 speed=80.0 rain=1.0
+push: EV-3K8 speed=70.0 rain=1.0
+Phase 3: EV-9TZ brakes hard in the rain, 95 -> 60 (MUST match: decel 35 while raining).
+push: EV-9TZ speed=95.0 rain=1.0
+  WET-ROAD HARD BRAKING -> {rain=1.0, decel=35.0, speed2=60.0, speed1=95.0, vehicle=https://example.org/fleet/vehicle/EV-9TZ}
+  WET-ROAD HARD BRAKING -> {rain=1.0, decel=35.0, speed2=60.0, speed1=95.0, vehicle=https://example.org/fleet/vehicle/EV-9TZ}
+push: EV-9TZ speed=60.0 rain=1.0
+
+Done.

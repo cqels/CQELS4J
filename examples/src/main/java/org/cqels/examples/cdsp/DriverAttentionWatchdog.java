@@ -5,6 +5,8 @@ import org.cqels.engine.DataStream;
 import org.cqels.engine.cep.PatternMatch;
 import org.cqels.examples.Fleet;
 import org.cqels.stream.StreamElement;
+import org.eclipse.rdf4j.model.ValueFactory;
+import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
 
 /**
  * Example — CEP with a <em>correlated negated</em> sequence step:
@@ -45,6 +47,8 @@ import org.cqels.stream.StreamElement;
  */
 public class DriverAttentionWatchdog {
 
+    private static final ValueFactory VF = SimpleValueFactory.getInstance();
+
     public static void main(String[] args) throws InterruptedException {
         try (CQELSEngine engine = CQELSEngine.builder()
                 .id("driver-attention-watchdog")
@@ -82,49 +86,47 @@ public class DriverAttentionWatchdog {
             // (55 deliberately matches none of the three step conditions, and 75 < 80 cannot start
             // a new ?e1, so exactly one alert is expected.)
             System.out.println("Scenario 1 — fast, coasts to 55 (no brake), fast again (should fire):");
-            pushSpeed(telemetry, Fleet.EV1, 90);
+            pushSpeed(telemetry, Fleet.EV1, 90, 1_000);
             Thread.sleep(300);
-            pushSpeed(telemetry, Fleet.EV1, 55);
+            pushSpeed(telemetry, Fleet.EV1, 55, 1_300);
             Thread.sleep(300);
-            pushSpeed(telemetry, Fleet.EV1, 75);
+            pushSpeed(telemetry, Fleet.EV1, 75, 1_600);
             Thread.sleep(1500);   // let the alert print
 
-            // Wait out the 5s RANGE so nothing from scenario 1 is still pending — for a CEP query
-            // the window is also the timeout on a partial match.
-            System.out.println("\n(pausing 5.5s so the first episode falls out of the 5s window)\n");
-            Thread.sleep(5500);
+            // Move event time past the 5s RANGE so nothing from scenario 1 is still pending — for a
+            // CEP query the window is also the timeout on a partial match. Every reading carries an
+            // explicit event time, so the gap is in event time and the demo prints the same every run.
+            System.out.println("\n(event time moves on 7s, so the first episode falls out of the 5s window)\n");
 
             // -- Scenario 2: 90 -> 30 -> 75, all EV-7Q2. The 30 IS a braking episode by the SAME
             // vehicle: it satisfies the negated step's own filter (?s2 < 40) AND the correlation
             // guard STR(?e1)=STR(?e2), so it kills the sequence — no alert even though 90 and 75
             // both occur.
             System.out.println("Scenario 2 — fast, BRAKES to 30, fast again (should stay quiet):");
-            pushSpeed(telemetry, Fleet.EV1, 90);
+            pushSpeed(telemetry, Fleet.EV1, 90, 8_600);
             Thread.sleep(300);
-            pushSpeed(telemetry, Fleet.EV1, 30);
+            pushSpeed(telemetry, Fleet.EV1, 30, 8_900);
             Thread.sleep(300);
-            pushSpeed(telemetry, Fleet.EV1, 75);
+            pushSpeed(telemetry, Fleet.EV1, 75, 9_200);
             Thread.sleep(1500);
             System.out.println("  (no alert: the same vehicle's braking reading matched the negated"
                     + " step NOT ?e2 — the driver reacted, so the sequence was discarded)");
 
-            System.out.println("\n(pausing 5.5s so the second episode falls out of the 5s window)\n");
-            Thread.sleep(5500);
+            System.out.println("\n(event time moves on 7s, so the second episode falls out of the 5s window)\n");
 
             // -- Scenario 3: EV-3K8 at 90, then EV-9TZ at 75 — two fast readings, but from
             // DIFFERENT vehicles. The STR(?e1)=STR(?e3) guard rejects the cross-vehicle pairing,
             // so no alert even though "fast then fast, no brake between" holds stream-wide.
             System.out.println(
                     "Scenario 3 — EV-3K8 fast, then a DIFFERENT vehicle fast (should stay quiet):");
-            pushSpeed(telemetry, Fleet.EV2, 90);
+            pushSpeed(telemetry, Fleet.EV2, 90, 16_200);
             Thread.sleep(300);
-            pushSpeed(telemetry, Fleet.EV3, 75);
+            pushSpeed(telemetry, Fleet.EV3, 75, 16_500);
             Thread.sleep(1500);
             System.out.println("  (no alert: the same-vehicle guard STR(?e1)=STR(?e3) rejects a"
                     + " cross-vehicle pairing of the two fast readings)");
 
-            System.out.println("\n(pausing 5.5s so the third episode falls out of the 5s window)\n");
-            Thread.sleep(5500);
+            System.out.println("\n(event time moves on 7s, so the third episode falls out of the 5s window)\n");
 
             // -- Scenario 4 (correlated negation): EV-7Q2 at 90, EV-3K8 brakes to 30, EV-7Q2 at
             // 75. The braking reading is from a DIFFERENT vehicle, so the guard
@@ -134,20 +136,20 @@ public class DriverAttentionWatchdog {
             // this alert.
             System.out.println("Scenario 4 — EV-7Q2 fast, a DIFFERENT vehicle brakes to 30, EV-7Q2"
                     + " fast again (should STILL fire — correlated negation):");
-            pushSpeed(telemetry, Fleet.EV1, 90);
+            pushSpeed(telemetry, Fleet.EV1, 90, 23_500);
             Thread.sleep(300);
-            pushSpeed(telemetry, Fleet.EV2, 30);
+            pushSpeed(telemetry, Fleet.EV2, 30, 23_800);
             Thread.sleep(300);
-            pushSpeed(telemetry, Fleet.EV1, 75);
+            pushSpeed(telemetry, Fleet.EV1, 75, 24_100);
             Thread.sleep(1500);   // let the alert print
         }
         System.out.println("\nDone.");
     }
 
-    /** Push one raw speed reading ({@code <vehicle> vss:Speed value}). */
-    private static void pushSpeed(DataStream stream, String vehicle, double kmh) {
-        stream.push(vehicle, Fleet.SPEED, kmh);
+    /** Push one raw speed reading ({@code <vehicle> vss:Speed value}) at an explicit event time (ms). */
+    private static void pushSpeed(DataStream stream, String vehicle, double kmh, long timestamp) {
+        stream.push(VF.createIRI(vehicle), VF.createIRI(Fleet.SPEED), kmh, timestamp);
         System.out.println("push: " + vehicle.substring(vehicle.lastIndexOf('/') + 1)
-                + " vss:Speed " + kmh);
+                + " vss:Speed " + kmh + " @ " + timestamp + " ms");
     }
 }

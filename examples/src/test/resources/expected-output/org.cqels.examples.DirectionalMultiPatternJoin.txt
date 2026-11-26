@@ -1,0 +1,14 @@
+Engine started. Joining SoC + charge power per vehicle inside each forward 2s window (windows close at the watermark).
+
+push: vehicle/EV-7Q2 Powertrain.TractionBattery.StateOfCharge.Current = 68.0 @ t=1000 ms
+push: vehicle/EV-7Q2 Powertrain.TractionBattery.Charging.PowerW = -7400.0 @ t=1500 ms
+push: vehicle/EV-3K8 Powertrain.TractionBattery.StateOfCharge.Current = 35.0 @ t=1700 ms
+push: vehicle/EV-3K8 Powertrain.TractionBattery.Charging.PowerW = 3600.0 @ t=2600 ms
+  [window closed] JOINED -> {powerW=-7400.0, soc=68.0, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+push: vehicle/EV-9TZ Powertrain.TractionBattery.StateOfCharge.Current = 52.0 @ t=2200 ms
+push: vehicle/EV-9TZ Powertrain.TractionBattery.Charging.PowerW = 11000.0 @ t=3000 ms
+push: closer event @ t=8000 ms (advances the watermark; the second window closes)
+push: vehicle/EV-7Q2 Speed = 45.0 @ t=8000 ms
+  [window closed] JOINED -> {powerW=11000.0, soc=52.0, vehicle=https://example.org/fleet/vehicle/EV-9TZ}
+
+Done.

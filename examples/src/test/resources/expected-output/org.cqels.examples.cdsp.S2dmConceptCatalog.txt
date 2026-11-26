@@ -1,0 +1,19 @@
+Engine started. Readings are enriched from the s2dm SKOS catalogue
+(skos:prefLabel / skos:definition), not from anything hard-coded here.
+
+push: EV-7Q2 Vehicle.averageSpeed = 62.0
+  enriched -> {definition=Average speed of the vehicle, label=Vehicle.averageSpeed, value=62.0, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+    [modelled field] {value=62.0, label=Vehicle.averageSpeed}
+
+push: EV-3K8 Powertrain.stateOfCharge = 41.5
+  enriched -> {definition=Traction-battery state of charge., label=Powertrain.stateOfCharge, value=41.5, vehicle=https://example.org/fleet/vehicle/EV-3K8}
+    [modelled field] {value=41.5, label=Powertrain.stateOfCharge}
+
+push: EV-9TZ Door.isOpen = 1.0
+  enriched -> {definition=Whether the door is open., label=Door.isOpen, value=1.0, vehicle=https://example.org/fleet/vehicle/EV-9TZ}
+    [modelled field] {value=1.0, label=Door.isOpen}
+
+push: EV-7Q2 c:Seat = 1.0   (an OBJECT concept — the [modelled field] query SHOULD ignore it)
+  enriched -> {definition=A seat within the cabin, tagged by in-cabin zone., label=Seat, value=1.0, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+
+Done.

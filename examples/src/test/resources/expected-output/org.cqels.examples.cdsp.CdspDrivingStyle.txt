@@ -1,0 +1,19 @@
+Engine started. CDSP driving-style detection: steering-angle swing > 210 deg
+within 3 s while speed > 10 — eight Datalog rules as one continuous query.
+
+Scenario 1 — EV-7Q2 swings 20 -> 250 deg at 64 km/h (should fire):
+  AGGRESSIVE DRIVING -> {avgAngleChange=230.0, peakAngleChange=230.0, swings=1, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+
+Scenario 2 — EV-3K8 swings 15 -> 245 deg at 4 km/h (should stay quiet):
+  (no alert: the swing is real but the vehicle is barely moving)
+
+Scenario 3 — EV-9TZ swings 30 -> 55 deg at 80 km/h (should stay quiet):
+  (no alert: fast, but only a 25 deg correction)
+
+Scenario 4 — EV-7Q2 was at 64, SLOWED to 4, then swings 20 -> 250 (should stay quiet):
+  (no alert: the swing happened at 4 km/h, though 64 is still in the window)
+
+Scenario 5 — the same case REPLAYED out of order, later frame pushed first (should stay quiet):
+  (no alert: ?f2 is the 00:00:09 frame by event time, so the guard reads 4 km/h — not the 64 that arrived later)
+
+Done.

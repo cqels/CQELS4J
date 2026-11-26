@@ -3,6 +3,7 @@ package org.cqels.examples;
 import org.cqels.engine.CQELSEngine;
 import org.cqels.engine.DataStream;
 import org.eclipse.rdf4j.model.IRI;
+import org.eclipse.rdf4j.model.Statement;
 import org.eclipse.rdf4j.model.ValueFactory;
 import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
 import org.eclipse.rdf4j.repository.RepositoryConnection;
@@ -193,20 +194,72 @@ public final class Fleet {
     public static void pushFrameAt(DataStream stream, String sensor, String vehicle,
                                    String signalA, double valueA, String signalB, double valueB,
                                    String phenomenonTime) {
+        stream.push(frame(sensor, vehicle, signalA, valueA, signalB, valueB, phenomenonTime));
+    }
+
+    private static List<Statement> frame(String sensor, String vehicle, String signalA, double valueA,
+                                         String signalB, double valueB, String phenomenonTime) {
         IRI obs = VF.createIRI(EX + "frame/" + seq(OBS_SEQ.incrementAndGet()));
-        stream.push(List.of(
+        return List.of(
                 VF.createStatement(obs, VF.createIRI(RDF_TYPE), VF.createIRI(OBSERVATION)),
                 VF.createStatement(obs, VF.createIRI(MADE_BY_SENSOR), VF.createIRI(sensor)),
                 VF.createStatement(obs, VF.createIRI(HAS_FEATURE_OF_INTEREST), VF.createIRI(vehicle)),
                 VF.createStatement(obs, VF.createIRI(PHENOMENON_TIME),
                         VF.createLiteral(phenomenonTime, VF.createIRI(XSD_DATETIME))),
                 VF.createStatement(obs, VF.createIRI(signalA), VF.createLiteral(valueA)),
-                VF.createStatement(obs, VF.createIRI(signalB), VF.createLiteral(valueB))));
+                VF.createStatement(obs, VF.createIRI(signalB), VF.createLiteral(valueB)));
+    }
+
+    /**
+     * As {@link #pushFrame}, at an explicit stream time (ms): the element is stamped with
+     * {@code timestamp}, and its {@code sosa:phenomenonTime} is that same instant, so a demo prints
+     * the same every run.
+     */
+    public static void pushFrameAt(DataStream stream, String sensor, String vehicle,
+                                   String signalA, double valueA, String signalB, double valueB, long timestamp) {
+        pushFrameAt(stream, sensor, vehicle, signalA, valueA, signalB, valueB,
+                Instant.ofEpochMilli(timestamp).toString(), timestamp);
+    }
+
+    /**
+     * As {@link #pushFrameAt(DataStream, String, String, String, double, String, double, String)}, with
+     * the element stamped at {@code timestamp} (ms): the time the frame reaches the stream, which a
+     * replay can make differ from the {@code phenomenonTime} the vehicle sampled it at.
+     */
+    public static void pushFrameAt(DataStream stream, String sensor, String vehicle,
+                                   String signalA, double valueA, String signalB, double valueB,
+                                   String phenomenonTime, long timestamp) {
+        stream.push(frame(sensor, vehicle, signalA, valueA, signalB, valueB, phenomenonTime), timestamp);
     }
 
     /** Push a driving-incident event ({@code ?event fleet:event <eventClass>}) — used by the CEP demos. */
     public static void pushDrivingEvent(DataStream stream, String eventClass) {
         stream.pushTriple(FLEET + "event/" + EVT_SEQ.incrementAndGet(), EVENT, eventClass);
+    }
+
+    /**
+     * As {@link #pushDrivingEvent}, at an explicit event time (ms). A match's start, end and duration
+     * then come from these times, not from the wall clock, so a demo prints the same match every run.
+     */
+    public static void pushDrivingEventAt(DataStream stream, String eventClass, long timestamp) {
+        stream.push(VF.createIRI(FLEET + "event/" + EVT_SEQ.incrementAndGet()), VF.createIRI(EVENT),
+                VF.createIRI(eventClass), timestamp);
+    }
+
+    /** Push {@code <subject> <predicate> <object>} (an IRI) at an explicit event time (ms). */
+    public static void pushTripleAt(DataStream stream, String subject, String predicate, String object,
+                                    long timestamp) {
+        stream.push(VF.createIRI(subject), VF.createIRI(predicate), VF.createIRI(object), timestamp);
+    }
+
+    /** Push {@code <subject> <predicate> value} (an {@code xsd:double}) at an explicit event time (ms). */
+    public static void pushAt(DataStream stream, String subject, String predicate, double value, long timestamp) {
+        stream.push(VF.createIRI(subject), VF.createIRI(predicate), value, timestamp);
+    }
+
+    /** Push {@code <subject> <predicate> value} (an integer literal) at an explicit event time (ms). */
+    public static void pushAt(DataStream stream, String subject, String predicate, long value, long timestamp) {
+        stream.push(VF.createIRI(subject), VF.createIRI(predicate), value, timestamp);
     }
 
     /**

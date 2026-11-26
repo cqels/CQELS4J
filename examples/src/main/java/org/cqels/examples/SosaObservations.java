@@ -53,12 +53,13 @@ public class SosaObservations {
 
             String[][] fleet = {
                     {Fleet.SENSOR_EV1, Fleet.EV1}, {Fleet.SENSOR_EV2, Fleet.EV2}};
+            // Explicit event times, 150 ms apart, so each window holds the same readings every run.
             for (int i = 0; i < 30; i++) {
                 String[] ev = fleet[RANDOM.nextInt(fleet.length)];
                 boolean speed = RANDOM.nextBoolean();
-                Fleet.pushObservation(telemetry, ev[0], ev[1],
+                Fleet.pushObservationAt(telemetry, ev[0], ev[1],
                         speed ? Fleet.SPEED : Fleet.SOC,
-                        speed ? 40 + RANDOM.nextDouble() * 60 : 20 + RANDOM.nextDouble() * 70);
+                        speed ? 40 + RANDOM.nextDouble() * 60 : 20 + RANDOM.nextDouble() * 70, 1_000 + i * 150L);
                 Thread.sleep(150);
             }
             Thread.sleep(1000);

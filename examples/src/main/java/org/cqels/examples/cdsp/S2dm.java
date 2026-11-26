@@ -237,17 +237,18 @@ public final class S2dm {
      * <p>Atomicity matters for the same reason it does in {@link CorrelatedFaultCascade}: a query
      * that binds concept, vehicle, row and side in one graph pattern only sees a consistent
      * assignment if all five statements arrive as one element. Pushed separately they would
-     * cross-product across vehicles and zones.
+     * cross-product across vehicles and zones. The element is stamped at {@code timestamp} (ms), so
+     * a windowed query holds the same readings every run.
      */
     public static void pushZonedSignal(DataStream stream, String vehicle, String fieldConcept,
-                                       String row, String side, double value) {
+                                       String row, String side, double value, long timestamp) {
         IRI obs = VF.createIRI(Fleet.EX + "s2dm-obs/" + OBS_SEQ.incrementAndGet());
         stream.push(List.of(
                 VF.createStatement(obs, VF.createIRI(OF_CONCEPT), VF.createIRI(fieldConcept)),
                 VF.createStatement(obs, VF.createIRI(Fleet.HAS_FEATURE_OF_INTEREST), VF.createIRI(vehicle)),
                 VF.createStatement(obs, VF.createIRI(ZONE_ROW), VF.createIRI(row)),
                 VF.createStatement(obs, VF.createIRI(ZONE_SIDE), VF.createIRI(side)),
-                VF.createStatement(obs, VF.createIRI(Fleet.HAS_SIMPLE_RESULT), VF.createLiteral(value))));
+                VF.createStatement(obs, VF.createIRI(Fleet.HAS_SIMPLE_RESULT), VF.createLiteral(value))), timestamp);
     }
 
     /**

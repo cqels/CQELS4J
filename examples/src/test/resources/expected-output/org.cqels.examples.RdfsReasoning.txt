@@ -1,0 +1,7 @@
+Engine started. Schema: ex:DepotVehicle rdfs:subClassOf vsso:Vehicle.
+
+push schema: ex:DepotVehicle rdfs:subClassOf vsso:Vehicle
+push instance: EV-7Q2 a ex:DepotVehicle
+  inferred vsso:Vehicle -> {vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+
+Done.

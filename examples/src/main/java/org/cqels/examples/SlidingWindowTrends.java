@@ -49,9 +49,11 @@ public class SlidingWindowTrends {
 
             String[][] fleet = {
                     {Fleet.SENSOR_EV1, Fleet.EV1}, {Fleet.SENSOR_EV2, Fleet.EV2}};
+            // Explicit event times, 300 ms apart, so each window holds the same readings every run.
             for (int i = 0; i < 24; i++) {
                 String[] ev = fleet[RANDOM.nextInt(fleet.length)];
-                Fleet.pushObservation(telemetry, ev[0], ev[1], Fleet.SOC, 20 + RANDOM.nextDouble() * 70);
+                Fleet.pushObservationAt(telemetry, ev[0], ev[1], Fleet.SOC, 20 + RANDOM.nextDouble() * 70,
+                        1_000 + i * 300L);
                 Thread.sleep(300);
             }
             Thread.sleep(1000);

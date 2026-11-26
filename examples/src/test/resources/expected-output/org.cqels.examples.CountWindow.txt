@@ -1,0 +1,93 @@
+Engine started. Observations per vehicle over the most recent triples.
+
+push: reading from vehicle/EV-7Q2
+  recent-readings -> {readings=1, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+  recent-readings -> {readings=1, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+push: reading from vehicle/EV-7Q2
+  recent-readings -> {readings=1, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+  recent-readings -> {readings=1, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+  recent-readings -> {readings=1, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+  recent-readings -> {readings=2, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+  recent-readings -> {readings=2, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+push: reading from vehicle/EV-3K8
+  recent-readings -> {readings=2, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+  recent-readings -> {readings=2, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+  recent-readings -> {readings=2, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+  recent-readings -> {readings=2, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+  recent-readings -> {readings=1, vehicle=https://example.org/fleet/vehicle/EV-3K8}
+  recent-readings -> {readings=2, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+  recent-readings -> {readings=1, vehicle=https://example.org/fleet/vehicle/EV-3K8}
+push: reading from vehicle/EV-7Q2
+  recent-readings -> {readings=2, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+  recent-readings -> {readings=1, vehicle=https://example.org/fleet/vehicle/EV-3K8}
+  recent-readings -> {readings=2, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+  recent-readings -> {readings=1, vehicle=https://example.org/fleet/vehicle/EV-3K8}
+  recent-readings -> {readings=2, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+  recent-readings -> {readings=1, vehicle=https://example.org/fleet/vehicle/EV-3K8}
+  recent-readings -> {readings=3, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+  recent-readings -> {readings=1, vehicle=https://example.org/fleet/vehicle/EV-3K8}
+  recent-readings -> {readings=3, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+  recent-readings -> {readings=1, vehicle=https://example.org/fleet/vehicle/EV-3K8}
+push: reading from vehicle/EV-9TZ
+  recent-readings -> {readings=3, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+  recent-readings -> {readings=1, vehicle=https://example.org/fleet/vehicle/EV-3K8}
+  recent-readings -> {readings=3, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+  recent-readings -> {readings=1, vehicle=https://example.org/fleet/vehicle/EV-3K8}
+  recent-readings -> {readings=3, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+  recent-readings -> {readings=1, vehicle=https://example.org/fleet/vehicle/EV-3K8}
+  recent-readings -> {readings=3, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+  recent-readings -> {readings=1, vehicle=https://example.org/fleet/vehicle/EV-3K8}
+  recent-readings -> {readings=1, vehicle=https://example.org/fleet/vehicle/EV-9TZ}
+  recent-readings -> {readings=3, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+  recent-readings -> {readings=1, vehicle=https://example.org/fleet/vehicle/EV-3K8}
+  recent-readings -> {readings=1, vehicle=https://example.org/fleet/vehicle/EV-9TZ}
+push: reading from vehicle/EV-3K8
+  recent-readings -> {readings=3, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+  recent-readings -> {readings=1, vehicle=https://example.org/fleet/vehicle/EV-3K8}
+  recent-readings -> {readings=1, vehicle=https://example.org/fleet/vehicle/EV-9TZ}
+  recent-readings -> {readings=3, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+  recent-readings -> {readings=1, vehicle=https://example.org/fleet/vehicle/EV-3K8}
+  recent-readings -> {readings=1, vehicle=https://example.org/fleet/vehicle/EV-9TZ}
+  recent-readings -> {readings=3, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+  recent-readings -> {readings=1, vehicle=https://example.org/fleet/vehicle/EV-3K8}
+  recent-readings -> {readings=1, vehicle=https://example.org/fleet/vehicle/EV-9TZ}
+  recent-readings -> {readings=3, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+  recent-readings -> {readings=2, vehicle=https://example.org/fleet/vehicle/EV-3K8}
+  recent-readings -> {readings=1, vehicle=https://example.org/fleet/vehicle/EV-9TZ}
+  recent-readings -> {readings=3, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+  recent-readings -> {readings=2, vehicle=https://example.org/fleet/vehicle/EV-3K8}
+  recent-readings -> {readings=1, vehicle=https://example.org/fleet/vehicle/EV-9TZ}
+push: reading from vehicle/EV-7Q2
+  recent-readings -> {readings=3, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+  recent-readings -> {readings=2, vehicle=https://example.org/fleet/vehicle/EV-3K8}
+  recent-readings -> {readings=1, vehicle=https://example.org/fleet/vehicle/EV-9TZ}
+  recent-readings -> {readings=3, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+  recent-readings -> {readings=2, vehicle=https://example.org/fleet/vehicle/EV-3K8}
+  recent-readings -> {readings=1, vehicle=https://example.org/fleet/vehicle/EV-9TZ}
+  recent-readings -> {readings=3, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+  recent-readings -> {readings=2, vehicle=https://example.org/fleet/vehicle/EV-3K8}
+  recent-readings -> {readings=1, vehicle=https://example.org/fleet/vehicle/EV-9TZ}
+  recent-readings -> {readings=2, vehicle=https://example.org/fleet/vehicle/EV-3K8}
+  recent-readings -> {readings=3, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+  recent-readings -> {readings=1, vehicle=https://example.org/fleet/vehicle/EV-9TZ}
+  recent-readings -> {readings=2, vehicle=https://example.org/fleet/vehicle/EV-3K8}
+  recent-readings -> {readings=3, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+  recent-readings -> {readings=1, vehicle=https://example.org/fleet/vehicle/EV-9TZ}
+push: reading from vehicle/EV-9TZ
+  recent-readings -> {readings=2, vehicle=https://example.org/fleet/vehicle/EV-3K8}
+  recent-readings -> {readings=3, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+  recent-readings -> {readings=1, vehicle=https://example.org/fleet/vehicle/EV-9TZ}
+  recent-readings -> {readings=2, vehicle=https://example.org/fleet/vehicle/EV-3K8}
+  recent-readings -> {readings=3, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+  recent-readings -> {readings=1, vehicle=https://example.org/fleet/vehicle/EV-9TZ}
+  recent-readings -> {readings=2, vehicle=https://example.org/fleet/vehicle/EV-3K8}
+  recent-readings -> {readings=3, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+  recent-readings -> {readings=1, vehicle=https://example.org/fleet/vehicle/EV-9TZ}
+  recent-readings -> {readings=2, vehicle=https://example.org/fleet/vehicle/EV-3K8}
+  recent-readings -> {readings=2, vehicle=https://example.org/fleet/vehicle/EV-9TZ}
+  recent-readings -> {readings=2, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+  recent-readings -> {readings=2, vehicle=https://example.org/fleet/vehicle/EV-3K8}
+  recent-readings -> {readings=2, vehicle=https://example.org/fleet/vehicle/EV-9TZ}
+  recent-readings -> {readings=2, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+
+Done.

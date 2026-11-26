@@ -1,0 +1,9 @@
+Watching for: a speed drop, then one+ lane weaves, then a speed spike.
+
+push: SpeedDropEvent @ 1000 ms
+push: LaneWeaveEvent @ 1300 ms
+push: LaneWeaveEvent @ 1600 ms
+push: SpeedSpikeEvent @ 1900 ms
+  IMPAIRED DRIVING MATCHED (4 events): PatternMatch{events=4, duration=900ms, startTime=1000, endTime=1900}
+
+Done.

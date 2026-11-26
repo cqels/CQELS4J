@@ -1,0 +1,30 @@
+Engine started. Alerting on battery state-of-charge below 20 %.
+
+--- RDF-Messages N-Quads document (3 messages) ---
+VERSION "1.2-messages"
+<https://example.org/fleet/obs/msg-1> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/ns/sosa/Observation> .
+<https://example.org/fleet/obs/msg-1> <http://www.w3.org/ns/sosa/madeBySensor> <https://example.org/fleet/sensor/ev1-telematics> .
+<https://example.org/fleet/obs/msg-1> <http://www.w3.org/ns/sosa/observedProperty> <https://covesa.global/vss#Powertrain.TractionBattery.StateOfCharge.Current> .
+<https://example.org/fleet/obs/msg-1> <http://www.w3.org/ns/sosa/hasFeatureOfInterest> <https://example.org/fleet/vehicle/EV-7Q2> .
+<https://example.org/fleet/obs/msg-1> <http://www.w3.org/ns/sosa/hasSimpleResult> "64.0"^^<http://www.w3.org/2001/XMLSchema#double> .
+MESSAGE
+<https://example.org/fleet/obs/msg-2> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/ns/sosa/Observation> .
+<https://example.org/fleet/obs/msg-2> <http://www.w3.org/ns/sosa/madeBySensor> <https://example.org/fleet/sensor/ev2-telematics> .
+<https://example.org/fleet/obs/msg-2> <http://www.w3.org/ns/sosa/observedProperty> <https://covesa.global/vss#Powertrain.TractionBattery.StateOfCharge.Current> .
+<https://example.org/fleet/obs/msg-2> <http://www.w3.org/ns/sosa/hasFeatureOfInterest> <https://example.org/fleet/vehicle/EV-3K8> .
+<https://example.org/fleet/obs/msg-2> <http://www.w3.org/ns/sosa/hasSimpleResult> "18.5"^^<http://www.w3.org/2001/XMLSchema#double> .
+MESSAGE
+<https://example.org/fleet/obs/msg-3> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/ns/sosa/Observation> .
+<https://example.org/fleet/obs/msg-3> <http://www.w3.org/ns/sosa/madeBySensor> <https://example.org/fleet/sensor/ev3-telematics> .
+<https://example.org/fleet/obs/msg-3> <http://www.w3.org/ns/sosa/observedProperty> <https://covesa.global/vss#Powertrain.TractionBattery.StateOfCharge.Current> .
+<https://example.org/fleet/obs/msg-3> <http://www.w3.org/ns/sosa/hasFeatureOfInterest> <https://example.org/fleet/vehicle/EV-9TZ> .
+<https://example.org/fleet/obs/msg-3> <http://www.w3.org/ns/sosa/hasSimpleResult> "41.0"^^<http://www.w3.org/2001/XMLSchema#double> .
+
+--- end document ---
+
+push: one atomic observation (5 triples)
+push: one atomic observation (5 triples)
+  LOW BATTERY -> {soc=18.5, veh=https://example.org/fleet/vehicle/EV-3K8}
+push: one atomic observation (5 triples)
+
+Done.

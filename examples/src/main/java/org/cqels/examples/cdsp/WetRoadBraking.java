@@ -57,22 +57,24 @@ public class WetRoadBraking {
             engine.start();
             System.out.println("Watching for: a > 20 km/h speed drop when the first reading reports rain.\n");
 
+            // Every reading carries an explicit event time (ms), following the pauses below, so the
+            // windows hold the same readings every run.
             System.out.println("Phase 1: EV-7Q2 brakes hard on a DRY road, 100 -> 65 (must NOT match - rain gate).");
-            pushRoadReading(telemetry, Fleet.EV1, 100, 0);
+            pushRoadReading(telemetry, Fleet.EV1, 100, 0, 1_000);
             Thread.sleep(300);
-            pushRoadReading(telemetry, Fleet.EV1, 65, 0);
-            Thread.sleep(5500);   // let the 5s window drain between phases
+            pushRoadReading(telemetry, Fleet.EV1, 65, 0, 1_300);
+            Thread.sleep(5500);   // pacing; the next reading's event time, 5.5 s on, takes phase 1 out of the 5s window
 
             System.out.println("Phase 2: EV-3K8 eases off in the rain, 80 -> 70 (must NOT match - drop below 20 km/h).");
-            pushRoadReading(telemetry, Fleet.EV2, 80, 1);
+            pushRoadReading(telemetry, Fleet.EV2, 80, 1, 6_800);
             Thread.sleep(300);
-            pushRoadReading(telemetry, Fleet.EV2, 70, 1);
+            pushRoadReading(telemetry, Fleet.EV2, 70, 1, 7_100);
             Thread.sleep(5500);
 
             System.out.println("Phase 3: EV-9TZ brakes hard in the rain, 95 -> 60 (MUST match: decel 35 while raining).");
-            pushRoadReading(telemetry, Fleet.EV3, 95, 1);
+            pushRoadReading(telemetry, Fleet.EV3, 95, 1, 12_600);
             Thread.sleep(300);
-            pushRoadReading(telemetry, Fleet.EV3, 60, 1);
+            pushRoadReading(telemetry, Fleet.EV3, 60, 1, 12_900);
             Thread.sleep(1500);
         }
         System.out.println("\nDone.");
@@ -83,13 +85,13 @@ public class WetRoadBraking {
      * reading, and an explicit {@code vss:ReadingTimestamp} sequence number for ordering.
      */
     private static void pushRoadReading(DataStream telemetry, String vehicle,
-                                        double speedKmh, double isRaining) {
+                                        double speedKmh, double isRaining, long t) {
         long seq = ++readingSeq;
         String reading = Fleet.EX + "reading/" + seq;
-        telemetry.pushTriple(reading, Fleet.VSS + "Vehicle", vehicle);
-        telemetry.push(reading, Fleet.VSS + "ReadingTimestamp", seq);
-        telemetry.push(reading, Fleet.SPEED, speedKmh);
-        telemetry.push(reading, Fleet.VSS + "Exterior.IsRaining", isRaining);
+        Fleet.pushTripleAt(telemetry, reading, Fleet.VSS + "Vehicle", vehicle, t);
+        Fleet.pushAt(telemetry, reading, Fleet.VSS + "ReadingTimestamp", seq, t);
+        Fleet.pushAt(telemetry, reading, Fleet.SPEED, speedKmh, t);
+        Fleet.pushAt(telemetry, reading, Fleet.VSS + "Exterior.IsRaining", isRaining, t);
         System.out.println("push: " + vehicle.substring(vehicle.lastIndexOf('/') + 1)
                 + " speed=" + speedKmh + " rain=" + isRaining);
     }

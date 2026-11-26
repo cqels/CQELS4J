@@ -51,10 +51,11 @@ public class GroupConcatSummary {
             String[] signals = {Fleet.SPEED, Fleet.SOC, Fleet.CHARGE_POWER};
             String[][] fleet = {
                     {Fleet.SENSOR_EV1, Fleet.EV1}, {Fleet.SENSOR_EV2, Fleet.EV2}, {Fleet.SENSOR_EV3, Fleet.EV3}};
+            // Explicit event times, 150 ms apart, so each window holds the same readings every run.
             for (int i = 0; i < 30; i++) {
                 String[] ev = fleet[RANDOM.nextInt(fleet.length)];
-                Fleet.pushObservation(telemetry, ev[0], ev[1],
-                        signals[RANDOM.nextInt(signals.length)], 10 + RANDOM.nextDouble() * 90);
+                Fleet.pushObservationAt(telemetry, ev[0], ev[1],
+                        signals[RANDOM.nextInt(signals.length)], 10 + RANDOM.nextDouble() * 90, 1_000 + i * 150L);
                 Thread.sleep(150);
             }
             Thread.sleep(1000);

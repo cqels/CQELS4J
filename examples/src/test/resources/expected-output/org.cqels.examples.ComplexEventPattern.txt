@@ -1,0 +1,7 @@
+Watching for: a sharp speed drop, then a sharp speed spike.
+
+push: SpeedDropEvent @ 1000 ms
+push: SpeedSpikeEvent @ 1300 ms
+  ROAD RAGE (speed drop then spike) -> PatternMatch{events=2, duration=300ms, startTime=1000, endTime=1300}
+
+Done.

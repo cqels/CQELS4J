@@ -1,0 +1,70 @@
+read /messages/cabin-temperatures.ttl: 6 messages, sizes [2, 6, 6, 0, 6, 6]
+
+push message 1 (2 statements) at 2026-11-16T08:00:00Z
+
+push message 2 (6 statements) at 2026-11-16T08:00:00Z
+  [reading] {obs=depot-a/obs-1, unit=unit:DEG_C, sensor=depot-a/bus-17-front, value=21.5}
+  [average] {avg=21.5, readings=1, sensor=depot-a/bus-17-front}
+
+push message 3 (6 statements) at 2026-11-16T08:00:05Z
+  [reading] {obs=depot-a/obs-2, unit=unit:DEG_C, sensor=depot-a/bus-17-rear, value=24.0}
+  [average] {avg=21.5, readings=1, sensor=depot-a/bus-17-front}
+  [average] {avg=24.0, readings=1, sensor=depot-a/bus-17-rear}
+
+push message 4 (0 statements, empty: a heartbeat) at 2026-11-16T08:00:05Z
+  [average] {avg=21.5, readings=1, sensor=depot-a/bus-17-front}
+  [average] {avg=24.0, readings=1, sensor=depot-a/bus-17-rear}
+
+push message 5 (6 statements) at 2026-11-16T08:00:10Z
+  [reading] {obs=depot-a/obs-3, unit=unit:DEG_C, sensor=depot-a/bus-17-front, value=22.5}
+  [average] {avg=22.0, readings=2, sensor=depot-a/bus-17-front}
+  [average] {avg=24.0, readings=1, sensor=depot-a/bus-17-rear}
+
+push message 6 (6 statements) at 2026-11-16T08:00:12Z
+  [reading] {obs=depot-b/obs-1, unit=unit:DEG_C, sensor=depot-b/bus-40-front, value=19.0}
+  [average] {avg=22.0, readings=2, sensor=depot-a/bus-17-front}
+  [average] {avg=24.0, readings=1, sensor=depot-a/bus-17-rear}
+  [average] {avg=19.0, readings=1, sensor=depot-b/bus-40-front}
+
+--- the same log read as one plain Turtle document ---
+one document: 23 statements; its 4 sosa:hasResult _:r point at 1 blank node(s)
+  Reading over it: 16 rows (every observation joined to every value), against 4 from the message log
+
+--- the readings as an RDF Message Log (Turtle) ---
+VERSION "1.2-messages"
+@prefix r: <https://example.org/fleet/readings#> .
+
+_:reading1 a r:CabinReading;
+  r:observation <https://example.org/fleet/depot-a/obs-1>;
+  r:sensor <https://example.org/fleet/depot-a/bus-17-front>;
+  r:value "21.5"^^<http://www.w3.org/2001/XMLSchema#decimal>;
+  r:unit <http://qudt.org/vocab/unit/DEG_C> .
+MESSAGE
+@prefix r: <https://example.org/fleet/readings#> .
+
+_:reading2 a r:CabinReading;
+  r:observation <https://example.org/fleet/depot-a/obs-2>;
+  r:sensor <https://example.org/fleet/depot-a/bus-17-rear>;
+  r:value "24.0"^^<http://www.w3.org/2001/XMLSchema#decimal>;
+  r:unit <http://qudt.org/vocab/unit/DEG_C> .
+MESSAGE
+@prefix r: <https://example.org/fleet/readings#> .
+
+_:reading3 a r:CabinReading;
+  r:observation <https://example.org/fleet/depot-a/obs-3>;
+  r:sensor <https://example.org/fleet/depot-a/bus-17-front>;
+  r:value "22.5"^^<http://www.w3.org/2001/XMLSchema#decimal>;
+  r:unit <http://qudt.org/vocab/unit/DEG_C> .
+MESSAGE
+@prefix r: <https://example.org/fleet/readings#> .
+
+_:reading4 a r:CabinReading;
+  r:observation <https://example.org/fleet/depot-b/obs-1>;
+  r:sensor <https://example.org/fleet/depot-b/bus-40-front>;
+  r:value "19.0"^^<http://www.w3.org/2001/XMLSchema#decimal>;
+  r:unit <http://qudt.org/vocab/unit/DEG_C> .
+MESSAGE
+--- end ---
+read back: 4 messages, sizes [5, 5, 5, 5]
+
+Done.

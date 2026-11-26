@@ -50,7 +50,8 @@ public class MessageStreamOverSse {
             });
             engine.start();
 
-            System.out.println("producer: " + messages.size() + " messages at " + producer.uri()
+            // The port is ephemeral; printing only the path keeps the output the same every run.
+            System.out.println("producer: " + messages.size() + " messages at http://127.0.0.1:<port>" + producer.uri().getPath()
                     + " (" + SseMessageChannel.PAYLOAD_HEADER + ": " + SseMessageChannel.Payload.JSON_LD.mediaType() + ")");
             System.out.println("first event on the wire:\n"
                     + SseMessageChannel.event(1, SseMessageChannel.encode(messages.get(0), SseMessageChannel.Payload.JSON_LD)).indent(2));

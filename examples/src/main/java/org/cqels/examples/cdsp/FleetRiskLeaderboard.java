@@ -55,14 +55,16 @@ public class FleetRiskLeaderboard {
             System.out.println("  EV-3K8 borderline    (2 violations - HAVING must gate it out)");
             System.out.println("  EV-7Q2 clean         (0 violations - never grouped)\n");
 
+            // Explicit event times, one round every 250 ms, so the window holds the same readings every run.
             for (int i = 0; i < 6; i++) {
+                long t = 1_000 + i * 250L;
                 if (i % 2 == 0) {
-                    pushRiskReading(telemetry, Fleet.EV3, 120, 10);   // speeding violation
+                    pushRiskReading(telemetry, Fleet.EV3, 120, 10, t);   // speeding violation
                 } else {
-                    pushRiskReading(telemetry, Fleet.EV3, 60, 75);    // violent-steering violation
+                    pushRiskReading(telemetry, Fleet.EV3, 60, 75, t);    // violent-steering violation
                 }
-                pushRiskReading(telemetry, Fleet.EV2, i < 2 ? 110 : 80, 5);   // 2 violations, then clean
-                pushRiskReading(telemetry, Fleet.EV1, 60, 5);                 // always clean
+                pushRiskReading(telemetry, Fleet.EV2, i < 2 ? 110 : 80, 5, t);   // 2 violations, then clean
+                pushRiskReading(telemetry, Fleet.EV1, 60, 5, t);                 // always clean
                 Thread.sleep(250);
             }
 
@@ -76,12 +78,12 @@ public class FleetRiskLeaderboard {
 
     /** One flat telemetry reading: speed + steering angle on the same reading node. */
     private static void pushRiskReading(DataStream telemetry, String vehicle,
-                                        double speedKmh, double steeringDeg) {
+                                        double speedKmh, double steeringDeg, long t) {
         long seq = ++readingSeq;
         String reading = Fleet.EX + "reading/" + seq;
-        telemetry.pushTriple(reading, Fleet.VSS + "Vehicle", vehicle);
-        telemetry.push(reading, Fleet.SPEED, speedKmh);
-        telemetry.push(reading, Fleet.STEERING, steeringDeg);
+        Fleet.pushTripleAt(telemetry, reading, Fleet.VSS + "Vehicle", vehicle, t);
+        Fleet.pushAt(telemetry, reading, Fleet.SPEED, speedKmh, t);
+        Fleet.pushAt(telemetry, reading, Fleet.STEERING, steeringDeg, t);
         System.out.println("push: " + vehicle.substring(vehicle.lastIndexOf('/') + 1)
                 + " speed=" + speedKmh + " angle=" + steeringDeg);
     }

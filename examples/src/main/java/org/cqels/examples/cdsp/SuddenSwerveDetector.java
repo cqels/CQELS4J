@@ -61,24 +61,26 @@ public class SuddenSwerveDetector {
             engine.start();
             System.out.println("Watching for: steering swing > 90 degrees between two readings at > 50 km/h.\n");
 
+            // Every reading carries an explicit event time (ms), following the pauses below, so the
+            // windows hold the same readings every run.
             System.out.println("Phase 1: EV-7Q2 cruises at 60 km/h with a gentle wiggle (must NOT match - swing too small).");
-            pushReading(telemetry, Fleet.EV1, 60, -4);
+            pushReading(telemetry, Fleet.EV1, 60, -4, 1_000);
             Thread.sleep(250);
-            pushReading(telemetry, Fleet.EV1, 61, 5);
+            pushReading(telemetry, Fleet.EV1, 61, 5, 1_250);
             Thread.sleep(250);
-            pushReading(telemetry, Fleet.EV1, 60, -3);
-            Thread.sleep(3500);   // let the 3s window drain between phases
+            pushReading(telemetry, Fleet.EV1, 60, -3, 1_500);
+            Thread.sleep(3500);   // pacing; the next reading's event time, 3.5 s on, takes phase 1 out of the 3s window
 
             System.out.println("Phase 2: EV-3K8 swings the wheel -40 -> +70 degrees at parking speed (must NOT match - speed gate).");
-            pushReading(telemetry, Fleet.EV2, 15, -40);
+            pushReading(telemetry, Fleet.EV2, 15, -40, 5_000);
             Thread.sleep(250);
-            pushReading(telemetry, Fleet.EV2, 14, 70);
+            pushReading(telemetry, Fleet.EV2, 14, 70, 5_250);
             Thread.sleep(3500);
 
             System.out.println("Phase 3: EV-9TZ at 85 km/h snaps the wheel -35 -> +80 degrees (MUST match: delta 115 at speed 86).");
-            pushReading(telemetry, Fleet.EV3, 85, -35);
+            pushReading(telemetry, Fleet.EV3, 85, -35, 8_750);
             Thread.sleep(250);
-            pushReading(telemetry, Fleet.EV3, 86, 80);
+            pushReading(telemetry, Fleet.EV3, 86, 80, 9_000);
             Thread.sleep(1500);
         }
         System.out.println("\nDone.");
@@ -90,15 +92,15 @@ public class SuddenSwerveDetector {
      * two readings of the self-join.
      */
     private static void pushReading(DataStream telemetry, String vehicle,
-                                    double speedKmh, double steeringDeg) {
+                                    double speedKmh, double steeringDeg, long t) {
         long seq = ++readingSeq;
         String reading = Fleet.EX + "reading/" + seq;
-        telemetry.pushTriple(reading, Fleet.VSS + "Vehicle", vehicle);
-        telemetry.push(reading, Fleet.VSS + "ReadingTimestamp", seq);
-        telemetry.push(reading, Fleet.SPEED, speedKmh);
-        telemetry.push(reading, Fleet.STEERING, steeringDeg);
-        telemetry.push(reading, Fleet.LATITUDE, 48.14 + seq * 1e-4);
-        telemetry.push(reading, Fleet.LONGITUDE, 11.58 + seq * 1e-4);
+        Fleet.pushTripleAt(telemetry, reading, Fleet.VSS + "Vehicle", vehicle, t);
+        Fleet.pushAt(telemetry, reading, Fleet.VSS + "ReadingTimestamp", seq, t);
+        Fleet.pushAt(telemetry, reading, Fleet.SPEED, speedKmh, t);
+        Fleet.pushAt(telemetry, reading, Fleet.STEERING, steeringDeg, t);
+        Fleet.pushAt(telemetry, reading, Fleet.LATITUDE, 48.14 + seq * 1e-4, t);
+        Fleet.pushAt(telemetry, reading, Fleet.LONGITUDE, 11.58 + seq * 1e-4, t);
         System.out.println("push: " + vehicle.substring(vehicle.lastIndexOf('/') + 1)
                 + " speed=" + speedKmh + " angle=" + steeringDeg);
     }
