@@ -115,7 +115,9 @@ For that, a demo must print the same thing on every run: nothing that varies bet
 IDs, ports, the wall clock), and windows that hold the same readings every time. So every demo with
 a time window gives each reading an explicit event time, rather than letting the engine stamp it on
 arrival. The demos don't sleep: a gap such as "5.5 s later" is a gap in event time, not a pause, so
-what a demo prints doesn't depend on how fast the machine runs it.
+what a demo prints doesn't depend on how fast the machine runs it. (The reasoning demos built on
+the RETE processor still stamp facts on arrival; its facts expire after five minutes, which no run
+comes near.)
 
 When a demo's output changes on purpose, regenerate its file on JDK 17, the JDK CI uses, and review
 the diff:

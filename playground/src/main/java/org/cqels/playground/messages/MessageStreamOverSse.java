@@ -40,7 +40,7 @@ public class MessageStreamOverSse {
         List<Map<String, Object>> readings = Collections.synchronizedList(new ArrayList<>());
 
         try (SseMessageChannel.Producer producer =
-                     new SseMessageChannel.Producer(messages, SseMessageChannel.Payload.JSON_LD, 300);
+                     new SseMessageChannel.Producer(messages, SseMessageChannel.Payload.JSON_LD, 0);
              CQELSEngine engine = CQELSEngine.builder().id("rdf-messages-over-sse").withMemoryStore().build()) {
 
             DataStream cabin = engine.createStream("Cabin");
