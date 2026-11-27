@@ -1,9 +1,10 @@
-package org.cqels.playground;
+package org.cqels.playground.windows;
 
 import org.cqels.engine.CQELSEngine;
 import org.cqels.engine.DataStream;
 
 import java.util.Random;
+import org.cqels.playground.Fleet;
 
 /**
  * Example 3 — sliding windows for moving trends.
@@ -14,7 +15,7 @@ import java.util.Random;
  * on each arriving reading rather than only at the 2-second step boundary — see the engine note in
  * {@code playground/README.md}.)
  *
- * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.SlidingWindowTrends}
+ * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.windows.SlidingWindowTrends}
  */
 public class SlidingWindowTrends {
 

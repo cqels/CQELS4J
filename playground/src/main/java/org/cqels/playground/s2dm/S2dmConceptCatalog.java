@@ -1,4 +1,4 @@
-package org.cqels.playground.cdsp;
+package org.cqels.playground.s2dm;
 
 import org.cqels.engine.CQELSEngine;
 import org.cqels.engine.DataStream;
@@ -56,7 +56,7 @@ import org.cqels.playground.Fleet;
  * it to {@code [TRIPLES 12]} would keep the last twelve readings resident and re-report all of
  * them on every push — correct, but not what a "enrich this reading" query wants.
  *
- * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.cdsp.S2dmConceptCatalog}
+ * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.s2dm.S2dmConceptCatalog}
  */
 public class S2dmConceptCatalog {
 

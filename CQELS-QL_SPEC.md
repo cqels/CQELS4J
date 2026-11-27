@@ -333,7 +333,7 @@ still is, evaluated correctly either way.
 > guards are **not** interchangeable: the exporter makes every enum value a `skos:member` of
 > `FieldConcepts` while typing it `s2dm:EnumValue`, so `?field a s2dm:Field` selects a strict
 > **subset** of the collection. That is why
-> [`S2dmConceptCatalog`](playground/src/main/java/org/cqels/playground/cdsp/S2dmConceptCatalog.java)
+> [`S2dmConceptCatalog`](playground/src/main/java/org/cqels/playground/s2dm/S2dmConceptCatalog.java)
 > still guards on the type — it asks for things the model classifies as fields, not for everything
 > in the collection.
 

@@ -47,7 +47,7 @@ class DemoOutputTest {
 
     /** Demos not run here, with the reason. */
     private static final Map<String, String> EXCLUDED = Map.of(
-            "org.cqels.playground.CapabilityProbe",
+            "org.cqels.playground.probe.CapabilityProbe",
             "CI tooling, not a demo: scripts/ci/capability-probe.sh runs it as the capability-truth check");
 
     private static final int PARALLEL = Integer.getInteger("demo.parallel", 4);

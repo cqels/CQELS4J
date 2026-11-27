@@ -1,4 +1,4 @@
-package org.cqels.playground.cdsp;
+package org.cqels.playground.s2dm;
 
 import org.cqels.engine.CQELSEngine;
 import org.cqels.engine.DataStream;
@@ -71,7 +71,7 @@ import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
  *
  * <p>Add-on dependency: {@code org.cqels:cqels-reasoning-rete}.
  *
- * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.cdsp.SkosConceptRollup}
+ * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.s2dm.SkosConceptRollup}
  */
 public class SkosConceptRollup {
 

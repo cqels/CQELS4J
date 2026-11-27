@@ -1,7 +1,8 @@
-package org.cqels.playground;
+package org.cqels.playground.windows;
 
 import org.cqels.engine.CQELSEngine;
 import org.cqels.engine.DataStream;
+import org.cqels.playground.Fleet;
 
 /**
  * Example 7 — count-based windows ({@code [TRIPLES N]}).
@@ -15,7 +16,7 @@ import org.cqels.engine.DataStream;
  * observation: {@code [TRIPLES 30]} holds the last 6 observations (30 ÷ 5) and the earliest age
  * out. An observation pushed as one atomic element would count once.)
  *
- * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.CountWindow}
+ * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.windows.CountWindow}
  */
 public class CountWindow {
 

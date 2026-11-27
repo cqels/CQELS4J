@@ -59,7 +59,7 @@ and run any demo:
 ```bash
 git clone https://github.com/cqels/CQELS4J.git
 cd CQELS4J/playground
-mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.HelloCqels
+mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.basics.HelloCqels
 ```
 
 You should see the alert fire for the two readings below the 20 % threshold, and nothing for
@@ -83,16 +83,16 @@ same way, swapping `-Dexec.mainClass`. A few representative ones — the full ca
 
 | Class | What it shows |
 |-------|---------------|
-| `org.cqels.playground.HelloCqels` | `[NOW]` window + `FILTER` — low-battery alert (SoC < 20 %), the minimal continuous query |
-| `org.cqels.playground.WindowedAggregation` | `[RANGE 3s]` rolling window + `GROUP BY` — per-vehicle avg/peak speed, re-emitted for every vehicle on each arrival |
-| `org.cqels.playground.SlidingWindowTrends` | `[SLIDE 4s STEP 2s]` overlapping windows — per-vehicle moving state-of-charge trend |
-| `org.cqels.playground.AdvancedQueryOperators` | `OPTIONAL` / `UNION` / `FILTER NOT EXISTS` / `BIND` enriching a speed reading against the static fleet graph |
-| `org.cqels.playground.ComplexEventPattern` | declarative CEP — `FILTER(SEQ(?e1; ?e2))` road-rage detection (speed drop then spike) |
-| `org.cqels.playground.CypherGraphQuery` | CypherQL — `MATCH (o:Observation) RETURN o` over the telemetry stream |
-| `org.cqels.playground.RdfsReasoning` | RDFS inference — `ex:DepotVehicle rdfs:subClassOf vsso:Vehicle` (`cqels-reasoning-rete`) |
-| `org.cqels.playground.GeoSpatialFilter` | GeoSPARQL `geof:sfWithin` — vehicles inside the depot geofence (`cqels-geo`) |
-| `org.cqels.playground.SosaObservations` | W3C SOSA/SSN observations + multi-pattern stream join — per vehicle × VSS signal |
-| `org.cqels.playground.VehicleSignalsCdsp` | COVESA VSS (CDSP) — per-vehicle speeding via `GROUP BY` + `HAVING` |
+| `org.cqels.playground.basics.HelloCqels` | `[NOW]` window + `FILTER` — low-battery alert (SoC < 20 %), the minimal continuous query |
+| `org.cqels.playground.windows.WindowedAggregation` | `[RANGE 3s]` rolling window + `GROUP BY` — per-vehicle avg/peak speed, re-emitted for every vehicle on each arrival |
+| `org.cqels.playground.windows.SlidingWindowTrends` | `[SLIDE 4s STEP 2s]` overlapping windows — per-vehicle moving state-of-charge trend |
+| `org.cqels.playground.basics.AdvancedQueryOperators` | `OPTIONAL` / `UNION` / `FILTER NOT EXISTS` / `BIND` enriching a speed reading against the static fleet graph |
+| `org.cqels.playground.cep.ComplexEventPattern` | declarative CEP — `FILTER(SEQ(?e1; ?e2))` road-rage detection (speed drop then spike) |
+| `org.cqels.playground.basics.CypherGraphQuery` | CypherQL — `MATCH (o:Observation) RETURN o` over the telemetry stream |
+| `org.cqels.playground.reasoning.RdfsReasoning` | RDFS inference — `ex:DepotVehicle rdfs:subClassOf vsso:Vehicle` (`cqels-reasoning-rete`) |
+| `org.cqels.playground.geo.GeoSpatialFilter` | GeoSPARQL `geof:sfWithin` — vehicles inside the depot geofence (`cqels-geo`) |
+| `org.cqels.playground.basics.SosaObservations` | W3C SOSA/SSN observations + multi-pattern stream join — per vehicle × VSS signal |
+| `org.cqels.playground.cdsp.VehicleSignalsCdsp` | COVESA VSS (CDSP) — per-vehicle speeding via `GROUP BY` + `HAVING` |
 
 See [`playground/README.md`](playground/README.md) for a description of each (grouped by
 category: Basics, Windowing, Advanced query, CEP, Advanced CDSP analytics & CEP, Query

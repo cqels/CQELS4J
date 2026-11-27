@@ -13,7 +13,7 @@
 # quietly starts lying to readers who then apply a workaround they no longer need. The failure is
 # silent and open-ended, which is precisely the shape of defect this repo was set up to prevent.
 #
-# So org.cqels.playground.CapabilityProbe asserts both directions:
+# So org.cqels.playground.probe.CapabilityProbe asserts both directions:
 #   - caveats     documented as broken. Passing now => the docs are stale, and the probe names
 #                 the files to edit.
 #   - capabilities documented as working and relied on by the examples. Failing => a regression
@@ -32,7 +32,7 @@ set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PLAYGROUND_DIR="${REPO_ROOT}/playground"
-PROBE_CLASS="org.cqels.playground.CapabilityProbe"
+PROBE_CLASS="org.cqels.playground.probe.CapabilityProbe"
 
 if ! git -C "${REPO_ROOT}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     echo "usage error: not inside a git work tree" >&2

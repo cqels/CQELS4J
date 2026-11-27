@@ -1,7 +1,8 @@
-package org.cqels.playground;
+package org.cqels.playground.geo;
 
 import org.cqels.engine.CQELSEngine;
 import org.cqels.engine.DataStream;
+import org.cqels.playground.Fleet;
 import org.eclipse.rdf4j.model.ValueFactory;
 import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
 
@@ -26,7 +27,7 @@ import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
  *
  * <p>Add-on dependency: {@code org.cqels:cqels-geo}.
  *
- * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.GeoSpatialFilter}
+ * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.geo.GeoSpatialFilter}
  */
 public class GeoSpatialFilter {
 

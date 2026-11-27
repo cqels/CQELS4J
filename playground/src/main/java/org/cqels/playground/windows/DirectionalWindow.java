@@ -1,7 +1,8 @@
-package org.cqels.playground;
+package org.cqels.playground.windows;
 
 import org.cqels.engine.CQELSEngine;
 import org.cqels.engine.DataStream;
+import org.cqels.playground.Fleet;
 
 /**
  * Example — directional (LARS-style) window with an emission policy.
@@ -17,7 +18,7 @@ import org.cqels.engine.DataStream;
  * deterministic. The query reads one triple pattern, so it counts the observation per vehicle rather
  * than joining the signal type.
  *
- * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.DirectionalWindow}
+ * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.windows.DirectionalWindow}
  */
 public class DirectionalWindow {
 

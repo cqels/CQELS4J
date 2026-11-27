@@ -1,4 +1,4 @@
-package org.cqels.playground;
+package org.cqels.playground.windows;
 
 import java.util.LinkedHashSet;
 import java.util.Map;
@@ -9,6 +9,7 @@ import org.cqels.engine.CQELSEngine;
 import org.cqels.engine.DataStream;
 import org.cqels.engine.cep.AnchoredPatternMatch;
 import org.cqels.engine.cep.PatternMatch;
+import org.cqels.playground.Fleet;
 import org.cqels.stream.StreamElement;
 import org.eclipse.rdf4j.model.ValueFactory;
 import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
@@ -80,7 +81,7 @@ import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
  * has a comparable signal, {@code ADAS.ObstacleDetection.<instance>.TimeGap} ("time in
  * milliseconds before potential impact object"), in milliseconds.
  *
- * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.CollisionWarningReview}
+ * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.windows.CollisionWarningReview}
  */
 public class CollisionWarningReview {
 

@@ -1,7 +1,8 @@
-package org.cqels.playground;
+package org.cqels.playground.basics;
 
 import org.cqels.engine.CQELSEngine;
 import org.cqels.engine.DataStream;
+import org.cqels.playground.Fleet;
 import org.eclipse.rdf4j.model.ValueFactory;
 import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
 import org.eclipse.rdf4j.repository.RepositoryConnection;
@@ -18,7 +19,7 @@ import org.eclipse.rdf4j.repository.RepositoryConnection;
  *   <li>{@code BIND} — compute remaining headroom to a 130 km/h reference.</li>
  * </ul>
  *
- * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.AdvancedQueryOperators}
+ * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.basics.AdvancedQueryOperators}
  */
 public class AdvancedQueryOperators {
 
