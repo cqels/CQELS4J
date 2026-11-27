@@ -100,7 +100,7 @@ public class CollisionWarningReview {
     private static final Map<String, Set<String>> REVIEW = new TreeMap<>();
     private static int otherWindows = 0;
 
-    public static void main(String[] args) throws InterruptedException {
+    public static void main(String[] args) {
         try (CQELSEngine engine = CQELSEngine.builder()
                 .id("collision-warning-review")
                 .withMemoryStore()
@@ -180,12 +180,10 @@ public class CollisionWarningReview {
             push(radar, Fleet.EV3, TTC, 1.6, 5_600);
             // EV-3K8 brakes again, inside EV-9TZ's window. It must not count as EV-9TZ's reaction.
             push(radar, Fleet.EV2, BRAKE, 50, 6_000);
-            Thread.sleep(300);
 
             // A later reading moves the watermark past the last window's end, so it reports.
             System.out.println("push: closer @ t=10000 ms (moves the watermark; the remaining windows report)");
             push(radar, Fleet.EV1, TTC, 8.0, 10_000);
-            Thread.sleep(800);
         }
 
         synchronized (CollisionWarningReview.class) {

@@ -53,7 +53,7 @@ public class BoundedTransitiveClosure {
     private static final String KIOSK = SITE + "cityWestKiosk";
     private static final String CITY_WEST_HUB = SITE + "cityWestHub";
 
-    public static void main(String[] args) throws InterruptedException {
+    public static void main(String[] args) {
         // One transitive rule: ?a partOf ?b AND ?b partOf ?c -> ?a partOf ?c.
         IRI partOf = VF.createIRI(PART_OF);
         Rule transitive = Rule.builder()
@@ -108,11 +108,9 @@ public class BoundedTransitiveClosure {
 
             System.out.println("push edge: site:bay12 ex:partOf site:hallA");
             sites.pushTriple(BAY_12, PART_OF, HALL_A);
-            Thread.sleep(300);
 
             System.out.println("push edge: site:hallA ex:partOf site:depotNorth");
             sites.pushTriple(HALL_A, PART_OF, DEPOT_NORTH);
-            Thread.sleep(300);
 
             // The closing edge: the cascade now derives depot-, hall- AND bay-level
             // containment in the region. site:bay12 -> site:regionMetro is the
@@ -120,14 +118,12 @@ public class BoundedTransitiveClosure {
             System.out.println("push edge: site:depotNorth ex:partOf site:regionMetro"
                     + "  (closes the 4-level chain)");
             sites.pushTriple(DEPOT_NORTH, PART_OF, REGION_METRO);
-            Thread.sleep(800);
 
             // Negative case: an unrelated containment edge across town — no path to the
             // region, so the query must stay quiet.
             System.out.println("\npush edge: site:cityWestKiosk ex:partOf site:cityWestHub"
                     + "  (no path to the region -> must stay quiet)");
             sites.pushTriple(KIOSK, PART_OF, CITY_WEST_HUB);
-            Thread.sleep(600);
             System.out.println("  (no containment derived: cityWestHub is not part of regionMetro)");
 
             System.out.println("\ncascade rounds cut short by the depth cap: "

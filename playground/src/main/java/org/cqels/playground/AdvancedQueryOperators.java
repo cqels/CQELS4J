@@ -22,7 +22,7 @@ import org.eclipse.rdf4j.repository.RepositoryConnection;
  */
 public class AdvancedQueryOperators {
 
-    public static void main(String[] args) throws InterruptedException {
+    public static void main(String[] args) {
         try (CQELSEngine engine = CQELSEngine.builder()
                 .id("advanced-operators")
                 .withMemoryStore()
@@ -68,9 +68,7 @@ public class AdvancedQueryOperators {
             for (String[] ev : fleet) {
                 System.out.println("push: " + ev[1].substring(Fleet.EX.length()) + " speed = 96 km/h");
                 Fleet.pushObservation(telemetry, ev[0], ev[1], Fleet.SPEED, 96.0);
-                Thread.sleep(300);
             }
-            Thread.sleep(600);
         }
         System.out.println("\nDone.");
     }

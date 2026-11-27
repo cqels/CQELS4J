@@ -77,7 +77,7 @@ public class SkosConceptRollup {
 
     private static final ValueFactory VF = SimpleValueFactory.getInstance();
 
-    public static void main(String[] args) throws InterruptedException {
+    public static void main(String[] args) {
         IRI ofConcept = VF.createIRI(S2dm.OF_CONCEPT);
         IRI broader = VF.createIRI(S2dm.SKOS_BROADER);
 
@@ -182,15 +182,12 @@ public class SkosConceptRollup {
             cabin.pushTriple(S2dm.C_DOOR, S2dm.SKOS_BROADER, S2dm.C_CABIN);
             cabin.pushTriple(S2dm.C_CABIN, S2dm.SKOS_BROADER, S2dm.C_VEHICLE);
             cabin.pushTriple(S2dm.C_POWERTRAIN, S2dm.SKOS_BROADER, S2dm.C_VEHICLE);
-            Thread.sleep(800);
 
             System.out.println("\npush: EV-7Q2 ofConcept c:Seat  (narrow — no query mentions Seat)");
             S2dm.pushConceptSignal(cabin, Fleet.EV1, S2dm.C_SEAT, 1.0);
-            Thread.sleep(900);
 
             System.out.println("\npush: EV-3K8 ofConcept c:Door  (narrow)");
             S2dm.pushConceptSignal(cabin, Fleet.EV2, S2dm.C_DOOR, 1.0);
-            Thread.sleep(900);
 
             // Negative case: Powertrain is narrower than Vehicle but NOT than Cabin, so it must
             // reach the Vehicle query and stay out of the Cabin one. This is the check that the
@@ -198,7 +195,6 @@ public class SkosConceptRollup {
             System.out.println("\npush: EV-9TZ ofConcept c:Powertrain"
                     + "  (broader=Vehicle only -> must NOT appear under Cabin)");
             S2dm.pushConceptSignal(cabin, Fleet.EV3, S2dm.C_POWERTRAIN, 1.0);
-            Thread.sleep(1200);
 
             System.out.println("\ncascade rounds cut short by the depth cap: "
                     + reasoner.getNetwork().getRecursionTruncations()

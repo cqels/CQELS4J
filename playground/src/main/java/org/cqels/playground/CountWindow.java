@@ -19,7 +19,7 @@ import org.cqels.engine.DataStream;
  */
 public class CountWindow {
 
-    public static void main(String[] args) throws InterruptedException {
+    public static void main(String[] args) {
         try (CQELSEngine engine = CQELSEngine.builder()
                 .id("count-window")
                 .withMemoryStore()
@@ -48,9 +48,7 @@ public class CountWindow {
             for (int i = 0; i < order.length; i++) {
                 System.out.println("push: reading from " + order[i][1].substring(Fleet.EX.length()));
                 Fleet.pushObservation(telemetry, order[i][0], order[i][1], Fleet.SPEED, 50 + i);
-                Thread.sleep(150);
             }
-            Thread.sleep(500);
         }
         System.out.println("\nDone.");
     }

@@ -46,7 +46,7 @@ public class RdfMessageIngestion {
     private static final AtomicLong OBS_SEQ = new AtomicLong();
     private static final String XSD_DOUBLE = "http://www.w3.org/2001/XMLSchema#double";
 
-    public static void main(String[] args) throws InterruptedException {
+    public static void main(String[] args) {
         try (CQELSEngine engine = CQELSEngine.builder()
                 .id("rdf-message-ingestion")
                 .withMemoryStore()
@@ -94,9 +94,7 @@ public class RdfMessageIngestion {
                 System.out.println("push: one atomic observation (" + message.size() + " triples)");
                 telemetry.push(message, eventTime);
                 eventTime += 1000;
-                Thread.sleep(200);
             }
-            Thread.sleep(500);
         }
         System.out.println("\nDone.");
     }

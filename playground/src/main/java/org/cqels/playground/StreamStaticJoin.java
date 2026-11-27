@@ -18,7 +18,7 @@ import org.cqels.engine.DataStream;
  */
 public class StreamStaticJoin {
 
-    public static void main(String[] args) throws InterruptedException {
+    public static void main(String[] args) {
         try (CQELSEngine engine = CQELSEngine.builder()
                 .id("stream-static-join")
                 .withMemoryStore()
@@ -57,9 +57,7 @@ public class StreamStaticJoin {
                 String[] ev = fleet[i];
                 System.out.printf("push: %s speed = %.0f km/h%n", ev[1].substring(Fleet.EX.length()), kmh[i]);
                 Fleet.pushObservation(telemetry, ev[0], ev[1], Fleet.SPEED, kmh[i]);
-                Thread.sleep(300);
             }
-            Thread.sleep(600);
         }
         System.out.println("\nDone.");
     }

@@ -28,7 +28,7 @@ public class WindowedAggregation {
 
     private static final Random RANDOM = new Random(7);
 
-    public static void main(String[] args) throws InterruptedException {
+    public static void main(String[] args) {
         try (CQELSEngine engine = CQELSEngine.builder()
                 .id("windowed-aggregation")
                 .withMemoryStore()
@@ -63,9 +63,7 @@ public class WindowedAggregation {
                 String[] ev = fleet[RANDOM.nextInt(fleet.length)];
                 double kmh = 40 + RANDOM.nextDouble() * 60;   // 40–100 km/h
                 Fleet.pushObservationAt(telemetry, ev[0], ev[1], Fleet.SPEED, kmh, 1_000 + i * 150L);
-                Thread.sleep(150);
             }
-            Thread.sleep(1000);
         }
         System.out.println("\nDone.");
     }

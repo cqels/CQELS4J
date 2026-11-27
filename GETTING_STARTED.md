@@ -139,7 +139,7 @@ import org.cqels.engine.CQELSEngine;
 import org.cqels.engine.DataStream;
 
 public class FirstQuery {
-    public static void main(String[] args) throws InterruptedException {
+    public static void main(String[] args) {
         // The engine is AutoCloseable; try-with-resources stops it cleanly.
         try (CQELSEngine engine = CQELSEngine.builder()
                 .id("first-query")
@@ -170,8 +170,8 @@ public class FirstQuery {
             // 5. Feed data; matching rows are pushed to the listener.
             telemetry.push("https://example.org/fleet/obs/1", "http://www.w3.org/ns/sosa/hasSimpleResult", 18.0); // SoC 18 % -> alert
             telemetry.push("https://example.org/fleet/obs/2", "http://www.w3.org/ns/sosa/hasSimpleResult", 64.0); // ignored
-
-            Thread.sleep(500); // let results flush before close()
+            // For this query the listener runs on the pushing thread: the alert has printed before
+            // push() returns, so nothing needs to wait before close().
         }
     }
 }

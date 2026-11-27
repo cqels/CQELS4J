@@ -19,7 +19,7 @@ import org.cqels.stream.StreamElement;
  */
 public class CepQuantifier {
 
-    public static void main(String[] args) throws InterruptedException {
+    public static void main(String[] args) {
         try (CQELSEngine engine = CQELSEngine.builder()
                 .id("cep-quantifier")
                 .withMemoryStore()
@@ -57,9 +57,7 @@ public class CepQuantifier {
                 System.out.println("push: " + ev.substring(Fleet.FLEET.length()) + " @ " + t + " ms");
                 Fleet.pushDrivingEventAt(events, ev, t);
                 t += 300;
-                Thread.sleep(300);
             }
-            Thread.sleep(1500);
         }
         System.out.println("\nDone.");
     }

@@ -40,7 +40,7 @@ public class MessageStreamOverSse {
         List<Map<String, Object>> readings = Collections.synchronizedList(new ArrayList<>());
 
         try (SseMessageChannel.Producer producer =
-                     new SseMessageChannel.Producer(messages, SseMessageChannel.Payload.JSON_LD, 300);
+                     new SseMessageChannel.Producer(messages, SseMessageChannel.Payload.JSON_LD, 0);
              CQELSEngine engine = CQELSEngine.builder().id("rdf-messages-over-sse").withMemoryStore().build()) {
 
             DataStream cabin = engine.createStream("Cabin");
@@ -67,7 +67,6 @@ public class MessageStreamOverSse {
                         + (message.isEmpty() ? " (empty: a heartbeat)" : "") + " at " + Instant.ofEpochMilli(t));
                 cabin.push(message, t);
             });
-            Thread.sleep(600);
             System.out.println("\nconsumer: " + received + " events, " + readings.size() + " readings");
         }
         System.out.println("\nDone.");

@@ -22,7 +22,7 @@ public class WetRoadBraking {
 
     private static long readingSeq = 0;
 
-    public static void main(String[] args) throws InterruptedException {
+    public static void main(String[] args) {
         try (CQELSEngine engine = CQELSEngine.builder()
                 .id("wet-road-braking")
                 .withMemoryStore()
@@ -57,25 +57,20 @@ public class WetRoadBraking {
             engine.start();
             System.out.println("Watching for: a > 20 km/h speed drop when the first reading reports rain.\n");
 
-            // Every reading carries an explicit event time (ms), following the pauses below, so the
-            // windows hold the same readings every run.
+            // Every reading carries an explicit event time (ms), so the windows hold the same readings
+            // every run; the gaps between phases are in event time, not wall-clock time.
             System.out.println("Phase 1: EV-7Q2 brakes hard on a DRY road, 100 -> 65 (must NOT match - rain gate).");
             pushRoadReading(telemetry, Fleet.EV1, 100, 0, 1_000);
-            Thread.sleep(300);
             pushRoadReading(telemetry, Fleet.EV1, 65, 0, 1_300);
-            Thread.sleep(5500);   // pacing; the next reading's event time, 5.5 s on, takes phase 1 out of the 5s window
+            // the next reading's event time, 5.5 s on, takes phase 1 out of the 5s window
 
             System.out.println("Phase 2: EV-3K8 eases off in the rain, 80 -> 70 (must NOT match - drop below 20 km/h).");
             pushRoadReading(telemetry, Fleet.EV2, 80, 1, 6_800);
-            Thread.sleep(300);
             pushRoadReading(telemetry, Fleet.EV2, 70, 1, 7_100);
-            Thread.sleep(5500);
 
             System.out.println("Phase 3: EV-9TZ brakes hard in the rain, 95 -> 60 (MUST match: decel 35 while raining).");
             pushRoadReading(telemetry, Fleet.EV3, 95, 1, 12_600);
-            Thread.sleep(300);
             pushRoadReading(telemetry, Fleet.EV3, 60, 1, 12_900);
-            Thread.sleep(1500);
         }
         System.out.println("\nDone.");
     }

@@ -20,7 +20,7 @@ import org.cqels.stream.StreamElement;
  */
 public class ComplexEventPattern {
 
-    public static void main(String[] args) throws InterruptedException {
+    public static void main(String[] args) {
         try (CQELSEngine engine = CQELSEngine.builder()
                 .id("complex-event-pattern")
                 .withMemoryStore()
@@ -47,10 +47,8 @@ public class ComplexEventPattern {
             // Drop -> Spike : matches. Explicit event times, so the printed match is the same every run.
             System.out.println("push: SpeedDropEvent @ 1000 ms");
             Fleet.pushDrivingEventAt(events, Fleet.SPEED_DROP, 1_000);
-            Thread.sleep(300);
             System.out.println("push: SpeedSpikeEvent @ 1300 ms");
             Fleet.pushDrivingEventAt(events, Fleet.SPEED_SPIKE, 1_300);
-            Thread.sleep(1000);
         }
         System.out.println("\nDone.");
     }

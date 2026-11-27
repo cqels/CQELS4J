@@ -84,7 +84,6 @@ try (CQELSEngine engine = CQELSEngine.builder().withMemoryStore().build()) {
     engine.start();
     telemetry.push("https://example.org/fleet/obs/1",
                    "http://www.w3.org/ns/sosa/hasSimpleResult", 18.0);
-    Thread.sleep(500);
 }
 ```
 

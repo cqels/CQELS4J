@@ -27,7 +27,7 @@ import org.cqels.playground.Fleet;
  */
 public class LiveEfficiencyTicker {
 
-    public static void main(String[] args) throws InterruptedException {
+    public static void main(String[] args) {
         try (CQELSEngine engine = CQELSEngine.builder()
                 .id("live-efficiency-ticker")
                 .withMemoryStore()
@@ -67,13 +67,11 @@ public class LiveEfficiencyTicker {
                         + ": EV-7Q2 " + (-7200 - i * 100) + "W @ " + (48 + i) + " km/h"
                         + " | EV-9TZ " + (-23000 - i * 250) + "W @ " + (92 + i) + " km/h"
                         + " | EV-3K8 +11000W @ 0 km/h");
-                Thread.sleep(400);
             }
 
             // End of run: complete the stream so the sliding aggregation flushes its final
             // ticker (same idiom as the CDSP test suite for windowed GROUP BY queries).
             telemetry.complete();
-            Thread.sleep(1500);
         }
         System.out.println("\nDone.");
     }

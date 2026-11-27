@@ -68,7 +68,7 @@ public class MissionPreservationAsp {
     private static final ValueFactory VF = SimpleValueFactory.getInstance();
     private static final AtomicLong OBS_SEQ = new AtomicLong();
 
-    public static void main(String[] args) throws InterruptedException {
+    public static void main(String[] args) {
         Set<String> printed = ConcurrentHashMap.newKeySet();
         Set<String> atRisk = ConcurrentHashMap.newKeySet();
 
@@ -131,23 +131,18 @@ public class MissionPreservationAsp {
             System.out.println("Start of shift — mission control publishes next-duty reserves:");
             pushReserve(telemetry, Fleet.EV1, 35);   // EV-7Q2 must keep 35 %
             pushReserve(telemetry, Fleet.EV2, 50);   // EV-3K8 must keep 50 %
-            Thread.sleep(300);
 
             System.out.println("\nEV-3K8 plugs in at Depot North:");
             pushChargingAt(telemetry, Fleet.EV2, Fleet.STATION1);
-            Thread.sleep(300);
 
             System.out.println("\nTelemetry — EV-7Q2 at 62 % (above its 35 % reserve, nothing derives):");
             pushSocBand(telemetry, Fleet.SENSOR_EV1, Fleet.EV1, 62);
-            Thread.sleep(500);
 
             System.out.println("\nTelemetry — EV-3K8 drops to 42 % (below its 50 % reserve, but it is charging):");
             pushSocBand(telemetry, Fleet.SENSOR_EV2, Fleet.EV2, 42);
-            Thread.sleep(500);
 
             System.out.println("\nTelemetry — EV-7Q2 drops to 28 % (below its 35 % reserve, still on the road):");
             pushSocBand(telemetry, Fleet.SENSOR_EV1, Fleet.EV1, 28);
-            Thread.sleep(1500);
 
             System.out.println("\nSummary:");
             System.out.println("  EV-7Q2 at risk:     " + atRisk.contains(Fleet.EV1) + " (expected true)");

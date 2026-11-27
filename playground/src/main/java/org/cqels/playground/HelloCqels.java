@@ -19,7 +19,7 @@ import org.cqels.engine.DataStream;
  */
 public class HelloCqels {
 
-    public static void main(String[] args) throws InterruptedException {
+    public static void main(String[] args) {
         try (CQELSEngine engine = CQELSEngine.builder()
                 .id("hello-cqels")
                 .withMemoryStore()
@@ -47,9 +47,7 @@ public class HelloCqels {
                 int v = i % vehicles.length;
                 System.out.printf("push: %s SoC = %.1f %%%n", vehicles[v].substring(Fleet.EX.length()), soc[i]);
                 Fleet.pushObservation(telemetry, sensors[v], vehicles[v], Fleet.SOC, soc[i]);
-                Thread.sleep(200);
             }
-            Thread.sleep(500);
         }
         System.out.println("\nDone.");
     }

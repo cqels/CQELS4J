@@ -20,7 +20,7 @@ public class SlidingWindowTrends {
 
     private static final Random RANDOM = new Random(3);
 
-    public static void main(String[] args) throws InterruptedException {
+    public static void main(String[] args) {
         try (CQELSEngine engine = CQELSEngine.builder()
                 .id("sliding-window-trends")
                 .withMemoryStore()
@@ -54,9 +54,7 @@ public class SlidingWindowTrends {
                 String[] ev = fleet[RANDOM.nextInt(fleet.length)];
                 Fleet.pushObservationAt(telemetry, ev[0], ev[1], Fleet.SOC, 20 + RANDOM.nextDouble() * 70,
                         1_000 + i * 300L);
-                Thread.sleep(300);
             }
-            Thread.sleep(1000);
         }
         System.out.println("\nDone.");
     }

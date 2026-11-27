@@ -32,7 +32,7 @@ public class GeoSpatialFilter {
 
     private static final String DEPOT_GEOFENCE = "POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))";
 
-    public static void main(String[] args) throws InterruptedException {
+    public static void main(String[] args) {
         ValueFactory vf = SimpleValueFactory.getInstance();
 
         try (CQELSEngine engine = CQELSEngine.builder()
@@ -65,9 +65,7 @@ public class GeoSpatialFilter {
 
             // EV-7Q2 (POINT(2 2)) is inside the depot zone; EV-9TZ (POINT(20 20)) is out on the road.
             pushLocation(telemetry, vf, Fleet.SENSOR_EV1, Fleet.EV1, "POINT(2 2)");
-            Thread.sleep(300);
             pushLocation(telemetry, vf, Fleet.SENSOR_EV3, Fleet.EV3, "POINT(20 20)");
-            Thread.sleep(600);
         }
         System.out.println("\nDone.");
     }

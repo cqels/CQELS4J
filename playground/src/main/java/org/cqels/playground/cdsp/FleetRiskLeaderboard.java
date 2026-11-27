@@ -23,7 +23,7 @@ public class FleetRiskLeaderboard {
 
     private static long readingSeq = 0;
 
-    public static void main(String[] args) throws InterruptedException {
+    public static void main(String[] args) {
         try (CQELSEngine engine = CQELSEngine.builder()
                 .id("fleet-risk-leaderboard")
                 .withMemoryStore()
@@ -65,13 +65,11 @@ public class FleetRiskLeaderboard {
                 }
                 pushRiskReading(telemetry, Fleet.EV2, i < 2 ? 110 : 80, 5, t);   // 2 violations, then clean
                 pushRiskReading(telemetry, Fleet.EV1, 60, 5, t);                 // always clean
-                Thread.sleep(250);
             }
 
             // End of shift: complete the stream so the aggregation window flushes its final
             // leaderboard (same idiom as the CDSP test suite for windowed GROUP BY queries).
             telemetry.complete();
-            Thread.sleep(1500);
         }
         System.out.println("\nDone.");
     }

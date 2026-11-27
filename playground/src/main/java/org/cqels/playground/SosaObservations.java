@@ -24,7 +24,7 @@ public class SosaObservations {
 
     private static final Random RANDOM = new Random(11);
 
-    public static void main(String[] args) throws InterruptedException {
+    public static void main(String[] args) {
         try (CQELSEngine engine = CQELSEngine.builder()
                 .id("sosa-observations")
                 .withMemoryStore()
@@ -60,9 +60,7 @@ public class SosaObservations {
                 Fleet.pushObservationAt(telemetry, ev[0], ev[1],
                         speed ? Fleet.SPEED : Fleet.SOC,
                         speed ? 40 + RANDOM.nextDouble() * 60 : 20 + RANDOM.nextDouble() * 70, 1_000 + i * 150L);
-                Thread.sleep(150);
             }
-            Thread.sleep(1000);
         }
         System.out.println("\nDone.");
     }

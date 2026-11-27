@@ -27,7 +27,7 @@ import java.util.Map;
  */
 public class AspReasoning {
 
-    public static void main(String[] args) throws InterruptedException {
+    public static void main(String[] args) {
         try (CQELSEngine engine = CQELSEngine.builder()
                 .id("asp-reasoning")
                 .withMemoryStore()
@@ -71,9 +71,7 @@ public class AspReasoning {
             for (String[] ev : fleet) {
                 System.out.println("push: telemetry from " + ev[1].substring(Fleet.EX.length()));
                 Fleet.pushObservation(telemetry, ev[0], ev[1], Fleet.SPEED, 60.0);
-                Thread.sleep(300);
             }
-            Thread.sleep(1000);
         }
         System.out.println("\nDone.");
     }
