@@ -1,0 +1,22 @@
+Engine started. One Door.isOpen concept, four zones — the queries bind
+row/side as data instead of enumerating VSS signal paths.
+
+push: EV-7Q2 Door.isOpen FRONT/DRIVER_SIDE = 1
+  DOOR OPEN -> {side=https://example.org/vss#DRIVER_SIDE, row=https://example.org/vss#FRONT, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+    [open events per vehicle+zone] {side=https://example.org/vss#DRIVER_SIDE, openEvents=1, row=https://example.org/vss#FRONT, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+
+push: EV-7Q2 Door.isOpen REAR/PASSENGER_SIDE = 1
+  DOOR OPEN -> {side=https://example.org/vss#PASSENGER_SIDE, row=https://example.org/vss#REAR, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+    !! REAR PASSENGER-SIDE door ajar -> {vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+    [open events per vehicle+zone] {side=https://example.org/vss#DRIVER_SIDE, openEvents=1, row=https://example.org/vss#FRONT, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+    [open events per vehicle+zone] {side=https://example.org/vss#PASSENGER_SIDE, openEvents=1, row=https://example.org/vss#REAR, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+
+push: EV-3K8 Door.isOpen FRONT/PASSENGER_SIDE = 0  (closed -> filtered)
+    [open events per vehicle+zone] {side=https://example.org/vss#DRIVER_SIDE, openEvents=1, row=https://example.org/vss#FRONT, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+    [open events per vehicle+zone] {side=https://example.org/vss#PASSENGER_SIDE, openEvents=1, row=https://example.org/vss#REAR, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+
+push: EV-7Q2 Seat.isOccupied REAR/PASSENGER_SIDE = 1  (same zone vocabulary, different concept)
+    [open events per vehicle+zone] {side=https://example.org/vss#PASSENGER_SIDE, openEvents=1, row=https://example.org/vss#REAR, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+    [open events per vehicle+zone] {side=https://example.org/vss#DRIVER_SIDE, openEvents=1, row=https://example.org/vss#FRONT, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+
+Done.

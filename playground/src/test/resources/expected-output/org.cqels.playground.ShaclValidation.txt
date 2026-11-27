@@ -1,0 +1,13 @@
+Engine started. Shape: every sosa:Observation needs a result.
+
+push: observation obs/1 without a result
+  validation -> conforms=false violations=1
+      violation: min_count on iri("https://example.org/fleet/obs/1")
+  validation -> conforms=false violations=1
+      violation: min_count on iri("https://example.org/fleet/obs/1")
+  validation -> conforms=false violations=1
+      violation: min_count on iri("https://example.org/fleet/obs/1")
+push: the missing result for the same observation
+  validation -> conforms=true violations=0
+
+Done.

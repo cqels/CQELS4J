@@ -1,0 +1,10 @@
+Engine started. Cypher MATCH (o:Observation) over the telemetry stream.
+
+push: observation from vehicle/EV-7Q2
+  observation -> {o.type=http://www.w3.org/ns/sosa/Observation, o=https://example.org/fleet/obs/1}
+push: observation from vehicle/EV-3K8
+  observation -> {o.type=http://www.w3.org/ns/sosa/Observation, o=https://example.org/fleet/obs/2}
+push: observation from vehicle/EV-9TZ
+  observation -> {o.type=http://www.w3.org/ns/sosa/Observation, o=https://example.org/fleet/obs/3}
+
+Done.

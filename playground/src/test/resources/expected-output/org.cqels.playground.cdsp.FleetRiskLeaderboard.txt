@@ -1,0 +1,53 @@
+Risk leaderboard: violations = speed > 100 km/h OR |steering| > 60 degrees;
+a vehicle makes the board only with more than 3 violations in the 10s window.
+
+Pushing 6 readings per vehicle into one window:
+  EV-9TZ driven hard   (6 violations - MUST top the leaderboard)
+  EV-3K8 borderline    (2 violations - HAVING must gate it out)
+  EV-7Q2 clean         (0 violations - never grouped)
+
+push: EV-9TZ speed=120.0 angle=10.0
+push: EV-3K8 speed=110.0 angle=5.0
+push: EV-7Q2 speed=60.0 angle=5.0
+push: EV-9TZ speed=60.0 angle=75.0
+push: EV-3K8 speed=110.0 angle=5.0
+push: EV-7Q2 speed=60.0 angle=5.0
+push: EV-9TZ speed=120.0 angle=10.0
+push: EV-3K8 speed=80.0 angle=5.0
+push: EV-7Q2 speed=60.0 angle=5.0
+  RISK -> {violationCount=4, vehicle=https://example.org/fleet/vehicle/EV-9TZ, avgSpeed=90.0}
+push: EV-9TZ speed=60.0 angle=75.0
+  RISK -> {violationCount=4, vehicle=https://example.org/fleet/vehicle/EV-9TZ, avgSpeed=90.0}
+  RISK -> {violationCount=4, vehicle=https://example.org/fleet/vehicle/EV-9TZ, avgSpeed=90.0}
+  RISK -> {violationCount=4, vehicle=https://example.org/fleet/vehicle/EV-9TZ, avgSpeed=90.0}
+push: EV-3K8 speed=80.0 angle=5.0
+  RISK -> {violationCount=4, vehicle=https://example.org/fleet/vehicle/EV-9TZ, avgSpeed=90.0}
+  RISK -> {violationCount=4, vehicle=https://example.org/fleet/vehicle/EV-9TZ, avgSpeed=90.0}
+  RISK -> {violationCount=4, vehicle=https://example.org/fleet/vehicle/EV-9TZ, avgSpeed=90.0}
+push: EV-7Q2 speed=60.0 angle=5.0
+  RISK -> {violationCount=4, vehicle=https://example.org/fleet/vehicle/EV-9TZ, avgSpeed=90.0}
+  RISK -> {violationCount=4, vehicle=https://example.org/fleet/vehicle/EV-9TZ, avgSpeed=90.0}
+  RISK -> {violationCount=5, vehicle=https://example.org/fleet/vehicle/EV-9TZ, avgSpeed=96.0}
+push: EV-9TZ speed=120.0 angle=10.0
+  RISK -> {violationCount=5, vehicle=https://example.org/fleet/vehicle/EV-9TZ, avgSpeed=96.0}
+  RISK -> {violationCount=5, vehicle=https://example.org/fleet/vehicle/EV-9TZ, avgSpeed=96.0}
+  RISK -> {violationCount=5, vehicle=https://example.org/fleet/vehicle/EV-9TZ, avgSpeed=96.0}
+push: EV-3K8 speed=80.0 angle=5.0
+  RISK -> {violationCount=5, vehicle=https://example.org/fleet/vehicle/EV-9TZ, avgSpeed=96.0}
+  RISK -> {violationCount=5, vehicle=https://example.org/fleet/vehicle/EV-9TZ, avgSpeed=96.0}
+  RISK -> {violationCount=5, vehicle=https://example.org/fleet/vehicle/EV-9TZ, avgSpeed=96.0}
+push: EV-7Q2 speed=60.0 angle=5.0
+  RISK -> {violationCount=5, vehicle=https://example.org/fleet/vehicle/EV-9TZ, avgSpeed=96.0}
+  RISK -> {violationCount=5, vehicle=https://example.org/fleet/vehicle/EV-9TZ, avgSpeed=96.0}
+  RISK -> {violationCount=6, vehicle=https://example.org/fleet/vehicle/EV-9TZ, avgSpeed=90.0}
+push: EV-9TZ speed=60.0 angle=75.0
+  RISK -> {violationCount=6, vehicle=https://example.org/fleet/vehicle/EV-9TZ, avgSpeed=90.0}
+  RISK -> {violationCount=6, vehicle=https://example.org/fleet/vehicle/EV-9TZ, avgSpeed=90.0}
+  RISK -> {violationCount=6, vehicle=https://example.org/fleet/vehicle/EV-9TZ, avgSpeed=90.0}
+push: EV-3K8 speed=80.0 angle=5.0
+  RISK -> {violationCount=6, vehicle=https://example.org/fleet/vehicle/EV-9TZ, avgSpeed=90.0}
+  RISK -> {violationCount=6, vehicle=https://example.org/fleet/vehicle/EV-9TZ, avgSpeed=90.0}
+  RISK -> {violationCount=6, vehicle=https://example.org/fleet/vehicle/EV-9TZ, avgSpeed=90.0}
+push: EV-7Q2 speed=60.0 angle=5.0
+
+Done.

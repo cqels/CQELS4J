@@ -1,0 +1,22 @@
+Engine started. Each speed reading is joined to its driver and service route.
+
+push: vehicle/EV-7Q2 speed = 52 km/h
+  enriched -> {route=Route-D, driver=Alice, kmh=52.0, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+push: vehicle/EV-3K8 speed = 64 km/h
+  enriched -> {route=Route-D, driver=Alice, kmh=52.0, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+  enriched -> {route=Route-D, driver=Alice, kmh=52.0, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+  enriched -> {route=Route-D, driver=Alice, kmh=52.0, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+  enriched -> {route=Route-D, driver=Alice, kmh=52.0, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+  enriched -> {route=Route-D, driver=Alice, kmh=52.0, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+  enriched -> {route=Route-D, driver=Bob, kmh=64.0, vehicle=https://example.org/fleet/vehicle/EV-3K8}
+push: vehicle/EV-9TZ speed = 48 km/h
+  enriched -> {route=Route-D, driver=Alice, kmh=52.0, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+  enriched -> {route=Route-D, driver=Bob, kmh=64.0, vehicle=https://example.org/fleet/vehicle/EV-3K8}
+  enriched -> {route=Route-D, driver=Alice, kmh=52.0, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+  enriched -> {route=Route-D, driver=Bob, kmh=64.0, vehicle=https://example.org/fleet/vehicle/EV-3K8}
+  enriched -> {route=Route-D, driver=Bob, kmh=64.0, vehicle=https://example.org/fleet/vehicle/EV-3K8}
+  enriched -> {route=Route-D, driver=Bob, kmh=64.0, vehicle=https://example.org/fleet/vehicle/EV-3K8}
+  enriched -> {route=Route-D, driver=Bob, kmh=64.0, vehicle=https://example.org/fleet/vehicle/EV-3K8}
+  enriched -> {route=Route-B, driver=Carol, kmh=48.0, vehicle=https://example.org/fleet/vehicle/EV-9TZ}
+
+Done.

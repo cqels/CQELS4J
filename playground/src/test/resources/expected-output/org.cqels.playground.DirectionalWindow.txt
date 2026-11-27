@@ -1,0 +1,10 @@
+Engine started. Forward 2s window, running + final charge-reading counts.
+
+  [FUTURE 2s] -> {c=1, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+  [FUTURE 2s] -> {c=1, vehicle=https://example.org/fleet/vehicle/EV-3K8}
+  [FUTURE 2s] -> {c=2, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+  [FUTURE 2s] -> {c=2, vehicle=https://example.org/fleet/vehicle/EV-7Q2}
+  [FUTURE 2s] -> {c=1, vehicle=https://example.org/fleet/vehicle/EV-3K8}
+  [FUTURE 2s] -> {c=1, vehicle=https://example.org/fleet/vehicle/EV-9TZ}
+
+Done.

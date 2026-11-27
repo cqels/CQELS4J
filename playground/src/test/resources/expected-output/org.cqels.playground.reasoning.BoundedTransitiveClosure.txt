@@ -1,0 +1,15 @@
+Engine started. Rule: ex:partOf is transitive (recursive inference, depth cap 4).
+
+push edge: site:bay12 ex:partOf site:hallA
+push edge: site:hallA ex:partOf site:depotNorth
+push edge: site:depotNorth ex:partOf site:regionMetro  (closes the 4-level chain)
+  contained in site:regionMetro -> {asset=https://example.org/fleet/site/depotNorth}
+  contained in site:regionMetro -> {asset=https://example.org/fleet/site/hallA}
+  contained in site:regionMetro -> {asset=https://example.org/fleet/site/bay12}
+
+push edge: site:cityWestKiosk ex:partOf site:cityWestHub  (no path to the region -> must stay quiet)
+  (no containment derived: cityWestHub is not part of regionMetro)
+
+cascade rounds cut short by the depth cap: 0  (0 = every cascade settled naturally below depth 4)
+
+Done.

@@ -1,0 +1,17 @@
+Rule: persistent_violation = 3 consecutive over-limit readings, no compliant reading in between.
+
+Interleaved depot-zone readings (limit 20 km/h):
+push: EV-7Q2 reading 01 @ 34.0 km/h (OVER limit)
+push: EV-9TZ reading 01 @ 31.0 km/h (OVER limit)
+push: EV-7Q2 reading 02 @ 27.0 km/h (OVER limit)
+push: EV-9TZ reading 02 @ 12.0 km/h (compliant)
+push: EV-7Q2 reading 03 @ 29.0 km/h (OVER limit)
+  PERSISTENT VIOLATION -> EV-7Q2 (3rd consecutive over-limit reading: EV-7Q2-03)
+push: EV-9TZ reading 03 @ 26.0 km/h (OVER limit)
+push: EV-9TZ reading 04 @ 33.0 km/h (OVER limit)
+
+Summary:
+  EV-7Q2 flagged: true (expected true)
+  EV-9TZ flagged: false (expected false — its compliant 12 km/h reading sits inside every candidate chain, so `not compliant_between` fails)
+
+Done.

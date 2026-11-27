@@ -1,0 +1,72 @@
+package org.cqels.playground;
+
+import org.cqels.engine.CQELSEngine;
+import org.cqels.engine.DataStream;
+
+import java.util.Random;
+
+/**
+ * Example 2 — windowed aggregation.
+ *
+ * <p>Over a 3-second window, compute per-vehicle speed statistics — average, peak, and sample
+ * count. A {@code [RANGE 3s]} window joins each speed {@code sosa:Observation}'s
+ * {@code observedProperty} ( = {@code vss:Speed}), {@code hasFeatureOfInterest} ( = the vehicle) and
+ * {@code hasSimpleResult} ( = km/h), and {@code GROUP BY} aggregates per vehicle.
+ *
+ * <p>Note: {@code GROUP BY} is what makes this aggregate per-vehicle rather than fleet-wide; it is
+ * not what makes the aggregate apply at all — a global aggregate works too.
+ *
+ * <p>This query reports a running result on every arrival, over a rolling window. Do not read that
+ * as what {@code [RANGE]} does in general: other query shapes instead report epoch-aligned tumbling
+ * buckets, covering a different set of elements rather than merely reporting at a different time.
+ * Which shape does which is not predictable from pattern or aggregate counts —
+ * {@code CQELS-QL_SPEC.md} §9 carries the measured cases.
+ *
+ * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.WindowedAggregation}
+ */
+public class WindowedAggregation {
+
+    private static final Random RANDOM = new Random(7);
+
+    public static void main(String[] args) throws InterruptedException {
+        try (CQELSEngine engine = CQELSEngine.builder()
+                .id("windowed-aggregation")
+                .withMemoryStore()
+                .build()) {
+
+            DataStream telemetry = engine.createStream("Telemetry");
+
+            String query = Fleet.PREFIXES + """
+                    REGISTER QUERY PerVehicleSpeed AS
+                    SELECT ?vehicle (AVG(?kmh) AS ?avgSpeed) (MAX(?kmh) AS ?peak) (COUNT(*) AS ?n)
+                    FROM STREAM Telemetry [RANGE 3s]
+                    WHERE {
+                      STREAM Telemetry {
+                        ?obs sosa:observedProperty vss:Speed .
+                        ?obs sosa:hasFeatureOfInterest ?vehicle .
+                        ?obs sosa:hasSimpleResult ?kmh .
+                      }
+                    }
+                    GROUP BY ?vehicle
+                    """;
+            engine.registerCqelsQuery(query, row ->
+                    System.out.println("  window stats -> " + row));
+
+            engine.start();
+            System.out.println("Engine started. Per-vehicle avg/peak speed over a rolling 3s window, "
+                    + "reported on every arrival.\n");
+
+            String[][] fleet = {
+                    {Fleet.SENSOR_EV1, Fleet.EV1}, {Fleet.SENSOR_EV2, Fleet.EV2}, {Fleet.SENSOR_EV3, Fleet.EV3}};
+            // Explicit event times, 150 ms apart, so each window holds the same readings every run.
+            for (int i = 0; i < 30; i++) {
+                String[] ev = fleet[RANDOM.nextInt(fleet.length)];
+                double kmh = 40 + RANDOM.nextDouble() * 60;   // 40–100 km/h
+                Fleet.pushObservationAt(telemetry, ev[0], ev[1], Fleet.SPEED, kmh, 1_000 + i * 150L);
+                Thread.sleep(150);
+            }
+            Thread.sleep(1000);
+        }
+        System.out.println("\nDone.");
+    }
+}

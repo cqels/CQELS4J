@@ -13,7 +13,7 @@
 # quietly starts lying to readers who then apply a workaround they no longer need. The failure is
 # silent and open-ended, which is precisely the shape of defect this repo was set up to prevent.
 #
-# So org.cqels.examples.CapabilityProbe asserts both directions:
+# So org.cqels.playground.CapabilityProbe asserts both directions:
 #   - caveats     documented as broken. Passing now => the docs are stale, and the probe names
 #                 the files to edit.
 #   - capabilities documented as working and relied on by the examples. Failing => a regression
@@ -31,8 +31,8 @@
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-EXAMPLES_DIR="${REPO_ROOT}/examples"
-PROBE_CLASS="org.cqels.examples.CapabilityProbe"
+PLAYGROUND_DIR="${REPO_ROOT}/playground"
+PROBE_CLASS="org.cqels.playground.CapabilityProbe"
 
 if ! git -C "${REPO_ROOT}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     echo "usage error: not inside a git work tree" >&2
@@ -54,20 +54,20 @@ echo "-- capability probe: building examples --"
 # either test works there — but this is also RELEASING.md step 4, run locally, where a stale
 # target/ from a previous build would mask a broken compile and the probe would then assert
 # against yesterday's classes. `clean` removes the other half of that hazard.
-BUILD_OUT="$(mvn -q -B -f "${EXAMPLES_DIR}/pom.xml" clean compile 2>&1)"
+BUILD_OUT="$(mvn -q -B -f "${PLAYGROUND_DIR}/pom.xml" clean compile 2>&1)"
 BUILD_STATUS=$?
 echo "${BUILD_OUT}" | grep -vE '^WARNING|final field mutation|--enable-final-field-mutation' || true
 
 # A build failure here is usually the artifact mirror being unreachable rather than a defect in
 # the repository — distinguish the two rather than reporting a red for someone's flaky network.
-if [ ${BUILD_STATUS} -ne 0 ] || [ ! -d "${EXAMPLES_DIR}/target/classes" ]; then
+if [ ${BUILD_STATUS} -ne 0 ] || [ ! -d "${PLAYGROUND_DIR}/target/classes" ]; then
     echo "INCONCLUSIVE: examples did not compile — dependencies may be unreachable." >&2
     echo "  Check network access to https://raw.githubusercontent.com/cqels/maven/main/releases and re-run." >&2
     exit 3
 fi
 
 echo "-- capability probe: asserting documented behaviour --"
-OUTPUT="$(mvn -q -B -f "${EXAMPLES_DIR}/pom.xml" exec:java -Dexec.mainClass="${PROBE_CLASS}" 2>&1)"
+OUTPUT="$(mvn -q -B -f "${PLAYGROUND_DIR}/pom.xml" exec:java -Dexec.mainClass="${PROBE_CLASS}" 2>&1)"
 STATUS=$?
 
 # Drop Maven's own JDK-26 reflection warnings; they are Maven's, not this repo's.

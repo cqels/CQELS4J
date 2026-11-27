@@ -1,0 +1,2 @@
+# DemoOutputTest compares these byte for byte; keep them LF on every checkout
+playground/src/test/resources/expected-output/*.txt text eol=lf

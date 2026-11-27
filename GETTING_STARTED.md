@@ -53,13 +53,13 @@ the next, so a pin is still the safer choice.
 
 ## 3. Run the bundled examples
 
-The [`examples/`](examples/) folder is a self-contained Maven project. Clone this repo
+The [`playground/`](playground/) folder is a self-contained Maven project. Clone this repo
 and run any demo:
 
 ```bash
 git clone https://github.com/cqels/CQELS4J.git
-cd CQELS4J/examples
-mvn -q compile exec:java -Dexec.mainClass=org.cqels.examples.HelloCqels
+cd CQELS4J/playground
+mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.HelloCqels
 ```
 
 You should see the alert fire for the two readings below the 20 % threshold, and nothing for
@@ -79,22 +79,22 @@ Done.
 
 That is the whole setup — no credentials, no local configuration. Every other demo runs the
 same way, swapping `-Dexec.mainClass`. A few representative ones — the full categorized list is in
-[`examples/README.md`](examples/README.md):
+[`playground/README.md`](playground/README.md):
 
 | Class | What it shows |
 |-------|---------------|
-| `org.cqels.examples.HelloCqels` | `[NOW]` window + `FILTER` — low-battery alert (SoC < 20 %), the minimal continuous query |
-| `org.cqels.examples.WindowedAggregation` | `[RANGE 3s]` rolling window + `GROUP BY` — per-vehicle avg/peak speed, re-emitted for every vehicle on each arrival |
-| `org.cqels.examples.SlidingWindowTrends` | `[SLIDE 4s STEP 2s]` overlapping windows — per-vehicle moving state-of-charge trend |
-| `org.cqels.examples.AdvancedQueryOperators` | `OPTIONAL` / `UNION` / `FILTER NOT EXISTS` / `BIND` enriching a speed reading against the static fleet graph |
-| `org.cqels.examples.ComplexEventPattern` | declarative CEP — `FILTER(SEQ(?e1; ?e2))` road-rage detection (speed drop then spike) |
-| `org.cqels.examples.CypherGraphQuery` | CypherQL — `MATCH (o:Observation) RETURN o` over the telemetry stream |
-| `org.cqels.examples.RdfsReasoning` | RDFS inference — `ex:DepotVehicle rdfs:subClassOf vsso:Vehicle` (`cqels-reasoning-rete`) |
-| `org.cqels.examples.GeoSpatialFilter` | GeoSPARQL `geof:sfWithin` — vehicles inside the depot geofence (`cqels-geo`) |
-| `org.cqels.examples.SosaObservations` | W3C SOSA/SSN observations + multi-pattern stream join — per vehicle × VSS signal |
-| `org.cqels.examples.VehicleSignalsCdsp` | COVESA VSS (CDSP) — per-vehicle speeding via `GROUP BY` + `HAVING` |
+| `org.cqels.playground.HelloCqels` | `[NOW]` window + `FILTER` — low-battery alert (SoC < 20 %), the minimal continuous query |
+| `org.cqels.playground.WindowedAggregation` | `[RANGE 3s]` rolling window + `GROUP BY` — per-vehicle avg/peak speed, re-emitted for every vehicle on each arrival |
+| `org.cqels.playground.SlidingWindowTrends` | `[SLIDE 4s STEP 2s]` overlapping windows — per-vehicle moving state-of-charge trend |
+| `org.cqels.playground.AdvancedQueryOperators` | `OPTIONAL` / `UNION` / `FILTER NOT EXISTS` / `BIND` enriching a speed reading against the static fleet graph |
+| `org.cqels.playground.ComplexEventPattern` | declarative CEP — `FILTER(SEQ(?e1; ?e2))` road-rage detection (speed drop then spike) |
+| `org.cqels.playground.CypherGraphQuery` | CypherQL — `MATCH (o:Observation) RETURN o` over the telemetry stream |
+| `org.cqels.playground.RdfsReasoning` | RDFS inference — `ex:DepotVehicle rdfs:subClassOf vsso:Vehicle` (`cqels-reasoning-rete`) |
+| `org.cqels.playground.GeoSpatialFilter` | GeoSPARQL `geof:sfWithin` — vehicles inside the depot geofence (`cqels-geo`) |
+| `org.cqels.playground.SosaObservations` | W3C SOSA/SSN observations + multi-pattern stream join — per vehicle × VSS signal |
+| `org.cqels.playground.VehicleSignalsCdsp` | COVESA VSS (CDSP) — per-vehicle speeding via `GROUP BY` + `HAVING` |
 
-See [`examples/README.md`](examples/README.md) for a description of each (grouped by
+See [`playground/README.md`](playground/README.md) for a description of each (grouped by
 category: Basics, Windowing, Advanced query, CEP, Advanced CDSP analytics & CEP, Query
 dialects, Reasoning & validation, Reasoning showcase, Geospatial, Extension functions,
 Standard vocabularies).
@@ -221,7 +221,7 @@ or `[TRIPLES]` query with no static graph pattern. Anywhere else, registration r
 message naming the path. For a hierarchy in the static graph, write the hops explicitly, or use a
 recursive rule — see `CQELS-QL_SPEC.md` §9.
 
-The demos in [`examples/`](examples/) are all verified to run against this release, working around
+The demos in [`playground/`](playground/) are all verified to run against this release, working around
 the rows above where they must. This table is kept honest by `scripts/ci/capability-probe.sh` (see
 `RELEASING.md`), which asserts each row automatically — including the property-path routes and
 the reasoner rows — and fails the moment one of them stops being true.
@@ -239,7 +239,7 @@ language, there are two routes today. Which one you need depends on whether the 
 Jena and RDF4J's `SPARQLRepository` work as they do against any other endpoint:
 
 ```bash
-cd sparql-endpoint && mvn -q package
+cd sparql-endpoint && mvn -q package   # from the repository root, not playground/
 CQELS_SPARQL_SEED_FLEET=true java -jar target/cqels-sparql-endpoint.jar
 # prints: listening on http://127.0.0.1:8089/sparql
 ```
@@ -274,7 +274,7 @@ progress is tracked in [#104](https://github.com/cqels/CQELS4J/issues/104).
 
 ## 8. Where to go next
 
-- **Examples:** [`examples/`](examples/) — the runnable scenarios above are the
+- **Examples:** [`playground/`](playground/) — the runnable scenarios above are the
   fastest way to learn the query shapes.
 - **CQELS-QL language reference:** [`CQELS-QL_SPEC.md`](CQELS-QL_SPEC.md) — the full specification of
   the streaming extensions over SPARQL (windows incl. directional/LARS, named windows, stream–static

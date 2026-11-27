@@ -1,0 +1,16 @@
+Engine started. Queries ask for vsso:Vehicle (top class) and ex:reportsTelemetry (super property) only.
+
+push schema: ex:ElectricBus rdfs:subClassOf ex:DepotVehicle
+push schema: ex:DepotVehicle rdfs:subClassOf vsso:Vehicle
+push schema: ex:reportsSoC rdfs:subPropertyOf ex:reportsTelemetry
+
+push instance: EV-3K8 a ex:ElectricBus  (bottom class, 2 hops down)
+  [rdfs11+rdfs9] entailed vsso:Vehicle -> {vehicle=https://example.org/fleet/vehicle/EV-3K8}
+
+push data: EV-3K8 ex:reportsSoC 54.0  (specific sub-property)
+  [rdfs7] entailed ex:reportsTelemetry -> {value=54.0, vehicle=https://example.org/fleet/vehicle/EV-3K8}
+
+push instance: EV-9TZ a ex:ContractorShuttle  (no axiom -> must stay quiet)
+  (no entailment: ex:ContractorShuttle has no rdfs:subClassOf link to vsso:Vehicle)
+
+Done.

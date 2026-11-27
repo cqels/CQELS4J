@@ -1,0 +1,15 @@
+Watching for: three DIFFERENT subsystem alerts from the SAME vehicle within 15s.
+
+Scenario 1 — one vehicle, three distinct subsystems (should fire):
+push: EV-7Q2 InverterOverTempEvent
+push: EV-7Q2 BrakeWearEvent
+  FAULT CASCADE (3 distinct alerts, one vehicle) -> send to depot: PatternMatch{events=3, duration=600ms, startTime=1000, endTime=1600}
+push: EV-7Q2 TirePressureEvent
+
+Scenario 2 — same alert types, spread across two vehicles (should stay quiet):
+push: EV-3K8 InverterOverTempEvent
+push: EV-9TZ BrakeWearEvent
+push: EV-3K8 TirePressureEvent
+  (no cascade: three distinct alerts, but never three from ONE vehicle — the cross-event same-vehicle guard suppressed the match)
+
+Done.

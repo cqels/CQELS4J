@@ -197,7 +197,7 @@ None of the three needs a query slot or the token; they carry counts and states 
 text, client address or token. Before the audit after #121, `/health` and `/ready` said `ok`
 and `ready` after the engine had stopped and with every slot stuck, and nothing was counted.
 
-- **Logs.** One access-log line per request on stderr (logger `org.cqels.examples.sparql.access`,
+- **Logs.** One access-log line per request on stderr (logger `org.cqels.playground.sparql.access`,
   `CQELS_SPARQL_ACCESS_LOG=false` turns it off) with the path but never the query string: a query
   can carry data that is not the log's to keep. A full set of query slots is also logged, at most
   once a minute.

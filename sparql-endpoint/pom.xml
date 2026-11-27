@@ -3,7 +3,7 @@
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
-    <groupId>org.cqels.examples</groupId>
+    <groupId>org.cqels.playground</groupId>
     <artifactId>cqels-sparql-endpoint</artifactId>
     <version>0.1.0</version>
     <packaging>jar</packaging>
@@ -26,7 +26,7 @@
         <!-- The RDF4J the engine is built on. Any RDF4J module declared here must be this
              version so there is exactly one RDF4J on the classpath. -->
         <rdf4j.version>4.3.8</rdf4j.version>
-        <mainClass>org.cqels.examples.sparql.SparqlEndpointLauncher</mainClass>
+        <mainClass>org.cqels.playground.sparql.SparqlEndpointLauncher</mainClass>
     </properties>
 
     <dependencyManagement>

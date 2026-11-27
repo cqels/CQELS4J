@@ -1,0 +1,15 @@
+Watching for: steering swing > 90 degrees between two readings at > 50 km/h.
+
+Phase 1: EV-7Q2 cruises at 60 km/h with a gentle wiggle (must NOT match - swing too small).
+push: EV-7Q2 speed=60.0 angle=-4.0
+push: EV-7Q2 speed=61.0 angle=5.0
+push: EV-7Q2 speed=60.0 angle=-3.0
+Phase 2: EV-3K8 swings the wheel -40 -> +70 degrees at parking speed (must NOT match - speed gate).
+push: EV-3K8 speed=15.0 angle=-40.0
+push: EV-3K8 speed=14.0 angle=70.0
+Phase 3: EV-9TZ at 85 km/h snaps the wheel -35 -> +80 degrees (MUST match: delta 115 at speed 86).
+push: EV-9TZ speed=85.0 angle=-35.0
+  SWERVE -> {angleDelta=115.0, angle1=-35.0, angle2=80.0, speed=86.0, lat=48.1407, long=11.5807, vehicle=https://example.org/fleet/vehicle/EV-9TZ}
+push: EV-9TZ speed=86.0 angle=80.0
+
+Done.

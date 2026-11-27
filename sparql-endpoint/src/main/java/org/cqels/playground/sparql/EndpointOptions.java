@@ -1,0 +1,271 @@
+package org.cqels.playground.sparql;
+
+import java.util.List;
+
+/**
+ * What the servlet enforces, independent of how it is hosted. The launcher fills this from
+ * {@code CQELS_SPARQL_*} environment variables; a program mounting the servlet in its own Jetty
+ * builds it directly.
+ *
+ * @param path                 the servlet path, e.g. {@code /sparql}
+ * @param maxExecutionSeconds  passed to {@code Query.setMaxExecutionTime}; {@code 0} = unlimited.
+ *                             A query that exceeds it answers 503. <strong>Best effort:</strong>
+ *                             RDF4J checks the limit at operator boundaries, and a query that is
+ *                             inside an operator with no such boundary runs to completion (see
+ *                             the README's measurements) — which is why the slot cap below exists
+ * @param maxConcurrentQueries queries and updates evaluating at once; beyond it the request is
+ *                             answered 503 with {@code Retry-After} at once instead of queuing.
+ *                             Bounds the damage of queries the limit cannot stop
+ * @param maxRows              SELECT rows, or CONSTRUCT / DESCRIBE statements, beyond this are
+ *                             dropped and the response carries {@code X-CQELS-Truncated: true};
+ *                             {@code 0} = unlimited and streamed (except JSON-LD and NDJSON-LD; see
+ *                             {@code maxBufferedBytes}). When set, the result is buffered so the
+ *                             header can be decided before the body starts
+ * @param maxBufferedBytes     what such a buffer may hold, estimated from the values' lengths;
+ *                             reaching it truncates the same way. A row cap alone bounds rows, not
+ *                             memory: one computed literal can be megabytes (found in the audit
+ *                             after #121, an 8 MB row under {@code maxRows=1}). With {@code maxRows}
+ *                             {@code 0}, results stream and this is not used — except JSON-LD and
+ *                             NDJSON-LD, whose RDF4J writers hold statements in memory: those are
+ *                             always held to this, and refused (503) beyond it. Also the most a
+ *                             {@code LOAD} source's body may be, unpacked
+ * @param maxUploadSeconds     a POST body must arrive within this; {@code 0} = no deadline. A body
+ *                             is read while holding a query slot, so a client that trickles one
+ *                             holds that slot, and this is what gives it back: at the deadline a
+ *                             watchdog interrupts the read, even one that is blocked with no body
+ *                             byte arriving (a chunked body stuck in its framing), and the
+ *                             request is answered 408
+ * @param updateEnabled        whether SPARQL Update is accepted at all; off by default because
+ *                             an update rewrites the graph the engine joins its streams against
+ * @param federationEnabled    whether {@code SERVICE} (queries and updates) and {@code LOAD} are
+ *                             accepted. Off by default: both make this <em>server</em> send
+ *                             requests — with bindings from the graph — to any URL the request
+ *                             names, which no browser-side protection can see or stop. Even when
+ *                             on, only {@code http} and {@code https} IRIs are accepted; the
+ *                             servlet performs {@code LOAD} itself within {@code maxExecutionSeconds},
+ *                             and {@code SparqlEndpointLauncher.limitOutboundRequests} gives
+ *                             {@code SERVICE} the same deadline — one for all of a query's
+ *                             SERVICE requests together — within {@code maxServiceRequests} and
+ *                             {@code maxServiceBytes}
+ * @param metadataEnabled      whether the launcher serves {@link SparqlProtocolServlet#METADATA_GRAPH},
+ *                             a snapshot of the engine's streams and status ({@link EngineMetadata}).
+ *                             Read by {@code SparqlEndpointLauncher.startServer}, which then hands
+ *                             the servlet {@code EngineMetadata.of(engine)}; a program constructing
+ *                             the servlet itself passes that supplier (or none) directly. Off by
+ *                             default: stream attributes are whatever the program that created the
+ *                             stream put there, and this endpoint cannot know whether that is fit
+ *                             to publish
+ * @param authToken            bearer token, or {@code null} for no authentication; read-only when
+ *                             {@code updateToken} is set
+ * @param allowedOrigins       browser origins allowed to call the endpoint, or {@code *}; they get
+ *                             CORS headers. Enforced by {@link AccessFilters.Origins}, which
+ *                             refuses any other {@code Origin} with 403 — the servlet itself does not
+ * @param allowedHosts         host names a request's {@code Host} may carry in addition to the
+ *                             loopback names and the bind host, or {@code *} for any. Enforced by
+ *                             {@link AccessFilters.Hosts} whenever no read token is set (or this is
+ *                             given explicitly) — the defence against DNS rebinding
+ * @param maxRequestBytes      bodies larger than this answer 413 before being parsed
+ * @param allowUnauthenticatedRemote  whether {@code SparqlEndpointLauncher.startServer} may bind a
+ *                             non-loopback host with no {@code authToken}. Off by default, and the
+ *                             refusal is in {@code startServer} itself, not only in the launcher's
+ *                             {@code main}: a program embedding the endpoint through
+ *                             {@code startServer} skipped it before (found in the audit after #121)
+ * @param updateToken          a second bearer token, the only one that may update, or {@code null}.
+ *                             With it set, {@code authToken} becomes read-only: one shared token let
+ *                             every reader {@code DROP ALL} once update was on (found in the audit
+ *                             after #121). It may be set without {@code authToken}: reads are then
+ *                             open and writes behind the token. Enforced by
+ *                             {@link AccessFilters.BearerToken}, which marks the requests it lets
+ *                             through without it {@link AccessFilters#READ_ONLY}; the servlet
+ *                             answers an update so marked with 403. Must differ from {@code authToken}
+ * @param shutdownSeconds      how long {@code SparqlEndpointLauncher.startServer}'s Jetty lets
+ *                             requests in progress finish when it is stopped, while refusing new
+ *                             ones; {@code 0} = not at all. A request still running after that is
+ *                             cut off; an update in it that has not committed by the time the
+ *                             servlet is destroyed is rolled back (see the README's
+ *                             <em>Operations</em> for the one window left). Before the audit after
+ *                             #121 every request in progress was cut off at once
+ * @param accessLog            whether {@code startServer} logs one line per request through SLF4J,
+ *                             logger {@code org.cqels.playground.sparql.access}: client address,
+ *                             method, path <em>without</em> the query string, status, bytes and
+ *                             milliseconds. A query's text is never logged
+ * @param maxServiceRequests   with federation on, the most SERVICE requests one query or update
+ *                             makes; beyond it the query is answered 503. RDF4J joins a SERVICE
+ *                             in batches of 15 bindings, so one query over many rows made a request
+ *                             per batch, with no limit (found in the SERVICE audit after #128)
+ * @param maxServiceBytes      with federation on, the most one query or update reads from SERVICE
+ *                             answers in all, decoded, error answers included; beyond it the query
+ *                             is answered 502 and makes no further request. Each answer is read and
+ *                             checked whole before RDF4J parses it (see {@code TimedServiceClient}),
+ *                             so the heap one query takes is a multiple of this, not this
+ * @param federationDestinations with federation on, where SERVICE and LOAD may send requests:
+ *                             {@code public} (the default; also what an empty list means), any
+ *                             host whose every address is public; http(s) origins such as
+ *                             {@code http://localhost:3030}, reached whatever their addresses; or
+ *                             {@code *}, anywhere. Checked on every request and redirect, on the
+ *                             addresses the connection is opened to ({@link Destinations}). Before
+ *                             it, federation reached any address a client named — loopback, the
+ *                             private network, a cloud metadata service — from this server
+ */
+public record EndpointOptions(
+        String path,
+        int maxExecutionSeconds,
+        int maxConcurrentQueries,
+        int maxRows,
+        long maxBufferedBytes,
+        int maxUploadSeconds,
+        boolean updateEnabled,
+        boolean federationEnabled,
+        boolean metadataEnabled,
+        String authToken,
+        List<String> allowedOrigins,
+        List<String> allowedHosts,
+        long maxRequestBytes,
+        boolean allowUnauthenticatedRemote,
+        String updateToken,
+        int shutdownSeconds,
+        boolean accessLog,
+        int maxServiceRequests,
+        long maxServiceBytes,
+        List<String> federationDestinations) {
+
+    public static final String DEFAULT_PATH = "/sparql";
+    public static final int DEFAULT_MAX_EXECUTION_SECONDS = 30;   // the MCP server's client-query default
+    public static final int DEFAULT_MAX_CONCURRENT_QUERIES = 16;
+    public static final long DEFAULT_MAX_REQUEST_BYTES = 1L << 20;
+    public static final long DEFAULT_MAX_BUFFERED_BYTES = 32L << 20;
+    public static final int DEFAULT_MAX_UPLOAD_SECONDS = 30;
+    /** Under Docker's default 10 s between SIGTERM and SIGKILL, leaving the engine and store time to close. */
+    public static final int DEFAULT_SHUTDOWN_SECONDS = 5;
+    /** 15 bindings a batch in RDF4J's bound joins: 1,500 rows' worth of batches. */
+    public static final int DEFAULT_MAX_SERVICE_REQUESTS = 100;
+    public static final long DEFAULT_MAX_SERVICE_BYTES = 16L << 20;
+
+    public EndpointOptions {
+        if (path == null || !path.startsWith("/") || path.length() < 2) {
+            throw new IllegalArgumentException("path must start with '/' and name a resource: " + path);
+        }
+        if (maxExecutionSeconds < 0 || maxRows < 0 || maxUploadSeconds < 0 || maxRequestBytes <= 0
+                || maxConcurrentQueries <= 0 || maxBufferedBytes <= 0 || shutdownSeconds < 0
+                || maxServiceRequests <= 0 || maxServiceBytes <= 0) {
+            throw new IllegalArgumentException("limits must be non-negative (request bytes, buffered bytes and "
+                    + "concurrent queries positive)");
+        }
+        allowedOrigins = allowedOrigins == null ? List.of() : List.copyOf(allowedOrigins);
+        allowedHosts = allowedHosts == null ? List.of() : List.copyOf(allowedHosts);
+        // parsed here so that a mistyped entry fails at start-up, not at the first SERVICE
+        federationDestinations = Destinations.parse(federationDestinations).entries();
+        // stripped, as a presented token is (see AccessFilters.BearerToken): "shared " and
+        // "shared" are one token, which must not count as two (found in co-review of #128)
+        authToken = authToken == null || authToken.isBlank() ? null : authToken.strip();
+        updateToken = updateToken == null || updateToken.isBlank() ? null : updateToken.strip();
+        if (updateToken != null && updateToken.equals(authToken)) {
+            // the read token would then update too, which is what the second token is there to stop
+            throw new IllegalArgumentException("the update token must differ from the read token");
+        }
+    }
+
+    /**
+     * Loopback-friendly defaults: {@code /sparql}, 30 s, 16 slots, unlimited rows (32 MiB of them
+     * when a row cap buffers), 30 s to upload a body, read-only, no federation, no metadata graph,
+     * no token, no browser origins, 1 MiB, no unauthenticated non-loopback bind, 5 s to drain on
+     * stop, an access log, and (with federation on) 100 SERVICE requests and 16 MiB of answers
+     * per query, to public addresses only.
+     */
+    public static EndpointOptions defaults() {
+        return new EndpointOptions(DEFAULT_PATH, DEFAULT_MAX_EXECUTION_SECONDS, DEFAULT_MAX_CONCURRENT_QUERIES, 0,
+                DEFAULT_MAX_BUFFERED_BYTES, DEFAULT_MAX_UPLOAD_SECONDS, false, false, false, null, List.of(), List.of(),
+                DEFAULT_MAX_REQUEST_BYTES, false, null, DEFAULT_SHUTDOWN_SECONDS, true, DEFAULT_MAX_SERVICE_REQUESTS,
+                DEFAULT_MAX_SERVICE_BYTES, List.of(Destinations.PUBLIC));
+    }
+
+    /** Whether any bearer token is set, so that {@link AccessFilters.BearerToken} is installed. */
+    public boolean anyToken() {
+        return authToken != null || updateToken != null;
+    }
+
+    public EndpointOptions withPath(String v) {
+        return new EndpointOptions(v, maxExecutionSeconds, maxConcurrentQueries, maxRows, maxBufferedBytes, maxUploadSeconds, updateEnabled, federationEnabled, metadataEnabled, authToken, allowedOrigins, allowedHosts, maxRequestBytes, allowUnauthenticatedRemote, updateToken, shutdownSeconds, accessLog, maxServiceRequests, maxServiceBytes, federationDestinations);
+    }
+
+    public EndpointOptions withMaxExecutionSeconds(int v) {
+        return new EndpointOptions(path, v, maxConcurrentQueries, maxRows, maxBufferedBytes, maxUploadSeconds, updateEnabled, federationEnabled, metadataEnabled, authToken, allowedOrigins, allowedHosts, maxRequestBytes, allowUnauthenticatedRemote, updateToken, shutdownSeconds, accessLog, maxServiceRequests, maxServiceBytes, federationDestinations);
+    }
+
+    public EndpointOptions withMaxConcurrentQueries(int v) {
+        return new EndpointOptions(path, maxExecutionSeconds, v, maxRows, maxBufferedBytes, maxUploadSeconds, updateEnabled, federationEnabled, metadataEnabled, authToken, allowedOrigins, allowedHosts, maxRequestBytes, allowUnauthenticatedRemote, updateToken, shutdownSeconds, accessLog, maxServiceRequests, maxServiceBytes, federationDestinations);
+    }
+
+    public EndpointOptions withMaxRows(int v) {
+        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, v, maxBufferedBytes, maxUploadSeconds, updateEnabled, federationEnabled, metadataEnabled, authToken, allowedOrigins, allowedHosts, maxRequestBytes, allowUnauthenticatedRemote, updateToken, shutdownSeconds, accessLog, maxServiceRequests, maxServiceBytes, federationDestinations);
+    }
+
+    public EndpointOptions withMaxBufferedBytes(long v) {
+        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, maxRows, v, maxUploadSeconds, updateEnabled, federationEnabled, metadataEnabled, authToken, allowedOrigins, allowedHosts, maxRequestBytes, allowUnauthenticatedRemote, updateToken, shutdownSeconds, accessLog, maxServiceRequests, maxServiceBytes, federationDestinations);
+    }
+
+    public EndpointOptions withMaxUploadSeconds(int v) {
+        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, maxRows, maxBufferedBytes, v, updateEnabled, federationEnabled, metadataEnabled, authToken, allowedOrigins, allowedHosts, maxRequestBytes, allowUnauthenticatedRemote, updateToken, shutdownSeconds, accessLog, maxServiceRequests, maxServiceBytes, federationDestinations);
+    }
+
+    public EndpointOptions withUpdateEnabled(boolean v) {
+        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, maxRows, maxBufferedBytes, maxUploadSeconds, v, federationEnabled, metadataEnabled, authToken, allowedOrigins, allowedHosts, maxRequestBytes, allowUnauthenticatedRemote, updateToken, shutdownSeconds, accessLog, maxServiceRequests, maxServiceBytes, federationDestinations);
+    }
+
+    public EndpointOptions withFederationEnabled(boolean v) {
+        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, maxRows, maxBufferedBytes, maxUploadSeconds, updateEnabled, v, metadataEnabled, authToken, allowedOrigins, allowedHosts, maxRequestBytes, allowUnauthenticatedRemote, updateToken, shutdownSeconds, accessLog, maxServiceRequests, maxServiceBytes, federationDestinations);
+    }
+
+    public EndpointOptions withMetadataEnabled(boolean v) {
+        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, maxRows, maxBufferedBytes, maxUploadSeconds, updateEnabled, federationEnabled, v, authToken, allowedOrigins, allowedHosts, maxRequestBytes, allowUnauthenticatedRemote, updateToken, shutdownSeconds, accessLog, maxServiceRequests, maxServiceBytes, federationDestinations);
+    }
+
+    public EndpointOptions withAuthToken(String v) {
+        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, maxRows, maxBufferedBytes, maxUploadSeconds, updateEnabled, federationEnabled, metadataEnabled, v, allowedOrigins, allowedHosts, maxRequestBytes, allowUnauthenticatedRemote, updateToken, shutdownSeconds, accessLog, maxServiceRequests, maxServiceBytes, federationDestinations);
+    }
+
+    public EndpointOptions withAllowedOrigins(List<String> v) {
+        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, maxRows, maxBufferedBytes, maxUploadSeconds, updateEnabled, federationEnabled, metadataEnabled, authToken, v, allowedHosts, maxRequestBytes, allowUnauthenticatedRemote, updateToken, shutdownSeconds, accessLog, maxServiceRequests, maxServiceBytes, federationDestinations);
+    }
+
+    public EndpointOptions withAllowedHosts(List<String> v) {
+        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, maxRows, maxBufferedBytes, maxUploadSeconds, updateEnabled, federationEnabled, metadataEnabled, authToken, allowedOrigins, v, maxRequestBytes, allowUnauthenticatedRemote, updateToken, shutdownSeconds, accessLog, maxServiceRequests, maxServiceBytes, federationDestinations);
+    }
+
+    public EndpointOptions withMaxRequestBytes(long v) {
+        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, maxRows, maxBufferedBytes, maxUploadSeconds, updateEnabled, federationEnabled, metadataEnabled, authToken, allowedOrigins, allowedHosts, v, allowUnauthenticatedRemote, updateToken, shutdownSeconds, accessLog, maxServiceRequests, maxServiceBytes, federationDestinations);
+    }
+
+    public EndpointOptions withAllowUnauthenticatedRemote(boolean v) {
+        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, maxRows, maxBufferedBytes, maxUploadSeconds, updateEnabled, federationEnabled, metadataEnabled, authToken, allowedOrigins, allowedHosts, maxRequestBytes, v, updateToken, shutdownSeconds, accessLog, maxServiceRequests, maxServiceBytes, federationDestinations);
+    }
+
+    public EndpointOptions withUpdateToken(String v) {
+        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, maxRows, maxBufferedBytes, maxUploadSeconds, updateEnabled, federationEnabled, metadataEnabled, authToken, allowedOrigins, allowedHosts, maxRequestBytes, allowUnauthenticatedRemote, v, shutdownSeconds, accessLog, maxServiceRequests, maxServiceBytes, federationDestinations);
+    }
+
+    public EndpointOptions withShutdownSeconds(int v) {
+        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, maxRows, maxBufferedBytes, maxUploadSeconds, updateEnabled, federationEnabled, metadataEnabled, authToken, allowedOrigins, allowedHosts, maxRequestBytes, allowUnauthenticatedRemote, updateToken, v, accessLog, maxServiceRequests, maxServiceBytes, federationDestinations);
+    }
+
+    public EndpointOptions withAccessLog(boolean v) {
+        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, maxRows, maxBufferedBytes, maxUploadSeconds, updateEnabled, federationEnabled, metadataEnabled, authToken, allowedOrigins, allowedHosts, maxRequestBytes, allowUnauthenticatedRemote, updateToken, shutdownSeconds, v, maxServiceRequests, maxServiceBytes, federationDestinations);
+    }
+
+    public EndpointOptions withMaxServiceRequests(int v) {
+        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, maxRows, maxBufferedBytes, maxUploadSeconds, updateEnabled, federationEnabled, metadataEnabled, authToken, allowedOrigins, allowedHosts, maxRequestBytes, allowUnauthenticatedRemote, updateToken, shutdownSeconds, accessLog, v, maxServiceBytes, federationDestinations);
+    }
+
+    public EndpointOptions withMaxServiceBytes(long v) {
+        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, maxRows, maxBufferedBytes, maxUploadSeconds, updateEnabled, federationEnabled, metadataEnabled, authToken, allowedOrigins, allowedHosts, maxRequestBytes, allowUnauthenticatedRemote, updateToken, shutdownSeconds, accessLog, maxServiceRequests, v, federationDestinations);
+    }
+
+    public EndpointOptions withFederationDestinations(List<String> v) {
+        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, maxRows, maxBufferedBytes, maxUploadSeconds, updateEnabled, federationEnabled, metadataEnabled, authToken, allowedOrigins, allowedHosts, maxRequestBytes, allowUnauthenticatedRemote, updateToken, shutdownSeconds, accessLog, maxServiceRequests, maxServiceBytes, v);
+    }
+
+    /** {@link #federationDestinations} as the policy SERVICE and LOAD are held to. */
+    Destinations destinations() {
+        return Destinations.parse(federationDestinations);
+    }
+}

@@ -1,0 +1,47 @@
+loaded the s2dm trailer model: 1828 triples (skos.ttl + data_graph.ttl as exported, plus supplement.ttl and units.ttl)
+
+push: trailer 1, axle 2, left — tire pressure 612 kPa
+  [placed] {trailer=ThreeTrailers.TRAILER_1, owner=VehicleTrailerWheel, side=TwoSides.LEFT, component=TrailerWheelTire, nth=EightOutsideInNumber._1ST, field=TrailerWheelTire.pressure, about=Tire signals for wheel., slot=VehicleTrailerWheel.tire, axle=AxlePositionEnum.POSITION_2, value=612}
+  [lowest] {trailer=ThreeTrailers.TRAILER_1, readings=1, axle=AxlePositionEnum.POSITION_2, lowest=612.0}
+
+push: trailer 1, axle 2, right, inner twin — tire pressure 455 kPa
+  [placed] {trailer=ThreeTrailers.TRAILER_1, owner=VehicleTrailerWheel, side=TwoSides.RIGHT, component=TrailerWheelTire, nth=EightOutsideInNumber._2ND, field=TrailerWheelTire.pressure, about=Tire signals for wheel., slot=VehicleTrailerWheel.tire, axle=AxlePositionEnum.POSITION_2, value=455}
+  [lowest] {trailer=ThreeTrailers.TRAILER_1, readings=2, axle=AxlePositionEnum.POSITION_2, lowest=455.0}
+
+push: trailer 1, axle 2, right, inner twin — isPressureLow = true
+  [placed] {trailer=ThreeTrailers.TRAILER_1, owner=VehicleTrailerWheel, side=TwoSides.RIGHT, component=TrailerWheelTire, nth=EightOutsideInNumber._2ND, field=TrailerWheelTire.isPressureLow, about=Tire signals for wheel., slot=VehicleTrailerWheel.tire, axle=AxlePositionEnum.POSITION_2, value=true}
+  [ALARM] {trailer=ThreeTrailers.TRAILER_1, side=TwoSides.RIGHT, nth=EightOutsideInNumber._2ND, field=TrailerWheelTire.isPressureLow, axle=AxlePositionEnum.POSITION_2, vehicle=https://example.org/fleet/vehicle/TRUCK-41}
+  [lowest] {trailer=ThreeTrailers.TRAILER_1, readings=2, axle=AxlePositionEnum.POSITION_2, lowest=455.0}
+
+push: trailer 2, axle 1, left — brake pad wear 35 %
+  [placed] {trailer=ThreeTrailers.TRAILER_2, owner=VehicleTrailerWheel, side=TwoSides.LEFT, component=TrailerWheelBrake, nth=EightOutsideInNumber._1ST, field=TrailerWheelBrake.padWear, about=Brake signals for wheel, slot=VehicleTrailerWheel.brake, axle=AxlePositionEnum.POSITION_1, value=35}
+  [lowest] {trailer=ThreeTrailers.TRAILER_1, readings=2, axle=AxlePositionEnum.POSITION_2, lowest=455.0}
+
+push: trailer 2, axle 1, left — isBrakesWorn = false   (a boolean field, but false: no alarm)
+  [placed] {trailer=ThreeTrailers.TRAILER_2, owner=VehicleTrailerWheel, side=TwoSides.LEFT, component=TrailerWheelBrake, nth=EightOutsideInNumber._1ST, field=TrailerWheelBrake.isBrakesWorn, about=Brake signals for wheel, slot=VehicleTrailerWheel.brake, axle=AxlePositionEnum.POSITION_1, value=false}
+  [lowest] {trailer=ThreeTrailers.TRAILER_1, readings=2, axle=AxlePositionEnum.POSITION_2, lowest=455.0}
+
+push: trailer 2, axle 3, right — isBrakesWorn = true
+  [placed] {trailer=ThreeTrailers.TRAILER_2, owner=VehicleTrailerWheel, side=TwoSides.RIGHT, component=TrailerWheelBrake, nth=EightOutsideInNumber._1ST, field=TrailerWheelBrake.isBrakesWorn, about=Brake signals for wheel, slot=VehicleTrailerWheel.brake, axle=AxlePositionEnum.POSITION_3, value=true}
+  [ALARM] {trailer=ThreeTrailers.TRAILER_2, side=TwoSides.RIGHT, nth=EightOutsideInNumber._1ST, field=TrailerWheelBrake.isBrakesWorn, axle=AxlePositionEnum.POSITION_3, vehicle=https://example.org/fleet/vehicle/TRUCK-41}
+  [lowest] {trailer=ThreeTrailers.TRAILER_1, readings=2, axle=AxlePositionEnum.POSITION_2, lowest=455.0}
+
+push: trailer 1, axle 4, left — TrailerWheelTire.isPresureLow = true   (no such field in the model: no [placed], no [ALARM])
+  [lowest] {trailer=ThreeTrailers.TRAILER_1, readings=2, axle=AxlePositionEnum.POSITION_2, lowest=455.0}
+
+push: trailer 1, axle 2, left — tire pressure 32 PSI   (the schema declares kPa: [CONVERTED] to 220.6 kPa, and the new [lowest])
+  [placed] {trailer=ThreeTrailers.TRAILER_1, owner=VehicleTrailerWheel, side=TwoSides.LEFT, component=TrailerWheelTire, nth=EightOutsideInNumber._1ST, field=TrailerWheelTire.pressure, about=Tire signals for wheel., slot=VehicleTrailerWheel.tire, axle=AxlePositionEnum.POSITION_2, value=32}
+  [lowest] {trailer=ThreeTrailers.TRAILER_1, readings=3, axle=AxlePositionEnum.POSITION_2, lowest=220.63223338138755}
+  [CONVERTED] {trailer=ThreeTrailers.TRAILER_1, declared=Pressure_Unit_Enum.KILOPASCAL, side=TwoSides.LEFT, field=TrailerWheelTire.pressure, inDeclared=220.63223338138755, axle=AxlePositionEnum.POSITION_2, value=32, sent=Pressure_Unit_Enum.POUNDS_PER_SQUARE_INCH}
+
+push: trailer 1, axle 3, left — tire pressure 85 PERCENT   (no conversion to kPa: [UNIT], and not counted in [lowest])
+  [placed] {trailer=ThreeTrailers.TRAILER_1, owner=VehicleTrailerWheel, side=TwoSides.LEFT, component=TrailerWheelTire, nth=EightOutsideInNumber._1ST, field=TrailerWheelTire.pressure, about=Tire signals for wheel., slot=VehicleTrailerWheel.tire, axle=AxlePositionEnum.POSITION_3, value=85}
+  [lowest] {trailer=ThreeTrailers.TRAILER_1, readings=3, axle=AxlePositionEnum.POSITION_2, lowest=220.63223338138755}
+  [UNIT] {trailer=ThreeTrailers.TRAILER_1, declared=Pressure_Unit_Enum.KILOPASCAL, side=TwoSides.LEFT, field=TrailerWheelTire.pressure, about=Tire pressure in kilo-Pascal., axle=AxlePositionEnum.POSITION_3, value=85, sent=Relation_Unit_Enum.PERCENT, vehicle=https://example.org/fleet/vehicle/TRUCK-41}
+
+push: trailer 2, axle 1, left — tire pressure 598 kPa
+  [placed] {trailer=ThreeTrailers.TRAILER_2, owner=VehicleTrailerWheel, side=TwoSides.LEFT, component=TrailerWheelTire, nth=EightOutsideInNumber._1ST, field=TrailerWheelTire.pressure, about=Tire signals for wheel., slot=VehicleTrailerWheel.tire, axle=AxlePositionEnum.POSITION_1, value=598}
+  [lowest] {trailer=ThreeTrailers.TRAILER_1, readings=3, axle=AxlePositionEnum.POSITION_2, lowest=220.63223338138755}
+  [lowest] {trailer=ThreeTrailers.TRAILER_2, readings=1, axle=AxlePositionEnum.POSITION_1, lowest=598.0}
+
+Done.

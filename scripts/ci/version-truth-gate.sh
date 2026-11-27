@@ -211,7 +211,7 @@ ok()  { echo "ok:   $*"; }
 # independent project (cqels/CQELS4J#104); before it was listed here a bump
 # could move two poms and leave the endpoint on the old release with this gate
 # still reporting "identical" — the half-bump A1 exists to catch, one pom wide.
-POMS="examples/pom.xml mcp-server/pom.xml sparql-endpoint/pom.xml"
+POMS="playground/pom.xml mcp-server/pom.xml sparql-endpoint/pom.xml"
 PIN=""
 for pom in $POMS; do
   if [ ! -f "$pom" ]; then
@@ -236,7 +236,7 @@ for pom in $POMS; do
   if [ -z "$PIN" ]; then
     PIN="$v"
   elif [ "$PIN" != "$v" ]; then
-    echo "::error::the poms disagree about the pin: examples/pom.xml says '$PIN', $pom says '$v'. Half a bump landed." >&2
+    echo "::error::the poms disagree about the pin: playground/pom.xml says '$PIN', $pom says '$v'. Half a bump landed." >&2
     exit 2
   fi
 done
@@ -1250,9 +1250,9 @@ done < "$RECORDS"
 # been reworded until it no longer states any current version has stopped being
 # checked, which is the same failure wearing a different hat.
 # ---------------------------------------------------------------------------
-# examples/README.md is deliberately absent: it is provenance-only today, and
+# playground/README.md is deliberately absent: it is provenance-only today, and
 # demanding a current stamp there would be demanding a stamp nobody wants.
-REQUIRED="README.md GETTING_STARTED.md CQELS-QL_SPEC.md SUPPLY_CHAIN.md mcp-server/README.md examples/pom.xml mcp-server/pom.xml sparql-endpoint/pom.xml"
+REQUIRED="README.md GETTING_STARTED.md CQELS-QL_SPEC.md SUPPLY_CHAIN.md mcp-server/README.md playground/pom.xml mcp-server/pom.xml sparql-endpoint/pom.xml"
 for f in $REQUIRED; do
   if [ ! -f "$f" ]; then
     err "$f is required to state the current version and is missing — refusing to skip it silently."

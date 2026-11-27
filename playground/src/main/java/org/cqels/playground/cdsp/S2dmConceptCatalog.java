@@ -1,0 +1,157 @@
+package org.cqels.playground.cdsp;
+
+import org.cqels.engine.CQELSEngine;
+import org.cqels.engine.DataStream;
+import org.cqels.playground.Fleet;
+
+/**
+ * Example — joining live VSS telemetry against the <strong>COVESA S2DM</strong> concept catalogue
+ * (stream–static join over SKOS).
+ *
+ * <p>The scenario: a fleet operator's dashboard receives a stream of raw signal readings. A signal
+ * IRI and a number are enough to threshold on, but not enough to <em>present</em> — the operator
+ * wants the human label and the definition the modeller wrote, without the streaming pipeline
+ * hard-coding either.
+ *
+ * <p>S2DM is where those labels come from. Subject-matter experts author the model in GraphQL SDL;
+ * s2dm's older SKOS exporter (once run as {@code s2dm generate skos-skeleton}) projected it into
+ * SKOS RDF in which every GraphQL field became a {@code skos:Concept} carrying a
+ * {@code skos:prefLabel} and, from the field's description, a {@code skos:definition}; the
+ * concept graph in {@link S2dm} is built in that shape. (The current exporter differs; see
+ * below.) That RDF is ordinary static context for CQELS, so the enrichment is a join rather than
+ * a lookup table in Java:
+ *
+ * <pre>
+ *   STREAM { ?obs c:ofConcept ?field ; sosa:hasSimpleResult ?value }   -- live
+ *   ?field skos:prefLabel ?label ; skos:definition ?definition .        -- s2dm catalogue
+ * </pre>
+ *
+ * <p>The payoff is that the query is written against <em>concepts</em>, not signal paths. When the
+ * modeller renames a label or refines a definition, the next export changes the static graph and
+ * every consumer follows — no query is edited.
+ *
+ * <p><strong>Against current s2dm output, both queries need adjusting.</strong> The current
+ * command, {@code s2dm export rdf} (measured on s2dm commit {@code d97b449}), writes two graphs (by default each in two formats):
+ * <ul>
+ *   <li>{@code skos.ttl} gives {@code skos:definition} to types and enums only, never to fields.
+ *       The first query requires {@code ?field skos:definition}, so it returns no rows for an
+ *       observation of a field; an observation tagged with a described <em>type</em> still
+ *       matches, because nothing in the query restricts {@code ?field} to fields.</li>
+ *   <li>the {@code s2dm:Field} typing the second query guards on is not in {@code skos.ttl} at all;
+ *       it is in {@code data_graph.ttl}. With only {@code skos.ttl} loaded the second query returns
+ *       no rows; with both files loaded it works.</li>
+ * </ul>
+ * {@code S2DM_MAPPING.md} §5 has the details. {@code org.cqels.playground.s2dm.TrailerHealthMonitor}
+ * loads both files and reads the definition from the field's owning type instead.
+ *
+ * <p>The demo also shows the reverse direction: the last query filters on the field concept's own
+ * {@code s2dm:Field} type, which is how you ask "show me everything the model classifies as a
+ * field" without enumerating the fields — see the note on that query for why it guards on the
+ * type rather than on {@code FieldConcepts} collection membership.
+ *
+ * <p>CQELS-QL features shown: stream–static join and multi-pattern stream matching, under a
+ * {@code [TRIPLES 1]} window. Note that {@code [TRIPLES N]} counts stream <em>elements</em>, not
+ * statements: {@link S2dm#pushConceptSignal} pushes each observation as one atomic three-statement
+ * element, so a window of 1 holds exactly the latest reading and each push reports once. Widening
+ * it to {@code [TRIPLES 12]} would keep the last twelve readings resident and re-report all of
+ * them on every push — correct, but not what a "enrich this reading" query wants.
+ *
+ * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.cdsp.S2dmConceptCatalog}
+ */
+public class S2dmConceptCatalog {
+
+    public static void main(String[] args) throws InterruptedException {
+        try (CQELSEngine engine = CQELSEngine.builder()
+                .id("s2dm-concept-catalog")
+                .withMemoryStore()
+                .build()) {
+
+            // The s2dm SKOS catalogue is static context — seeded BEFORE start(), exactly as the
+            // fleet graph is in StreamStaticJoin.
+            Fleet.seedStatic(engine);
+            S2dm.seedConceptGraph(engine);
+
+            DataStream telemetry = engine.createStream("Telemetry");
+
+            // Every reading is presented with the label and definition the MODELLER wrote,
+            // resolved through the s2dm concept graph rather than hard-coded here.
+            String enriched = S2dm.PREFIXES + """
+                    REGISTER QUERY ConceptEnrichedReading AS
+                    SELECT ?vehicle ?label ?value ?definition
+                    FROM STREAM Telemetry [TRIPLES 1]
+                    WHERE {
+                      STREAM Telemetry {
+                        ?obs c:ofConcept ?field .
+                        ?obs sosa:hasFeatureOfInterest ?vehicle .
+                        ?obs sosa:hasSimpleResult ?value .
+                      }
+                      ?field skos:prefLabel ?label .
+                      ?field skos:definition ?definition .
+                    }
+                    """;
+            engine.registerCqelsQuery(enriched, row ->
+                    System.out.println("  enriched -> " + row));
+
+            // Same stream, but the query names no field at all: it asks the catalogue which
+            // concepts are classified as FIELDS and reports only those readings. Add a field to
+            // the GraphQL schema, regenerate, and it appears here with no query change.
+            //
+            // Guard is `?field a s2dm:Field`, the concept's own type, rather than
+            // `c:FieldConcepts skos:member ?field`, membership of the collection. S2dm#concept
+            // asserts both for every concept here, and since 2.0.0-alpha.21 either guard returns the
+            // same three readings on this data. They are still not interchangeable in general, which
+            // is why this one is chosen: in real s2dm output the exporter makes every ENUM VALUE a
+            // skos:member of FieldConcepts while typing it s2dm:EnumValue, so the type guard selects
+            // a strict subset of the collection. "Things the model classifies as fields" is that
+            // subset. The seeded graph here has no enum values, so the two coincide in this demo.
+            //
+            // History, because the choice used to be forced: before 2.0.0-alpha.21 a guard reached
+            // by a reverse edge into the join key was unsound (issue #67) and, on this exact query,
+            // dropped every row — field or not. The type guard was then the only one that worked.
+            // It is kept now for the reason above, not as a workaround. CQELS-QL_SPEC.md §6 has the
+            // measurements.
+            String byFieldType = S2dm.PREFIXES + """
+                    REGISTER QUERY AnyModelledField AS
+                    SELECT ?label ?value
+                    FROM STREAM Telemetry [TRIPLES 1]
+                    WHERE {
+                      STREAM Telemetry {
+                        ?obs c:ofConcept ?field .
+                        ?obs sosa:hasSimpleResult ?value .
+                      }
+                      ?field a s2dm:Field .
+                      ?field skos:prefLabel ?label .
+                    }
+                    """;
+            engine.registerCqelsQuery(byFieldType, row ->
+                    System.out.println("    [modelled field] " + row));
+
+            engine.start();
+            System.out.println("""
+                    Engine started. Readings are enriched from the s2dm SKOS catalogue
+                    (skos:prefLabel / skos:definition), not from anything hard-coded here.
+                    """);
+
+            System.out.println("push: EV-7Q2 Vehicle.averageSpeed = 62.0");
+            S2dm.pushConceptSignal(telemetry, Fleet.EV1, S2dm.F_AVERAGE_SPEED, 62.0);
+            Thread.sleep(700);
+
+            System.out.println("\npush: EV-3K8 Powertrain.stateOfCharge = 41.5");
+            S2dm.pushConceptSignal(telemetry, Fleet.EV2, S2dm.F_BATTERY_SOC, 41.5);
+            Thread.sleep(700);
+
+            System.out.println("\npush: EV-9TZ Door.isOpen = 1.0");
+            S2dm.pushConceptSignal(telemetry, Fleet.EV3, S2dm.F_DOOR_OPEN, 1.0);
+            Thread.sleep(900);
+
+            // The counter-example. c:Seat is an OBJECT concept: it is typed s2dm:ObjectType, never
+            // s2dm:Field, so the second query's type guard should exclude it -- discriminated
+            // rather than merely asserted.
+            System.out.println("\npush: EV-7Q2 c:Seat = 1.0   (an OBJECT concept — the"
+                    + " [modelled field] query SHOULD ignore it)");
+            S2dm.pushConceptSignal(telemetry, Fleet.EV1, S2dm.C_SEAT, 1.0);
+            Thread.sleep(900);
+        }
+        System.out.println("\nDone.");
+    }
+}
