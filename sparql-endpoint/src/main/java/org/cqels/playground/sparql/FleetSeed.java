@@ -66,9 +66,11 @@ final class FleetSeed {
             station(conn, graph, CHARGING + "station/depot-north", "Depot North", 150, "POINT(2 2)");
             station(conn, graph, CHARGING + "station/city-west", "City West", 50, "POINT(20 20)");
 
+            // geofenced zones: speed limit (km/h) + WKT area. WKT is "longitude latitude" in degrees
+            // (CRS84); geof:sfWithin finds no point inside a polygon whose coordinates exceed ±180 / ±90.
             zone(conn, graph, ZONE + "depot", 20, "POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))");
             zone(conn, graph, ZONE + "school", 30, "POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))");
-            zone(conn, graph, ZONE + "highway", 130, "POLYGON((100 100, 200 100, 200 200, 100 200, 100 100))");
+            zone(conn, graph, ZONE + "highway", 130, "POLYGON((30 0, 90 0, 90 2, 30 2, 30 0))");
 
             conn.add(VF.createIRI(TRAFFIC + "sensor/approach-1"), VF.createIRI(TRAFFIC + "congestionLevel"),
                     VF.createLiteral(0.7), graph);
