@@ -66,6 +66,15 @@ class SparqlProtocolServletTest {
 
     static Endpoint shared;
 
+    /**
+     * Federation on, to anywhere ({@code *}): the remotes these tests federate to are their own
+     * servers on 127.0.0.1, which the default ({@code public}) refuses. The destinations' own
+     * tests set them explicitly.
+     */
+    static EndpointOptions federated() {
+        return EndpointOptions.defaults().withFederationEnabled(true).withFederationDestinations(List.of("*"));
+    }
+
     @BeforeAll
     static void start() throws Exception {
         shared = Endpoint.start(EndpointOptions.defaults(), 0);
@@ -328,7 +337,7 @@ class SparqlProtocolServletTest {
         }
         // and the vector is real: with federation on, the bindings do leave
         try (Remote remote = new Remote();
-             Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true), 0)) {
+             Endpoint fed = Endpoint.start(federated(), 0)) {
             var q = get(fed.url(), "SELECT * WHERE { ?v <urn:ex:depot> ?d . SERVICE <" + remote.url() + "> { ?v ?p ?o } }", null);
             assertEquals(200, q.statusCode(), q.body());
             assertTrue(remote.hits.get() > 0);
@@ -1056,12 +1065,606 @@ class SparqlProtocolServletTest {
         return "http://127.0.0.1:" + s.getAddress().getPort();
     }
 
+    // ---- federation destinations --------------------------------------------------------------
+
+    /**
+     * With federation on, SERVICE and LOAD reached any address a client named: this server's own
+     * loopback, its private network, a cloud metadata service. By default only hosts whose every
+     * address is public are reached now, however the address is spelled, and SILENT does not
+     * hide the refusal.
+     */
+    @Test
+    void federationReachesOnlyPublicAddressesByDefault() throws Exception {
+        var data = serve(java.util.Map.of("/data.ttl", respond(200, "text/turtle", "<urn:ex:near> <urn:ex:p> 1 .\n", 0)));
+        try (Remote remote = new Remote();
+             Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true).withUpdateEnabled(true), 0)) {
+            int port = remote.server.getAddress().getPort();
+            // refused by the resolver, on the address each spelling comes to; 169.254.169.254 is
+            // where cloud metadata services answer (nothing listens there in a test)
+            for (String host : List.of("127.0.0.1", "localhost", "2130706433", "0.0.0.0", "[::1]",
+                    "[::ffff:127.0.0.1]", "169.254.169.254")) {
+                String target = "http://" + host + ":" + port + "/sparql";
+                var q = get(fed.url(), "SELECT * WHERE { SERVICE <" + target + "> { ?s ?p ?o } }", null);
+                assertEquals(403, q.statusCode(), host + ": " + q.body());
+                assertTrue(q.body().contains("not a public address"), q.body());
+                var silent = get(fed.url(), "SELECT * WHERE { SERVICE SILENT <" + target + "> { ?s ?p ?o } }", null);
+                assertEquals(403, silent.statusCode(), "SILENT hid the refusal of " + host + ": " + silent.body());
+                // bound at run time, past the servlet's look at constant IRIs
+                var bound = get(fed.url(), "SELECT * WHERE { VALUES ?e { <" + target + "> } SERVICE ?e { ?s ?p ?o } }", null);
+                assertEquals(403, bound.statusCode(), host + ": " + bound.body());
+            }
+            // RDF4J's IRI parser refuses the short form itself: nothing goes out
+            var shortForm = get(fed.url(), "SELECT * WHERE { SERVICE <http://127.1:" + port + "/sparql> { ?s ?p ?o } }", null);
+            assertEquals(400, shortForm.statusCode(), shortForm.body());
+            assertEquals(0, remote.hits.get(), "a request reached the loopback remote: " + remote.received);
+
+            for (String source : List.of(base(data) + "/data.ttl", "http://localhost:" + data.getAddress().getPort() + "/data.ttl")) {
+                var load = post(fed.url(), "application/sparql-update", "LOAD <" + source + ">", null);
+                assertEquals(403, load.statusCode(), load.body());
+                var silent = post(fed.url(), "application/sparql-update", "LOAD SILENT <" + source + ">", null);
+                assertEquals(403, silent.statusCode(), "SILENT hid the refusal: " + silent.body());
+            }
+            assertFalse(ask(fed.url(), "ASK { <urn:ex:near> ?p ?o }"), "LOAD read from a loopback address");
+        } finally {
+            data.stop(0);
+        }
+    }
+
+    /**
+     * An origin entry reaches that origin whatever its addresses — a SPARQL service on the private
+     * network — and nothing else: not another port, not another name for the same host, not where
+     * it redirects to, not a JSON-LD context elsewhere. Without {@code public}, a name not listed is
+     * refused before anything runs.
+     */
+    @Test
+    void anOriginEntryReachesThatOriginOnly() throws Exception {
+        String json = "application/ld+json";
+        try (Remote other = new Remote()) {
+            var listed = serve(java.util.Map.of(
+                    "/sparql", ex -> {
+                        byte[] body = "{\"head\":{\"vars\":[\"x\"]},\"results\":{\"bindings\":[{\"x\":{\"type\":\"literal\",\"value\":\"listed\"}}]}}"
+                                .getBytes(StandardCharsets.UTF_8);
+                        ex.getRequestBody().readAllBytes();
+                        ex.getResponseHeaders().add("Content-Type", "application/sparql-results+json");
+                        ex.sendResponseHeaders(200, body.length);
+                        ex.getResponseBody().write(body);
+                        ex.close();
+                    },
+                    "/data.ttl", respond(200, "text/turtle", "<urn:ex:listed> <urn:ex:p> 1 .\n", 0),
+                    "/away", respond(307, "text/plain", "", 0, "Location", other.url()),
+                    "/away.ttl", respond(302, "text/plain", "", 0, "Location", other.url() + "/data.ttl"),
+                    "/tolocal", respond(307, "text/plain", "", 0, "Location",
+                            "http://localhost:" + other.server.getAddress().getPort() + "/sparql"),
+                    "/tolocal.ttl", respond(302, "text/plain", "", 0, "Location",
+                            "http://localhost:" + other.server.getAddress().getPort() + "/data.ttl"),
+                    "/ctx.jsonld", respond(200, json, "{\"@context\":\"" + other.url() + "/ctx.json\",\"@id\":\"urn:ex:ctx\",\"p\":\"x\"}", 0)));
+            String origin = base(listed);
+            try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true).withUpdateEnabled(true)
+                    .withFederationDestinations(List.of(origin)), 0)) {
+                var ok = getCsv(fed.url(), "SELECT ?x WHERE { SERVICE <" + origin + "/sparql> { ?s ?p ?x } }");
+                assertEquals(200, ok.statusCode(), ok.body());
+                assertTrue(ok.body().contains("listed"), ok.body());
+                assertEquals(204, post(fed.url(), "application/sparql-update", "LOAD <" + origin + "/data.ttl>", null).statusCode());
+                assertTrue(ask(fed.url(), "ASK { <urn:ex:listed> ?p ?o }"));
+
+                // another port, another name for the same host: refused up front, by name
+                for (String target : List.of(other.url(), "http://localhost:" + listed.getAddress().getPort() + "/sparql",
+                        "https://127.0.0.1:" + listed.getAddress().getPort() + "/sparql", "http://example.org/sparql")) {
+                    var q = get(fed.url(), "SELECT * WHERE { SERVICE <" + target + "> { ?s ?p ?o } }", null);
+                    assertEquals(403, q.statusCode(), target + ": " + q.body());
+                    assertTrue(q.body().contains("CQELS_SPARQL_FEDERATION_DESTINATIONS"), q.body());
+                    var load = post(fed.url(), "application/sparql-update", "LOAD SILENT <" + target + ">", null);
+                    assertEquals(403, load.statusCode(), target + ": " + load.body());
+                }
+                // refused by name before anything runs: this SERVICE would never be called, since
+                // nothing reaches the join, and is refused all the same
+                var never = get(fed.url(), "SELECT * WHERE { VALUES ?x { } SERVICE <http://example.org/sparql> { ?s ?p ?o } }", null);
+                assertEquals(403, never.statusCode(), never.body());
+                // the listed origin redirects elsewhere: the remote's doing, a 502
+                var away = get(fed.url(), "SELECT * WHERE { SERVICE <" + origin + "/away> { ?s ?p ?o } }", null);
+                assertEquals(502, away.statusCode(), away.body());
+                var awaySilent = get(fed.url(), "SELECT * WHERE { SERVICE SILENT <" + origin + "/away> { ?s ?p ?o } }", null);
+                assertEquals(502, awaySilent.statusCode(), awaySilent.body());
+                var awayLoad = post(fed.url(), "application/sparql-update", "LOAD SILENT <" + origin + "/away.ttl>", null);
+                assertEquals(502, awayLoad.statusCode(), awayLoad.body());
+                var context = post(fed.url(), "application/sparql-update", "LOAD SILENT <" + origin + "/ctx.jsonld>", null);
+                assertEquals(502, context.statusCode(), context.body());
+                assertTrue(context.body().contains("JSON-LD context"), context.body());
+                assertEquals(0, other.hits.get(), "a request left the listed origin: " + other.received);
+            }
+            // public and an origin together: the origin is reached, loopback otherwise is not
+            try (Endpoint both = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true).withUpdateEnabled(true)
+                    .withFederationDestinations(List.of("public", origin)), 0)) {
+                assertEquals(200, getCsv(both.url(), "SELECT ?x WHERE { SERVICE <" + origin + "/sparql> { ?s ?p ?x } }").statusCode());
+                var q = get(both.url(), "SELECT * WHERE { SERVICE <" + other.url() + "> { ?s ?p ?o } }", null);
+                assertEquals(403, q.statusCode(), q.body());
+                assertTrue(q.body().contains("not a public address"), q.body());
+                // the admitted origin redirects to a name only 'public' admits, which is loopback:
+                // the redirect's own addresses are checked, not the first hop's admission carried on
+                for (String query : List.of("SELECT * WHERE { SERVICE <" + origin + "/tolocal> { ?s ?p ?o } }",
+                        "SELECT * WHERE { SERVICE SILENT <" + origin + "/tolocal> { ?s ?p ?o } }")) {
+                    var r = get(both.url(), query, null);
+                    assertEquals(502, r.statusCode(), r.body());
+                    assertTrue(r.body().contains("not a public address"), r.body());
+                }
+                var load = post(both.url(), "application/sparql-update", "LOAD SILENT <" + origin + "/tolocal.ttl>", null);
+                assertEquals(502, load.statusCode(), load.body());
+                assertTrue(load.body().contains("not a public address"), load.body());
+                assertEquals(0, other.hits.get(), other.received.toString());
+            } finally {
+                listed.stop(0);
+            }
+        }
+    }
+
+    /**
+     * The addresses checked are the addresses connected to: the check is in the resolver the
+     * client connects through, so a name cannot answer one address to a check and another to the
+     * connection (DNS rebinding). Every address of a name counts, not the first.
+     */
+    @Test
+    void theResolverTheClientConnectsThroughIsTheCheck() throws Exception {
+        try (Remote remote = new Remote()) {
+            int port = remote.server.getAddress().getPort();
+            java.util.concurrent.atomic.AtomicInteger lookups = new java.util.concurrent.atomic.AtomicInteger();
+            // answers a public address first and loopback after, as a rebinding name would
+            TimedServiceClient client = new TimedServiceClient(2000, EndpointOptions.DEFAULT_MAX_SERVICE_BYTES, host -> {
+                lookups.incrementAndGet();
+                return new java.net.InetAddress[] {java.net.InetAddress.getByName("8.8.8.8"), java.net.InetAddress.getByName("127.0.0.1")};
+            }, Destinations.PUBLIC_ONLY);
+            try {
+                var refused = assertThrows(TimedServiceClient.Refusal.class, () -> client.execute(
+                        new org.apache.http.client.methods.HttpGet("http://rebind.test:" + port + "/sparql?query=ASK%7B%7D")));
+                assertEquals(403, refused.status);
+                assertEquals(1, lookups.get(), "one lookup, the connection's own");
+            } finally {
+                client.release();
+            }
+            assertEquals(0, remote.hits.get(), remote.received.toString());
+        }
+        var check = new Destinations.Dns(host -> new java.net.InetAddress[] {java.net.InetAddress.getByName("8.8.8.8")});
+        Destinations.CHECK.set(true);
+        try {
+            assertEquals(1, check.resolve("public.test").length);
+            var mixed = new Destinations.Dns(host -> new java.net.InetAddress[] {
+                    java.net.InetAddress.getByName("8.8.8.8"), java.net.InetAddress.getByName("10.0.0.1")});
+            assertThrows(Destinations.NotPublic.class, () -> mixed.resolve("mixed.test"));
+            Destinations.CHECK.set(false);
+            assertEquals(2, mixed.resolve("mixed.test").length, "an origin entry's addresses are not checked");
+        } finally {
+            Destinations.CHECK.remove();
+        }
+    }
+
+    /**
+     * The host decided on is the one the client resolves and connects to. A Docker Compose name
+     * such as {@code sparql_store}, which {@code java.net.URI} cannot read as a server, was refused
+     * even under {@code *} and could not be listed; and in {@code http://a@b_c@listed.test/} a
+     * rebuilt URI read {@code listed.test}, which was listed, while the client resolved
+     * {@code b_c@listed.test} unchecked (both found in co-review round 1 of #144).
+     */
+    @Test
+    void theHostDecidedOnIsTheHostResolved() throws Exception {
+        try (Remote remote = new Remote()) {
+            int port = remote.server.getAddress().getPort();
+            java.util.List<String> resolved = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+            org.apache.http.conn.DnsResolver loopback = host -> {
+                resolved.add(host);
+                return new java.net.InetAddress[] {java.net.InetAddress.getByName("127.0.0.1")};
+            };
+            for (Destinations admitting : List.of(Destinations.ANY, Destinations.parse(List.of("http://SPARQL_store:" + port)))) {
+                TimedServiceClient client = new TimedServiceClient(2000, EndpointOptions.DEFAULT_MAX_SERVICE_BYTES, loopback, admitting);
+                try (var r = client.execute(new org.apache.http.client.methods.HttpGet(
+                        "http://sparql_store:" + port + "/sparql?query=SELECT%20*%20%7B%7D"))) {
+                    assertEquals(200, r.getStatusLine().getStatusCode(), admitting.entries().toString());
+                } finally {
+                    client.release();
+                }
+            }
+            assertEquals(2, remote.hits.get(), remote.received.toString());
+
+            TimedServiceClient listed = new TimedServiceClient(2000, EndpointOptions.DEFAULT_MAX_SERVICE_BYTES, loopback,
+                    Destinations.parse(List.of("public", "http://listed.test:" + port)));
+            try {
+                var refused = assertThrows(TimedServiceClient.Refusal.class, () -> listed.execute(
+                        new org.apache.http.client.methods.HttpGet("http://a@b_c@listed.test:" + port + "/sparql?query=ASK%7B%7D")));
+                assertEquals(403, refused.status, refused.getMessage());
+                assertTrue(refused.getMessage().contains("not a public address"), refused.getMessage());
+            } finally {
+                listed.release();
+            }
+            assertEquals(2, remote.hits.get(), "b_c@listed.test was reached unchecked: " + remote.received);
+            assertTrue(resolved.contains("b_c@listed.test"), resolved.toString());
+        }
+        assertEquals(List.of("http://sparql_store:3030"),
+                EndpointOptions.defaults().withFederationDestinations(List.of("http://sparql_store:3030")).federationDestinations());
+        assertThrows(IllegalArgumentException.class,
+                () -> EndpointOptions.defaults().withFederationDestinations(List.of("http://a@b_c@listed.test")));
+        // under '*' a name java.net.URI cannot read is a request that fails, not a refusal; a stub
+        // resolver, so that no name leaves this machine
+        TimedServiceClient unresolved = new TimedServiceClient(2000, EndpointOptions.DEFAULT_MAX_SERVICE_BYTES, host -> {
+            throw new java.net.UnknownHostException(host);
+        }, Destinations.ANY);
+        try {
+            assertThrows(TimedServiceClient.RemoteFailure.class, () -> unresolved.execute(new org.apache.http.client.methods.HttpGet(
+                    "http://no_such_host.invalid:9/sparql?query=SELECT%20*%20%7B%7D")));
+        } finally {
+            unresolved.release();
+        }
+        assertEquals(null, Destinations.ANY.refusal(URI.create("http://no_such_host.invalid:9/data.ttl")));
+    }
+
+    /**
+     * A {@code user:pass@} in a SERVICE or LOAD URL is never sent, and is not kept either: Apache
+     * copied it into the client's own credentials store, one entry per host, for the client's
+     * lifetime (found in co-review round 2 of #144).
+     */
+    @Test
+    void credentialsInAUrlAreNotKept() throws Exception {
+        try (Remote remote = new Remote()) {
+            TimedServiceClient client = new TimedServiceClient(2000);
+            try (var r = client.execute(new org.apache.http.client.methods.HttpGet("http://user:secret@127.0.0.1:"
+                    + remote.server.getAddress().getPort() + "/sparql?query=SELECT%20*%20%7B%7D"))) {
+                assertEquals(200, r.getStatusLine().getStatusCode());
+            } finally {
+                client.release();
+            }
+            assertFalse(client.holdsCredentials(), "the SERVICE client kept a URL's password");
+        }
+        java.util.List<String> authorization = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+        var data = serve(java.util.Map.of("/data.ttl", ex -> {
+            authorization.addAll(ex.getRequestHeaders().getOrDefault("Authorization", List.of()));
+            respond(200, "text/turtle", "<urn:ex:cred> <urn:ex:p> 1 .\n", 0).handle(ex);
+        }));
+        try (Endpoint ep = Endpoint.start(federated().withUpdateEnabled(true), 0)) {
+            var load = post(ep.url(), "application/sparql-update",
+                    "LOAD <http://user:secret@127.0.0.1:" + data.getAddress().getPort() + "/data.ttl>", null);
+            assertEquals(204, load.statusCode(), load.body());
+            assertEquals(List.of(), authorization, "a URL's credentials were sent");
+            assertFalse(servletOf(ep.server()).loadClientHoldsCredentials(), "the LOAD client kept a URL's password");
+        } finally {
+            data.stop(0);
+        }
+    }
+
+    /**
+     * A LOAD that the servlet's {@code destroy()} cuts off between two requests is answered 503,
+     * as any request outliving it, not 500 "Connection pool shut down" — and {@code SILENT} does
+     * not turn it into a 204 (found in co-review round 2 of #144).
+     */
+    @Test
+    void aLoadCutOffByStoppingIsA503() throws Exception {
+        var source = serve(java.util.Map.of(
+                "/later.ttl", respond(302, "text/plain", "", 1_500, "Location", "/data.ttl"),
+                "/now.ttl", respond(302, "text/plain", "", 0, "Location", "/data.ttl"),
+                "/data.ttl", respond(200, "text/turtle", "<urn:ex:late> <urn:ex:p> 1 .\n", 0)));
+        try (Endpoint ep = Endpoint.start(federated().withUpdateEnabled(true), 0)) {
+            var pending = HttpClient.newHttpClient().sendAsync(HttpRequest.newBuilder(URI.create(ep.url()))
+                    .header("Content-Type", "application/sparql-update")
+                    .POST(HttpRequest.BodyPublishers.ofString("LOAD SILENT <" + base(source) + "/later.ttl>")).build(),
+                    HttpResponse.BodyHandlers.ofString());
+            Thread.sleep(500);   // the first request is out, waiting for its redirect
+            servletOf(ep.server()).destroy();
+            var r = pending.get(10, java.util.concurrent.TimeUnit.SECONDS);
+            assertEquals(503, r.statusCode(), r.body());
+        }
+        // stopped between two requests of one fetch: the next finds the client closed
+        try (Endpoint ep = Endpoint.start(federated().withUpdateEnabled(true), 0)) {
+            SparqlProtocolServlet servlet = servletOf(ep.server());
+            SparqlProtocolServlet.beforeLoadHop = hop -> servlet.destroy();
+            var r = post(ep.url(), "application/sparql-update", "LOAD SILENT <" + base(source) + "/now.ttl>", null);
+            assertEquals(503, r.statusCode(), r.body());
+        } finally {
+            SparqlProtocolServlet.beforeLoadHop = null;
+            source.stop(0);
+        }
+    }
+
+    /**
+     * Under {@code *}, an IRI that names no host is a request that fails, not a refusal: it was
+     * "&lt;&gt; is not among the federation destinations (…: *)", and {@code LOAD SILENT} of it a
+     * 403 where it had been a 204 (found in co-review round 4 of #144).
+     */
+    @Test
+    void aHostlessIriIsAFailureNotARefusal() throws Exception {
+        try (Endpoint fed = Endpoint.start(federated().withUpdateEnabled(true), 0)) {
+            for (String iri : List.of("http:///x.ttl", "http://@/x.ttl")) {
+                var silent = post(fed.url(), "application/sparql-update", "LOAD SILENT <" + iri + ">", null);
+                assertEquals(204, silent.statusCode(), iri + ": " + silent.body());
+                var load = post(fed.url(), "application/sparql-update", "LOAD <" + iri + ">", null);
+                assertEquals(502, load.statusCode(), iri + ": " + load.body());
+                assertFalse(load.body().contains("is not among"), load.body());
+            }
+        }
+    }
+
+    /**
+     * The proxy check asks the proxy selector the client routes by, captured when the client was
+     * built, as Apache's planner captures it: asking the JVM's current default, it disagreed with
+     * the route once the default changed — a destination only {@code public} admits passed as
+     * direct and went through the proxy, which resolves it unchecked (found in co-review round 4
+     * of #144). Here the proxy is on loopback, so the wrong path is refused too, but by the
+     * resolver ("not a public address"), not by the proxy rule.
+     */
+    @Test
+    void theProxyCheckAsksTheSelectorTheClientRoutesBy() throws Exception {
+        String far = "198.51.100.7";   // never connected to: refused before any connection
+        java.net.ProxySelector before = java.net.ProxySelector.getDefault();
+        java.net.ProxySelector viaProxy = new java.net.ProxySelector() {
+            @Override
+            public List<java.net.Proxy> select(URI uri) {
+                return far.equals(uri.getHost())
+                        ? List.of(new java.net.Proxy(java.net.Proxy.Type.HTTP, new java.net.InetSocketAddress("127.0.0.1", 9)))
+                        : List.of(java.net.Proxy.NO_PROXY);
+            }
+
+            @Override
+            public void connectFailed(URI uri, java.net.SocketAddress sa, IOException ioe) {
+            }
+        };
+        java.net.ProxySelector direct = new java.net.ProxySelector() {
+            @Override
+            public List<java.net.Proxy> select(URI uri) {
+                return List.of(java.net.Proxy.NO_PROXY);
+            }
+
+            @Override
+            public void connectFailed(URI uri, java.net.SocketAddress sa, IOException ioe) {
+            }
+        };
+        TimedServiceClient client = new TimedServiceClient(2000, EndpointOptions.DEFAULT_MAX_SERVICE_BYTES,
+                org.apache.http.impl.conn.SystemDefaultDnsResolver.INSTANCE, Destinations.PUBLIC_ONLY);
+        try (Endpoint ep = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true).withUpdateEnabled(true), 0)) {
+            java.net.ProxySelector.setDefault(viaProxy);
+            // the clients are built now, routing through the proxy for 'far'
+            var first = assertThrows(TimedServiceClient.Refusal.class, () -> client.execute(
+                    new org.apache.http.client.methods.HttpGet("http://" + far + "/sparql?query=SELECT%20*%20%7B%7D")));
+            assertTrue(first.getMessage().contains("proxy"), first.getMessage());
+            var firstLoad = post(ep.url(), "application/sparql-update", "LOAD <http://" + far + "/x.ttl>", null);
+            assertEquals(403, firstLoad.statusCode(), firstLoad.body());
+            assertTrue(firstLoad.body().contains("proxy"), firstLoad.body());
+
+            java.net.ProxySelector.setDefault(direct);   // the default changes; the clients' routes do not
+            var later = assertThrows(TimedServiceClient.Refusal.class, () -> client.execute(
+                    new org.apache.http.client.methods.HttpGet("http://" + far + "/sparql?query=SELECT%20*%20%7B%7D")));
+            assertTrue(later.getMessage().contains("proxy"), later.getMessage());
+            var laterLoad = post(ep.url(), "application/sparql-update", "LOAD <http://" + far + "/x.ttl>", null);
+            assertEquals(403, laterLoad.statusCode(), laterLoad.body());
+            assertTrue(laterLoad.body().contains("proxy"), laterLoad.body());
+        } finally {
+            java.net.ProxySelector.setDefault(before);
+            client.release();
+        }
+    }
+
+    /**
+     * LOAD fetches only a URL with a server authority and a port in range, as Java's client did:
+     * Apache reads the rest leniently, so a redirect to {@code :-2} went to port 80, one to
+     * {@code :+PORT} was fetched and its base IRI then failed the parser as the client's 400,
+     * SILENT or not, and {@code localhost%3aPORT} was decoded and loaded (found in co-review round 5
+     * of #144). Each is a failed source again: 502, and 204 under SILENT.
+     */
+    @Test
+    void loadFetchesOnlyUrlsWithAServerAuthority() throws Exception {
+        java.util.concurrent.atomic.AtomicInteger fetched = new java.util.concurrent.atomic.AtomicInteger();
+        var source = serve(java.util.Map.of(
+                "/ok.ttl", ex -> {
+                    fetched.incrementAndGet();
+                    respond(200, "text/turtle", "<urn:ex:lenient> <urn:ex:p> 1 .\n", 0).handle(ex);
+                },
+                "/neg", respond(302, "text/plain", "", 0, "Location", "http://127.0.0.1:-2/ok.ttl"),
+                "/plus", ex -> respond(302, "text/plain", "", 0, "Location",
+                        "http://127.0.0.1:+" + ex.getLocalAddress().getPort() + "/ok.ttl").handle(ex)));
+        try (Endpoint fed = Endpoint.start(federated().withUpdateEnabled(true), 0)) {
+            for (String iri : List.of(base(source) + "/neg", base(source) + "/plus",
+                    "http://localhost%3a" + source.getAddress().getPort() + "/ok.ttl")) {
+                var load = post(fed.url(), "application/sparql-update", "LOAD <" + iri + ">", null);
+                assertEquals(502, load.statusCode(), iri + ": " + load.body());
+                assertTrue(load.body().contains("not a URL with a host and a port"), load.body());
+                // quoted as written, never as Apache would read it
+                assertFalse(load.body().contains("http://localhost:" + source.getAddress().getPort()), load.body());
+                assertFalse(load.body().contains("<http://127.0.0.1:" + source.getAddress().getPort() + ">"), load.body());
+                var silent = post(fed.url(), "application/sparql-update", "LOAD SILENT <" + iri + "> INTO GRAPH <urn:ex:g>", null);
+                assertEquals(204, silent.statusCode(), iri + ": " + silent.body());
+            }
+            assertEquals(0, fetched.get(), "a URL read leniently was fetched");
+            assertFalse(ask(fed.url(), "ASK { { <urn:ex:lenient> ?p ?o } UNION { GRAPH ?g { <urn:ex:lenient> ?p ?o } } }"));
+        } finally {
+            source.stop(0);
+        }
+    }
+
+    /**
+     * A SERVICE request is checked against the selector of the pool that sends it. A release()
+     * between the check and the send rebuilt the pool over another default selector, and a
+     * destination only {@code public} admits, checked as direct, went through a proxy (found in
+     * co-review round 5 of #144). Now a pool released meanwhile fails the request.
+     */
+    @Test
+    void aServiceRequestIsSentByThePoolItWasCheckedFor() throws Exception {
+        java.net.ProxySelector before = java.net.ProxySelector.getDefault();
+        java.util.List<String> resolved = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+        TimedServiceClient[] holder = new TimedServiceClient[1];
+        java.net.ProxySelector viaProxy = new java.net.ProxySelector() {
+            @Override
+            public List<java.net.Proxy> select(URI uri) {
+                return List.of(new java.net.Proxy(java.net.Proxy.Type.HTTP,
+                        java.net.InetSocketAddress.createUnresolved("proxy.probe", 3128)));
+            }
+
+            @Override
+            public void connectFailed(URI uri, java.net.SocketAddress sa, IOException ioe) {
+            }
+        };
+        // direct, but its first answer stands in for another thread releasing the pool and
+        // changing the JVM's default between the check and the send
+        java.net.ProxySelector racing = new java.net.ProxySelector() {
+            private final java.util.concurrent.atomic.AtomicBoolean first = new java.util.concurrent.atomic.AtomicBoolean(true);
+
+            @Override
+            public List<java.net.Proxy> select(URI uri) {
+                if (first.getAndSet(false)) {
+                    holder[0].release();
+                    java.net.ProxySelector.setDefault(viaProxy);
+                }
+                return List.of(java.net.Proxy.NO_PROXY);
+            }
+
+            @Override
+            public void connectFailed(URI uri, java.net.SocketAddress sa, IOException ioe) {
+            }
+        };
+        java.net.ProxySelector.setDefault(racing);
+        holder[0] = new TimedServiceClient(2000, EndpointOptions.DEFAULT_MAX_SERVICE_BYTES, host -> {
+            resolved.add(host);
+            return new java.net.InetAddress[] {java.net.InetAddress.getByName("127.0.0.1")};
+        }, Destinations.PUBLIC_ONLY);
+        try {
+            assertThrows(TimedServiceClient.RemoteFailure.class, () -> holder[0].execute(
+                    new org.apache.http.client.methods.HttpGet("http://far.probe/sparql?query=SELECT%20*%20%7B%7D")));
+            assertEquals(List.of(), resolved, "the request went out through a pool it was not checked for");
+            assertFalse(holder[0].poolOpen(), "the failed request reopened the released pool");
+        } finally {
+            java.net.ProxySelector.setDefault(before);
+            holder[0].release();
+        }
+    }
+
+    /**
+     * A LOAD source over the cap is dropped at the cap: closing Apache's stream read the rest of
+     * the body first, so it was downloaded on until the deadline, a 504 instead of the cap's 502
+     * (found in co-review round 1 of #144).
+     */
+    @Test
+    void aLoadSourceOverTheCapIsDroppedAtTheCap() throws Exception {
+        var big = serve(java.util.Map.of("/big.ttl", ex -> {
+            ex.getResponseHeaders().add("Content-Type", "text/turtle");
+            ex.sendResponseHeaders(200, 50L << 20);
+            byte[] chunk = "<urn:ex:big> <urn:ex:p> \"0123456789abcdef\" .\n".repeat(1000).getBytes(StandardCharsets.UTF_8);
+            try {
+                ex.getResponseBody().write(chunk);
+                ex.getResponseBody().flush();
+                Thread.sleep(10_000);   // the rest never comes in time: only a drain would wait for it
+            } catch (InterruptedException | IOException e) {
+                // the endpoint hung up: as it should
+            }
+            ex.close();
+        }));
+        try (Endpoint ep = Endpoint.start(federated().withUpdateEnabled(true).withMaxBufferedBytes(4096)
+                .withMaxExecutionSeconds(5), 0)) {
+            long t0 = System.nanoTime();
+            var r = post(ep.url(), "application/sparql-update", "LOAD <" + base(big) + "/big.ttl>", null);
+            long ms = (System.nanoTime() - t0) / 1_000_000;
+            assertEquals(502, r.statusCode(), r.body());
+            assertTrue(r.body().contains("exceeds 4096 bytes"), r.body());
+            assertTrue(ms < 2_500, "the source was read on past the cap for " + ms + " ms");
+        } finally {
+            big.stop(0);
+        }
+    }
+
+    /** What {@code public} admits: unicast addresses outside IANA's special-purpose ranges. */
+    @Test
+    void publicMeansOutsideTheSpecialPurposeRanges() throws Exception {
+        for (String a : List.of("8.8.8.8", "1.1.1.1", "100.63.255.255", "100.128.0.0", "172.15.255.255", "172.32.0.0",
+                "192.0.1.1", "192.169.0.1", "198.17.255.255", "198.20.0.0", "223.255.255.255",
+                "2606:4700:4700::1111", "2a00:1450:4001::200e", "64:ff9b::808:808", "2002:808:808::1", "2001:4860::8888")) {
+            assertTrue(Destinations.isPublic(java.net.InetAddress.getByName(a)), a);
+        }
+        for (String a : List.of("0.0.0.0", "0.1.2.3", "10.0.0.1", "100.64.0.1", "100.127.255.255", "127.0.0.1", "127.255.0.1",
+                "169.254.169.254", "172.16.0.1", "172.31.255.255", "192.0.0.1", "192.0.2.1", "192.88.99.1", "192.168.1.1",
+                "198.18.0.1", "198.19.255.255", "198.51.100.1", "203.0.113.1", "224.0.0.1", "239.255.255.250",
+                "240.0.0.1", "255.255.255.255",
+                "::", "::1", "::127.0.0.1", "::ffff:127.0.0.1", "::ffff:10.0.0.1", "64:ff9b::7f00:1", "64:ff9b:1::808:808",
+                "2002:7f00:1::1", "2002:a00:1::1", "2001::1", "2001:db8::1", "2001:2::1", "2001:10::1", "2001:20::1",
+                "3fff::1", "fc00::1", "fd12:3456::1", "fe80::1", "fec0::1", "ff02::1", "100::1", "4000::1")) {
+            assertFalse(Destinations.isPublic(java.net.InetAddress.getByName(a)), a);
+        }
+        // an IPv4-mapped address Java keeps as IPv6 is judged by the IPv4 address it carries
+        byte[] mapped = new byte[16];
+        mapped[10] = (byte) 0xff;
+        mapped[11] = (byte) 0xff;
+        mapped[12] = (byte) 169;
+        mapped[13] = (byte) 254;
+        mapped[14] = (byte) 169;
+        mapped[15] = (byte) 254;
+        assertFalse(Destinations.isPublic(java.net.Inet6Address.getByAddress(null, mapped, -1)));
+    }
+
+    /** An entry is {@code public}, {@code *} or an origin, and a mistyped one fails at start-up. */
+    @Test
+    void destinationEntriesAreKeywordsOrOrigins() {
+        assertEquals(List.of("public"), EndpointOptions.defaults().federationDestinations());
+        assertEquals(List.of("public"), EndpointOptions.defaults().withFederationDestinations(List.of()).federationDestinations());
+        assertEquals(List.of("public"), EndpointOptions.defaults().withFederationDestinations(null).federationDestinations());
+        for (String bad : List.of("example.org", "ftp://example.org", "https://example.org/sparql", "https://user@example.org",
+                "https://example.org?x=1", "https://example.org#f", "https://", "http://exa mple.org",
+                // round 2: no port a connection can use, no host
+                "http://internal.test:0", "http://internal.test:99999", "HTTP://*", "http://*.example.org",
+                "http://example.org.", "http://[zz::1]",
+                // round 3: a port written otherwise than as digits ("-1" read as no port: port 80)
+                "http://internal.test:-1", "http://sparql_store:-1", "http://sparql_store:+3030",
+                // round 4: the same, percent-encoded past the checks on the raw text
+                "http://localhost%3a-1", "http://sparql_store%3a-1", "http://localhost%3A+80", "http://a%40localhost:3030")) {
+            assertThrows(IllegalArgumentException.class,
+                    () -> EndpointOptions.defaults().withFederationDestinations(List.of(bad)), bad);
+        }
+        // what the README says is accepted
+        for (String good : List.of("http://xn--bcher-kva.example", "http://single", "HTTP://UPPER.example:8080",
+                "http://10.0.0.5:8080", "http://[::ffff:10.0.0.1]:3030", "http://sparql_store:3030", "http://host:")) {
+            EndpointOptions.defaults().withFederationDestinations(List.of(good));
+        }
+        Destinations d = Destinations.parse(List.of("HTTPS://Example.ORG:443/", "http://[::1]:3030", "http://10.0.0.5"));
+        assertEquals(Destinations.Decision.ADMITTED, d.decide(URI.create("https://example.org/sparql")));
+        assertEquals(Destinations.Decision.ADMITTED, d.decide(URI.create("https://EXAMPLE.org:443/x?y")));
+        assertEquals(Destinations.Decision.REFUSED, d.decide(URI.create("http://example.org/sparql")));
+        assertEquals(Destinations.Decision.REFUSED, d.decide(URI.create("https://example.org:8443/sparql")));
+        assertEquals(Destinations.Decision.REFUSED, d.decide(URI.create("https://sub.example.org/sparql")));
+        assertEquals(Destinations.Decision.ADMITTED, d.decide("http", "::1", 3030));
+        assertEquals(Destinations.Decision.ADMITTED, d.decide(URI.create("http://[::1]:3030/sparql")));
+        assertEquals(Destinations.Decision.ADMITTED, d.decide(URI.create("http://10.0.0.5:80/")));
+        assertEquals(Destinations.Decision.REFUSED, d.decide(URI.create("ftp://example.org/")));
+        assertEquals(Destinations.Decision.IF_PUBLIC, Destinations.PUBLIC_ONLY.decide(URI.create("http://anything.test/")));
+        assertEquals(Destinations.Decision.ADMITTED, Destinations.ANY.decide(URI.create("http://127.0.0.1/")));
+        assertEquals(Destinations.Decision.REFUSED, Destinations.ANY.decide(URI.create("file:///etc/passwd")));
+    }
+
+    /**
+     * Through an HTTP proxy the proxy resolves the destination, so its addresses cannot be checked
+     * here: what only {@code public} admits is refused, and what an origin entry names is not.
+     */
+    @Test
+    void aProxiedDestinationMustBeListed() {
+        java.net.ProxySelector before = java.net.ProxySelector.getDefault();
+        java.net.ProxySelector.setDefault(new java.net.ProxySelector() {
+            @Override
+            public List<java.net.Proxy> select(URI uri) {
+                return List.of(new java.net.Proxy(java.net.Proxy.Type.HTTP, new java.net.InetSocketAddress("127.0.0.1", 3128)));
+            }
+
+            @Override
+            public void connectFailed(URI uri, java.net.SocketAddress sa, IOException ioe) {
+            }
+        });
+        try {
+            String why = Destinations.PUBLIC_ONLY.refusal(URI.create("https://query.example.org/sparql"));
+            assertTrue(why != null && why.contains("proxy"), why);
+            Destinations listed = Destinations.parse(List.of("public", "https://query.example.org"));
+            assertEquals(null, listed.refusal(URI.create("https://query.example.org/sparql")));
+            assertEquals(null, Destinations.ANY.refusal(URI.create("https://elsewhere.example.org/sparql")));
+        } finally {
+            java.net.ProxySelector.setDefault(before);
+        }
+        assertEquals(null, Destinations.PUBLIC_ONLY.refusal(URI.create("https://query.example.org/sparql")),
+                "no proxy: left to the address check");
+    }
+
     /** With federation on, {@code LOAD <file:…>} read an RDF file off the server's disk into the store. */
     @Test
     void federationNamesOnlyHttpTargets(@org.junit.jupiter.api.io.TempDir java.nio.file.Path dir) throws Exception {
         java.nio.file.Path secret = dir.resolve("secret.ttl");
         java.nio.file.Files.writeString(secret, "<urn:ex:secret> <urn:ex:p> \"server-side file\" .\n");
-        try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true).withUpdateEnabled(true), 0)) {
+        try (Endpoint fed = Endpoint.start(federated().withUpdateEnabled(true), 0)) {
             var load = post(fed.url(), "application/sparql-update", "LOAD <" + secret.toUri() + ">", null);
             assertEquals(403, load.statusCode(), load.body());
             assertTrue(load.body().contains("http and https"), load.body());
@@ -1078,7 +1681,7 @@ class SparqlProtocolServletTest {
     void aStalledServiceIs504WithinTheLimit() throws Exception {
         var remote = serve(java.util.Map.of("/sparql", respond(200, "application/sparql-results+json",
                 "{\"head\":{\"vars\":[]},\"results\":{\"bindings\":[]}}", 5_000)));
-        try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true).withMaxExecutionSeconds(1), 0)) {
+        try (Endpoint fed = Endpoint.start(federated().withMaxExecutionSeconds(1), 0)) {
             long t0 = System.nanoTime();
             var r = get(fed.url(), "SELECT * WHERE { SERVICE <" + base(remote) + "/sparql> { ?s ?p ?o } }", null);
             double took = (System.nanoTime() - t0) / 1e9;
@@ -1138,7 +1741,7 @@ class SparqlProtocolServletTest {
                     ex.getResponseBody().write(bytes.toByteArray());
                     ex.close();
                 }));
-        try (Endpoint ep = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true).withUpdateEnabled(true)
+        try (Endpoint ep = Endpoint.start(federated().withUpdateEnabled(true)
                 .withMaxExecutionSeconds(2), 0)) {
             String r = base(remote);
             assertEquals(204, post(ep.url(), "application/sparql-update", "LOAD <" + r + "/data.ttl>", null).statusCode());
@@ -1231,7 +1834,7 @@ class SparqlProtocolServletTest {
         var budgeted = serve(java.util.Map.of(
                 "/hidden.zip", bytes(hidden.toByteArray(), "Content-Type", "application/zip"),
                 "/bogus.rdf", bytes(badEncoding, "Content-Type", "application/rdf+xml")));
-        try (Endpoint small = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true).withUpdateEnabled(true)
+        try (Endpoint small = Endpoint.start(federated().withUpdateEnabled(true)
                 .withMaxBufferedBytes(4096), 0)) {
             var r = post(small.url(), "application/sparql-update", "LOAD <" + base(budgeted) + "/hidden.zip>", null);
             assertEquals(502, r.statusCode(), "a directory entry's data escaped the budget: " + r.body());
@@ -1247,7 +1850,7 @@ class SparqlProtocolServletTest {
                 // the format comes from the source when the unpacked part cannot name it
                 "/blob", bytes(gzip("<urn:ex:blob> <urn:ex:p> 1 .\n"), "Content-Type", "text/turtle"),
                 "/second.ttl.zip", bytes(unnamed.toByteArray(), "Content-Type", "application/zip")));
-        try (Endpoint ep = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true).withUpdateEnabled(true), 0)) {
+        try (Endpoint ep = Endpoint.start(federated().withUpdateEnabled(true), 0)) {
             var once = post(ep.url(), "application/sparql-update", "LOAD <" + base(remote) + "/encoded.ttl.gz>", null);
             assertEquals(204, once.statusCode(), once.body());
             assertTrue(ask(ep.url(), "ASK { <urn:ex:encoded> ?p \"once\" }"));
@@ -1291,7 +1894,7 @@ class SparqlProtocolServletTest {
                 "/ok.jsonld", respond(200, json, "{\"@context\":\"" + base(remote) + "/ctx.json\",\"@id\":\"urn:ex:ok\",\"p\":\"yes\"}", 0),
                 "/file.jsonld", respond(200, json, "{\"@context\":\"" + ctx.toUri() + "\",\"@id\":\"urn:ex:file\",\"p\":\"read\"}", 0),
                 "/slow.jsonld", respond(200, json, "{\"@context\":\"" + base(remote) + "/slowctx.json\",\"@id\":\"urn:ex:slow\",\"p\":\"x\"}", 0)));
-        try (Endpoint ep = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true).withUpdateEnabled(true)
+        try (Endpoint ep = Endpoint.start(federated().withUpdateEnabled(true)
                 .withMaxExecutionSeconds(2), 0)) {
             String d = base(docs);
             var ok = post(ep.url(), "application/sparql-update", "LOAD <" + d + "/ok.jsonld>", null);
@@ -1368,7 +1971,7 @@ class SparqlProtocolServletTest {
                 "HTTP/1.1 200 OK\r\nContent-Type: application/sparql-results+json\r\nContent-Length: 5000\r\n\r\n{",
                 "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 5000\r\n\r\n")) {
             try (java.net.ServerSocket remote = new java.net.ServerSocket(0, 50, java.net.InetAddress.getLoopbackAddress());
-                 Endpoint ep = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true).withMaxExecutionSeconds(1)
+                 Endpoint ep = Endpoint.start(federated().withMaxExecutionSeconds(1)
                          .withMaxConcurrentQueries(1), 0)) {
                 Thread trickler = new Thread(() -> {
                     try (java.net.Socket s = remote.accept()) {
@@ -1433,7 +2036,7 @@ class SparqlProtocolServletTest {
                     ex.sendResponseHeaders(204, -1);
                     ex.close();
                 }));
-        try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true), 0)) {
+        try (Endpoint fed = Endpoint.start(federated(), 0)) {
             for (int i = 0; i < 20; i++) {
                 assertEquals(200, get(fed.url(), "SELECT * WHERE { SERVICE <" + base(remote) + "/json> { ?s ?p ?o } }", null).statusCode());
             }
@@ -1460,7 +2063,7 @@ class SparqlProtocolServletTest {
             assertFalse(leak.body().contains("server-side secret"), "an XML entity in a SERVICE answer read a local file");
         }
         // with no execution limit there is no deadline, but XML is refused all the same
-        try (Endpoint unlimited = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true).withMaxExecutionSeconds(0), 0)) {
+        try (Endpoint unlimited = Endpoint.start(federated().withMaxExecutionSeconds(0), 0)) {
             var leak = get(unlimited.url(), "SELECT ?o WHERE { SERVICE <" + base(remote) + "/xml> { ?s ?p ?o } }", "text/csv");
             assertTrue(leak.statusCode() >= 500, leak.statusCode() + " " + leak.body());
             assertFalse(leak.body().contains("server-side secret"), "with no limit, an XML entity read a local file");
@@ -1489,7 +2092,7 @@ class SparqlProtocolServletTest {
                     ((org.eclipse.rdf4j.repository.sail.SailRepository) engine.getRepository()).getFederatedServiceResolver())
                     .setHttpClientSessionManager(manager);
             Server server = SparqlEndpointLauncher.startServer(engine, "127.0.0.1", 0,
-                    EndpointOptions.defaults().withFederationEnabled(true), 64, false);
+                    federated(), 64, false);
             try {
                 assertTrue(SparqlEndpointLauncher.outboundLimited(engine.getRepository()));
                 String url = "http://127.0.0.1:" + ((ServerConnector) server.getConnectors()[0]).getLocalPort() + "/sparql";
@@ -1505,7 +2108,7 @@ class SparqlProtocolServletTest {
         CQELSEngine bare = CQELSEngine.builder().id("t-" + System.nanoTime()).withMemoryStore().build();
         bare.start();
         Server server = SparqlEndpointLauncher.startServer(bare::getRepository, null, "127.0.0.1", 0,
-                EndpointOptions.defaults().withFederationEnabled(true), 64, false);
+                federated(), 64, false);
         try {
             String url = "http://127.0.0.1:" + ((ServerConnector) server.getConnectors()[0]).getLocalPort() + "/sparql";
             var refused = get(url, q, null);
@@ -1608,7 +2211,7 @@ class SparqlProtocolServletTest {
         var remote = serve(java.util.Map.of(
                 "/slow", respond(200, "application/sparql-results+json", "{\"head\":{\"vars\":[]},\"results\":{\"bindings\":[]}}", 5_000),
                 "/fast", respond(200, "application/sparql-results+json", "{\"head\":{\"vars\":[]},\"results\":{\"bindings\":[]}}", 0)));
-        try (Endpoint ep = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true).withMetadataEnabled(true)
+        try (Endpoint ep = Endpoint.start(federated().withMetadataEnabled(true)
                 .withMaxExecutionSeconds(1), 0)) {
             long t0 = System.nanoTime();
             var r = get(ep.url(), "SELECT * FROM <" + META + "> WHERE { SERVICE <" + base(remote) + "/slow> { ?s ?p ?o } }", null);
@@ -1630,7 +2233,7 @@ class SparqlProtocolServletTest {
     void federationSurvivesAJettyRestart() throws Exception {
         var remote = serve(java.util.Map.of("/fast", respond(200, "application/sparql-results+json",
                 "{\"head\":{\"vars\":[]},\"results\":{\"bindings\":[]}}", 0)));
-        try (Endpoint ep = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true), 0)) {
+        try (Endpoint ep = Endpoint.start(federated(), 0)) {
             String q = "SELECT * WHERE { SERVICE <" + base(remote) + "/fast> { ?s ?p ?o } }";
             assertEquals(200, get(ep.url(), q, null).statusCode());
             ep.server().stop();
@@ -2415,7 +3018,7 @@ class SparqlProtocolServletTest {
         // under a 2 s limit, the first batch takes 1 s and the second stalls: it may have only the
         // 1 s left, not a fresh 2 s of its own
         var remote = serve(java.util.Map.of("/slow", rowEcho(n -> n == 1 ? 1000 : 10_000, hits)));
-        try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true).withMaxExecutionSeconds(2), 0)) {
+        try (Endpoint fed = Endpoint.start(federated().withMaxExecutionSeconds(2), 0)) {
             String service = "http://127.0.0.1:" + remote.getAddress().getPort() + "/slow";
             long t0 = System.nanoTime();
             var r = getCsv(fed.url(), "SELECT * WHERE { " + values(300) + " SERVICE <" + service + "> { ?v <urn:ex:q> ?x } }");
@@ -2433,7 +3036,7 @@ class SparqlProtocolServletTest {
     void serviceRequestsPerQueryAreCapped() throws Exception {
         var hits = new java.util.concurrent.atomic.AtomicInteger();
         var remote = serve(java.util.Map.of("/rows", rowEcho(0, hits)));
-        try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true).withUpdateEnabled(true)
+        try (Endpoint fed = Endpoint.start(federated().withUpdateEnabled(true)
                 .withMaxServiceRequests(3), 0)) {
             String service = "http://127.0.0.1:" + remote.getAddress().getPort() + "/rows";
             var ok = getCsv(fed.url(), "SELECT * WHERE { " + values(45) + " SERVICE <" + service + "> { ?v <urn:ex:q> ?x } }");
@@ -2475,7 +3078,7 @@ class SparqlProtocolServletTest {
                 // the endpoint stopped reading
             }
         }));
-        try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true)
+        try (Endpoint fed = Endpoint.start(federated()
                 .withMaxServiceBytes(1L << 20), 0)) {
             long t0 = System.nanoTime();
             var r = getCsv(fed.url(), "SELECT * WHERE { SERVICE <http://127.0.0.1:" + remote.getAddress().getPort()
@@ -2497,7 +3100,7 @@ class SparqlProtocolServletTest {
     void serviceSilentKeepsTheRowsWhenTheAnswerIsBroken() throws Exception {
         var remote = serve(java.util.Map.of("/broken", respond(200, "application/sparql-results+json",
                 "{\"head\":{\"vars\":[\"x\"]},\"results\":{\"bindings\":[{\"x\":{\"type\":\"lit", 0)));
-        try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true).withUpdateEnabled(true), 0)) {
+        try (Endpoint fed = Endpoint.start(federated().withUpdateEnabled(true), 0)) {
             String service = "http://127.0.0.1:" + remote.getAddress().getPort() + "/broken";
             var r = getCsv(fed.url(), "SELECT ?v WHERE { ?v <urn:ex:depot> ?d SERVICE SILENT <" + service + "> { ?y <urn:ex:q> ?x } } ORDER BY ?v");
             assertEquals(200, r.statusCode(), r.body());
@@ -2524,7 +3127,7 @@ class SparqlProtocolServletTest {
         var remote = serve(java.util.Map.of(
                 "/forbidden", respond(403, "text/plain; charset=UTF-8", "federation is off over here", 0),
                 "/csv", respond(200, "text/csv", "v,s\r\nurn:ex:v1,001\r\n", 0)));
-        try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true), 0)) {
+        try (Endpoint fed = Endpoint.start(federated(), 0)) {
             String base = "http://127.0.0.1:" + remote.getAddress().getPort();
             var forbidden = getCsv(fed.url(), "SELECT * WHERE { SERVICE <" + base + "/forbidden> { ?s ?p ?o } }");
             assertEquals(502, forbidden.statusCode(), forbidden.body());
@@ -2551,7 +3154,7 @@ class SparqlProtocolServletTest {
         var hits = new java.util.concurrent.atomic.AtomicInteger();
         var remote = serve(java.util.Map.of("/to-ftp", respond(302, "text/plain", "", 0, "Location", "ftp://127.0.0.1/x"),
                 "/rows", rowEcho(0, hits)));
-        try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true), 0)) {
+        try (Endpoint fed = Endpoint.start(federated(), 0)) {
             for (String target : List.of("file:///etc/hosts", "ftp://127.0.0.1/x")) {
                 var r = getCsv(fed.url(), "SELECT * WHERE { VALUES ?e { <" + target + "> } SERVICE ?e { ?s ?p ?o } }");
                 assertEquals(403, r.statusCode(), target + ": " + r.body());
@@ -2634,7 +3237,7 @@ class SparqlProtocolServletTest {
             }
             ex.close();
         }));
-        try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true).withMaxExecutionSeconds(10), 0)) {
+        try (Endpoint fed = Endpoint.start(federated().withMaxExecutionSeconds(10), 0)) {
             long t0 = System.nanoTime();
             var r = getCsv(fed.url(), "SELECT * WHERE { " + values(150) + " SERVICE <http://127.0.0.1:"
                     + remote.getAddress().getPort() + "/gz> { ?v <urn:ex:q> ?x } }");
@@ -2676,8 +3279,8 @@ class SparqlProtocolServletTest {
                 "/rows", rowEcho(0, hits),
                 "/to-ftp", respond(302, "text/plain", "", 0, "Location", "ftp://127.0.0.1/x")));
         String base = "http://127.0.0.1:" + remote.getAddress().getPort();
-        try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true), 0);
-             Endpoint one = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true).withMaxServiceRequests(1), 0)) {
+        try (Endpoint fed = Endpoint.start(federated(), 0);
+             Endpoint one = Endpoint.start(federated().withMaxServiceRequests(1), 0)) {
             long t0 = System.nanoTime();
             var followed = getCsv(fed.url(), "SELECT * WHERE { SERVICE <" + base + "/hop> { ?s ?p ?x } }");
             assertEquals(200, followed.statusCode(), followed.body());
@@ -2715,7 +3318,7 @@ class SparqlProtocolServletTest {
         }));
         String base = "http://127.0.0.1:" + remote.getAddress().getPort();
         // one batch of 15 rows answers about 1.3 KB: each answer fits in 4 KB, ten of them do not
-        try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true).withMaxServiceBytes(4096), 0)) {
+        try (Endpoint fed = Endpoint.start(federated().withMaxServiceBytes(4096), 0)) {
             var many = getCsv(fed.url(), "SELECT * WHERE { " + values(150) + " SERVICE <" + base + "/rows> { ?v <urn:ex:q> ?x } }");
             assertEquals(502, many.statusCode(), many.body());
             assertTrue(hits.get() < 10, "requests went on after the bytes were spent: " + hits.get());
@@ -2758,7 +3361,7 @@ class SparqlProtocolServletTest {
         // end to end: a head-only answer under SILENT keeps the rows
         var remote = serve(java.util.Map.of("/head", respond(200, json, "{\"head\":{\"vars\":[\"x\"]}}", 0),
                 "/tsv", respond(200, "text/tab-separated-values", "?x\n\"a\"\n", 0)));
-        try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true), 0)) {
+        try (Endpoint fed = Endpoint.start(federated(), 0)) {
             String base = "http://127.0.0.1:" + remote.getAddress().getPort();
             var r = getCsv(fed.url(), "SELECT ?v WHERE { ?v <urn:ex:depot> ?d SERVICE SILENT <" + base + "/head> { ?y <urn:ex:q> ?x } }");
             assertEquals(3, r.body().lines().count(), r.body());
@@ -2780,7 +3383,7 @@ class SparqlProtocolServletTest {
             ex.getResponseBody().flush();
             ex.getHttpContext().getServer().stop(0);   // and closes after 19
         }));
-        try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true), 0)) {
+        try (Endpoint fed = Endpoint.start(federated(), 0)) {
             var r = getCsv(fed.url(), "SELECT * WHERE { SERVICE <http://127.0.0.1:" + remote.getAddress().getPort() + "/short> { ?s ?p ?o } }");
             assertEquals(502, r.statusCode(), r.body());
         }
@@ -2797,7 +3400,7 @@ class SparqlProtocolServletTest {
             ex.sendResponseHeaders(401, -1);
             ex.close();
         }));
-        try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true), 0)) {
+        try (Endpoint fed = Endpoint.start(federated(), 0)) {
             var r = getCsv(fed.url(), "SELECT * WHERE { SERVICE <http://user:secret@127.0.0.1:" + remote.getAddress().getPort()
                     + "/auth> { ?s ?p ?o } }");
             assertEquals(502, r.statusCode(), r.body());
@@ -2814,7 +3417,7 @@ class SparqlProtocolServletTest {
     @Test
     void anErrorAnswerThatSpendsTheBudgetTripsIt() throws Exception {
         var remote = serve(java.util.Map.of("/error", respond(500, "text/plain", "x".repeat(1024), 0)));
-        try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true).withUpdateEnabled(true)
+        try (Endpoint fed = Endpoint.start(federated().withUpdateEnabled(true)
                 .withMaxServiceBytes(50), 0)) {
             String service = "http://127.0.0.1:" + remote.getAddress().getPort() + "/error";
             var r = getCsv(fed.url(), "SELECT ?v WHERE { ?v <urn:ex:depot> ?d SERVICE SILENT <" + service + "> { ?y <urn:ex:q> ?x } }");
@@ -2859,7 +3462,7 @@ class SparqlProtocolServletTest {
         assertEquals(null, TimedServiceClient.expectedForm(new org.apache.http.client.methods.HttpGet("http://r.example/sparql")));
         // end to end: a boolean answering the SELECT RDF4J sends is the remote's failure, and SILENT keeps the rows
         var remote = serve(java.util.Map.of("/bool", respond(200, json, "{\"head\":{},\"boolean\":false}", 0)));
-        try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true), 0)) {
+        try (Endpoint fed = Endpoint.start(federated(), 0)) {
             String service = "http://127.0.0.1:" + remote.getAddress().getPort() + "/bool";
             var loud = getCsv(fed.url(), "SELECT ?v WHERE { ?v <urn:ex:depot> ?d SERVICE <" + service + "> { ?y <urn:ex:q> ?x } }");
             assertEquals(502, loud.statusCode(), loud.body());
@@ -2892,7 +3495,7 @@ class SparqlProtocolServletTest {
                     ex.sendResponseHeaders(204, -1);
                     ex.close();
                 }));
-        try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true), 0)) {
+        try (Endpoint fed = Endpoint.start(federated(), 0)) {
             String base = "http://127.0.0.1:" + remote.getAddress().getPort();
             var qr = getCsv(fed.url(), "SELECT * WHERE { SERVICE <" + base + "/qr> { ?s ?p ?x } }");
             assertEquals(200, qr.statusCode(), qr.body());
@@ -2987,7 +3590,7 @@ class SparqlProtocolServletTest {
     @Test
     void aRedirectToAnImpossiblePortIsA502() throws Exception {
         var remote = serve(java.util.Map.of("/far", respond(302, "text/plain", "", 0, "Location", "http://127.0.0.1:65536/result")));
-        try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true), 0)) {
+        try (Endpoint fed = Endpoint.start(federated(), 0)) {
             var r = getCsv(fed.url(), "SELECT * WHERE { SERVICE <http://127.0.0.1:" + remote.getAddress().getPort() + "/far> { ?s ?p ?o } }");
             assertEquals(502, r.statusCode(), r.body());
             assertTrue(r.body().contains("port is not a port"), r.body());   // caught by the explicit-port check first
@@ -3039,7 +3642,7 @@ class SparqlProtocolServletTest {
         byte[] already = row("{\"type\":\"literal\",\"value\":\"a\"}").getBytes(StandardCharsets.UTF_8);
         assertTrue(already == TimedServiceClient.headFirst(already), "rewritten though the head was first");
         var remote = serve(java.util.Map.of("/rev", respond(200, "application/sparql-results+json", reversed, 0)));
-        try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true), 0)) {
+        try (Endpoint fed = Endpoint.start(federated(), 0)) {
             var r = getCsv(fed.url(), "SELECT ?x WHERE { SERVICE <http://127.0.0.1:" + remote.getAddress().getPort() + "/rev> { ?s ?p ?x } }");
             assertEquals(200, r.statusCode(), r.body());
             assertEquals(List.of("x", "a", "a", "b"), r.body().lines().toList());
@@ -3132,7 +3735,7 @@ class SparqlProtocolServletTest {
     void serviceInsideAnOrderingIsRefused() throws Exception {
         var hits = new java.util.concurrent.atomic.AtomicInteger();
         var remote = serve(java.util.Map.of("/rows", rowEcho(0, hits)));
-        try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true), 0)) {
+        try (Endpoint fed = Endpoint.start(federated(), 0)) {
             String service = "http://127.0.0.1:" + remote.getAddress().getPort() + "/rows";
             var refused = getCsv(fed.url(), "SELECT ?v WHERE { ?v <urn:ex:depot> ?d } ORDER BY (EXISTS { SERVICE <" + service
                     + "> { <urn:s> <urn:p> <urn:o> } })");
@@ -3151,7 +3754,7 @@ class SparqlProtocolServletTest {
     @Test
     void aServiceIriWithItsOwnQueryParameterIsRefused() throws Exception {
         var remote = serve(java.util.Map.of("/bool", respond(200, "application/sparql-results+json", "{\"head\":{},\"boolean\":false}", 0)));
-        try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true), 0)) {
+        try (Endpoint fed = Endpoint.start(federated(), 0)) {
             String service = "http://127.0.0.1:" + remote.getAddress().getPort() + "/bool?query=ASK%7B%7D";
             for (String silent : List.of("", "SILENT ")) {
                 var r = getCsv(fed.url(), "SELECT ?v WHERE { ?v <urn:ex:depot> ?d SERVICE " + silent + "<" + service + "> { ?y <urn:ex:q> ?x } }");
@@ -3331,7 +3934,7 @@ class SparqlProtocolServletTest {
         assertFalse(TimedServiceClient.explicitPortValid(URI.create("http://h:0000/")));
         assertFalse(TimedServiceClient.explicitPortValid(URI.create("http://h:99999999999999999999/")));
         var remote = serve(java.util.Map.of("/neg", respond(302, "text/plain", "", 0, "Location", "http://127.0.0.1:-2/a")));
-        try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true), 0)) {
+        try (Endpoint fed = Endpoint.start(federated(), 0)) {
             var r = getCsv(fed.url(), "SELECT * WHERE { SERVICE <http://127.0.0.1:" + remote.getAddress().getPort() + "/neg> { ?s ?p ?o } }");
             assertEquals(502, r.statusCode(), r.body());
             assertTrue(r.body().contains("port is not a port"), r.body());
@@ -3377,7 +3980,7 @@ class SparqlProtocolServletTest {
     void serviceQueriesTravelInTheBodyNotTheUrl() throws Exception {
         var seen = new java.util.concurrent.ConcurrentLinkedQueue<Seen>();
         var remote = serve(java.util.Map.of("/s", recording(seen)));
-        try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true), 0)) {
+        try (Endpoint fed = Endpoint.start(federated(), 0)) {
             for (String suffix : List.of("", "#fragment")) {
                 var r = getCsv(fed.url(), "SELECT * WHERE { VALUES ?v { <urn:ex:secret-k0> <urn:ex:secret-k1> } SERVICE <"
                         + base(remote) + "/s?key=a%26b" + suffix + "> { ?v <urn:ex:q> ?x } }");
@@ -3482,7 +4085,7 @@ class SparqlProtocolServletTest {
                 "/temporary", respond(307, "text/plain", "", 0, "Location", "/s"),
                 "/permanent", respond(308, "text/plain", "", 0, "Location", "/s"),
                 "/see-other", respond(303, "text/plain", "", 0, "Location", "/answer")));
-        try (Endpoint fed = Endpoint.start(EndpointOptions.defaults().withFederationEnabled(true), 0)) {
+        try (Endpoint fed = Endpoint.start(federated(), 0)) {
             for (String path : java.util.List.of("/moved", "/found", "/temporary", "/permanent")) {
                 seen.clear();
                 var r = getCsv(fed.url(), "SELECT * WHERE { SERVICE <" + base(remote) + path + "> { ?s <urn:ex:q> ?x } }");
@@ -3567,7 +4170,7 @@ class SparqlProtocolServletTest {
     /** What the description says follows the endpoint's options, and the access filters guard it as they guard a query. */
     @Test
     void theServiceDescriptionFollowsTheOptions() throws Exception {
-        try (Endpoint all = Endpoint.start(EndpointOptions.defaults().withUpdateEnabled(true).withFederationEnabled(true)
+        try (Endpoint all = Endpoint.start(federated().withUpdateEnabled(true)
                 .withMetadataEnabled(true), 0)) {
             var r = bare(all.url(), "text/turtle");
             assertEquals(200, r.statusCode(), r.body());

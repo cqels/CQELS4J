@@ -62,6 +62,11 @@ final class TimedServiceClient extends CloseableHttpClient {
      */
     static volatile java.util.function.Consumer<HttpRequest> beforePublish;
 
+    /** Runs {@code abort} after {@code nanos} on the deadline timer; the servlet's LOAD fetch uses it too. */
+    static ScheduledFuture<?> schedule(Runnable abort, long nanos) {
+        return DEADLINES.schedule(abort, nanos, TimeUnit.NANOSECONDS);
+    }
+
     /** Deadlines armed and not yet fired or cancelled; for tests. */
     static int armedDeadlines() {
         return DEADLINES.getQueue().size();
@@ -151,13 +156,37 @@ final class TimedServiceClient extends CloseableHttpClient {
         }
     };
     private CloseableHttpClient pool;   // guarded by this
+    /** The proxy selector {@link #pool} routes by, captured with it; guarded by this. */
+    private java.net.ProxySelector routes;
+
+    /** A connection pool and the proxy selector its route planner was built over. */
+    private record Pool(CloseableHttpClient client, java.net.ProxySelector routes) { }
+
+    /**
+     * Whether {@code client} is the current pool, without opening one: asked through
+     * {@link #pooled()}, a pool released by a stop was reopened by the request it failed (found in
+     * co-review round 6 of #144).
+     */
+    private synchronized boolean isPool(CloseableHttpClient client) {
+        return pool == client;
+    }
+
+    /** The current pool and its selector, read together. */
+    private synchronized Pool pooled() {
+        return new Pool(pool(), routes);
+    }
 
     private final org.apache.http.conn.DnsResolver dns;
 
+    /** Where requests may go; see {@link Destinations}. */
+    private final Destinations destinations;
+
+    /** For tests: SERVICE requests go anywhere ({@code *}), to the test's own loopback servers. */
     TimedServiceClient(int timeoutMillis) {
         this(timeoutMillis, EndpointOptions.DEFAULT_MAX_SERVICE_BYTES);
     }
 
+    /** For tests, as {@link #TimedServiceClient(int)}. */
     TimedServiceClient(int timeoutMillis, long maxResponseBytes) {
         this(timeoutMillis, maxResponseBytes, org.apache.http.impl.conn.SystemDefaultDnsResolver.INSTANCE);
     }
@@ -167,12 +196,20 @@ final class TimedServiceClient extends CloseableHttpClient {
         this(timeoutMillis, EndpointOptions.DEFAULT_MAX_SERVICE_BYTES, dns);
     }
 
+    /** For tests, as {@link #TimedServiceClient(int)}. */
     TimedServiceClient(int timeoutMillis, long maxResponseBytes, org.apache.http.conn.DnsResolver dns) {
+        this(timeoutMillis, maxResponseBytes, dns, Destinations.ANY);
+    }
+
+    TimedServiceClient(int timeoutMillis, long maxResponseBytes, org.apache.http.conn.DnsResolver dns,
+                       Destinations destinations) {
         this.timeoutMillis = timeoutMillis;
         this.maxResponseBytes = maxResponseBytes;
+        this.destinations = destinations;
         // always wrapped: a query's budget can set a deadline even when this client has none
-        // (found in co-review of #129); with neither, the lookup runs unbounded as before
-        this.dns = new BoundedDns(dns, timeoutMillis);
+        // (found in co-review of #129); with neither, the lookup runs unbounded as before. The
+        // destination check is outermost, on the thread that set Destinations.CHECK.
+        this.dns = new Destinations.Dns(new BoundedDns(dns, timeoutMillis));
     }
 
     /**
@@ -278,14 +315,16 @@ final class TimedServiceClient extends CloseableHttpClient {
      */
     private synchronized CloseableHttpClient pool() {
         if (pool == null) {
+            routes = Destinations.currentSelector();
             pool = HttpClientBuilder.create()
                     .useSystemProperties()
+                    .setRoutePlanner(Destinations.routePlanner(routes))
                     .setDnsResolver(dns)
                     .disableRedirectHandling()
                     .disableAutomaticRetries()
                     .setDefaultAuthSchemeRegistry(org.apache.http.config.RegistryBuilder
                             .<org.apache.http.auth.AuthSchemeProvider>create().build())
-                    .setDefaultCredentialsProvider(new org.apache.http.impl.client.BasicCredentialsProvider())
+                    .setDefaultCredentialsProvider(poolCredentials)
                     .setDefaultRequestConfig(RequestConfig.custom()
                             .setCookieSpec("standard")   // what RDF4J's own client sets
                             .setConnectTimeout(timeoutMillis)
@@ -294,6 +333,29 @@ final class TimedServiceClient extends CloseableHttpClient {
                     .build();
         }
         return pool;
+    }
+
+    /** The pool's own credentials store, which must stay empty; for tests. */
+    private final org.apache.http.impl.client.BasicCredentialsProvider poolCredentials =
+            new org.apache.http.impl.client.BasicCredentialsProvider();
+
+    /** Whether the pool's own credentials store holds anything; for tests. */
+    boolean holdsCredentials() {
+        return poolCredentials.getCredentials(org.apache.http.auth.AuthScope.ANY) != null;
+    }
+
+    /**
+     * {@code context} with a credentials store of its own for one request. Apache copies a URL's
+     * {@code user:pass@} into the context's store, which was otherwise the pool's, kept for its
+     * lifetime: one entry per host named, passwords included (found in co-review round 2 of #144).
+     * Nothing is ever sent from it, since there are no authentication schemes.
+     */
+    private static HttpContext ownCredentials(HttpContext context) {
+        org.apache.http.client.protocol.HttpClientContext own = context == null
+                ? org.apache.http.client.protocol.HttpClientContext.create()
+                : org.apache.http.client.protocol.HttpClientContext.adapt(context);
+        own.setCredentialsProvider(new org.apache.http.impl.client.BasicCredentialsProvider());
+        return own;
     }
 
     /** Whether a connection pool is open; for tests. */
@@ -437,11 +499,26 @@ final class TimedServiceClient extends CloseableHttpClient {
                 throw timedOut(new IOException("deadline reached before the request was sent"), timeoutUsed, budget);
             }
             for (int redirects = 0; ; redirects++) {
+                // The pool and the selector it routes by, taken together: checked against one
+                // selector and sent through a pool rebuilt over another after a release() in
+                // between, a destination only 'public' admits went through a proxy unchecked
+                // (found in co-review round 5 of #144). A pool released meanwhile fails the request.
+                Pool sending = pooled();
+                admit(host, redirects > 0, budget, sending.routes());
                 CloseableHttpResponse response;
                 try {
-                    response = pool().execute(host, hop, context);
+                    response = sending.client().execute(host, hop, ownCredentials(context));
                 } catch (Refusal | RemoteFailure e) {
                     throw e;
+                } catch (IllegalStateException e) {
+                    if (!isPool(sending.client())) {
+                        throw new RemoteFailure("the SERVICE client's connections were released while the request was made");
+                    }
+                    throw e;
+                } catch (Destinations.NotPublic e) {
+                    // refused by the resolver, on the addresses the connection would have used
+                    throw trip(budget, new Refusal(redirects > 0 ? 502 : 403, (redirects > 0
+                            ? "a SERVICE endpoint redirected to " : "SERVICE: ") + e.getMessage()));
                 } catch (IOException e) {
                     throw failure(e, fired, timeoutUsed, budget, host, "could not be reached");
                 } catch (Error e) {
@@ -621,7 +698,28 @@ final class TimedServiceClient extends CloseableHttpClient {
         } finally {
             deadline.cancel(false);
             BoundedDns.DEADLINE.remove();
+            Destinations.CHECK.remove();
         }
+    }
+
+    /**
+     * Refuses a request to {@code host} that {@link #destinations} does not admit by name, and
+     * otherwise sets {@link Destinations#CHECK} for its connection: on, when only {@code public}
+     * admits it, so that the resolver refuses it unless every address is public. A refused first
+     * request is the caller's 403; a refused redirect is the remote's doing, a 502, as
+     * {@link #refusedRedirect} answers. Tripped either way: SILENT must not turn it into an empty
+     * match.
+     */
+    private void admit(HttpHost host, boolean redirected, Budget budget, java.net.ProxySelector routes) throws Refusal {
+        // Decided on the HttpHost Apache resolves and connects to, as it is: rebuilt as a
+        // java.net.URI, "sparql_store" had no host and was refused even under '*', and
+        // "b_c@listed.test" read as "listed.test" and skipped the address check (both found in
+        // co-review round 1 of #144).
+        String why = destinations.refusal(host, routes);
+        if (why != null) {
+            throw trip(budget, new Refusal(redirected ? 502 : 403, (redirected ? "a SERVICE endpoint redirected to " : "SERVICE: ") + why));
+        }
+        Destinations.CHECK.set(destinations.decide(host) == Destinations.Decision.IF_PUBLIC);
     }
 
     private static final java.util.Set<Integer> REDIRECTS = java.util.Set.of(301, 302, 303, 307, 308);

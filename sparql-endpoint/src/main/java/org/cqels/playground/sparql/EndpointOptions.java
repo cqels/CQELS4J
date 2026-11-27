@@ -98,6 +98,14 @@ import java.util.List;
  *                             is answered 502 and makes no further request. Each answer is read and
  *                             checked whole before RDF4J parses it (see {@code TimedServiceClient}),
  *                             so the heap one query takes is a multiple of this, not this
+ * @param federationDestinations with federation on, where SERVICE and LOAD may send requests:
+ *                             {@code public} (the default; also what an empty list means), any
+ *                             host whose every address is public; http(s) origins such as
+ *                             {@code http://localhost:3030}, reached whatever their addresses; or
+ *                             {@code *}, anywhere. Checked on every request and redirect, on the
+ *                             addresses the connection is opened to ({@link Destinations}). Before
+ *                             it, federation reached any address a client named — loopback, the
+ *                             private network, a cloud metadata service — from this server
  */
 public record EndpointOptions(
         String path,
@@ -118,7 +126,8 @@ public record EndpointOptions(
         int shutdownSeconds,
         boolean accessLog,
         int maxServiceRequests,
-        long maxServiceBytes) {
+        long maxServiceBytes,
+        List<String> federationDestinations) {
 
     public static final String DEFAULT_PATH = "/sparql";
     public static final int DEFAULT_MAX_EXECUTION_SECONDS = 30;   // the MCP server's client-query default
@@ -144,6 +153,8 @@ public record EndpointOptions(
         }
         allowedOrigins = allowedOrigins == null ? List.of() : List.copyOf(allowedOrigins);
         allowedHosts = allowedHosts == null ? List.of() : List.copyOf(allowedHosts);
+        // parsed here so that a mistyped entry fails at start-up, not at the first SERVICE
+        federationDestinations = Destinations.parse(federationDestinations).entries();
         // stripped, as a presented token is (see AccessFilters.BearerToken): "shared " and
         // "shared" are one token, which must not count as two (found in co-review of #128)
         authToken = authToken == null || authToken.isBlank() ? null : authToken.strip();
@@ -159,13 +170,13 @@ public record EndpointOptions(
      * when a row cap buffers), 30 s to upload a body, read-only, no federation, no metadata graph,
      * no token, no browser origins, 1 MiB, no unauthenticated non-loopback bind, 5 s to drain on
      * stop, an access log, and (with federation on) 100 SERVICE requests and 16 MiB of answers
-     * per query.
+     * per query, to public addresses only.
      */
     public static EndpointOptions defaults() {
         return new EndpointOptions(DEFAULT_PATH, DEFAULT_MAX_EXECUTION_SECONDS, DEFAULT_MAX_CONCURRENT_QUERIES, 0,
                 DEFAULT_MAX_BUFFERED_BYTES, DEFAULT_MAX_UPLOAD_SECONDS, false, false, false, null, List.of(), List.of(),
                 DEFAULT_MAX_REQUEST_BYTES, false, null, DEFAULT_SHUTDOWN_SECONDS, true, DEFAULT_MAX_SERVICE_REQUESTS,
-                DEFAULT_MAX_SERVICE_BYTES);
+                DEFAULT_MAX_SERVICE_BYTES, List.of(Destinations.PUBLIC));
     }
 
     /** Whether any bearer token is set, so that {@link AccessFilters.BearerToken} is installed. */
@@ -174,78 +185,87 @@ public record EndpointOptions(
     }
 
     public EndpointOptions withPath(String v) {
-        return new EndpointOptions(v, maxExecutionSeconds, maxConcurrentQueries, maxRows, maxBufferedBytes, maxUploadSeconds, updateEnabled, federationEnabled, metadataEnabled, authToken, allowedOrigins, allowedHosts, maxRequestBytes, allowUnauthenticatedRemote, updateToken, shutdownSeconds, accessLog, maxServiceRequests, maxServiceBytes);
+        return new EndpointOptions(v, maxExecutionSeconds, maxConcurrentQueries, maxRows, maxBufferedBytes, maxUploadSeconds, updateEnabled, federationEnabled, metadataEnabled, authToken, allowedOrigins, allowedHosts, maxRequestBytes, allowUnauthenticatedRemote, updateToken, shutdownSeconds, accessLog, maxServiceRequests, maxServiceBytes, federationDestinations);
     }
 
     public EndpointOptions withMaxExecutionSeconds(int v) {
-        return new EndpointOptions(path, v, maxConcurrentQueries, maxRows, maxBufferedBytes, maxUploadSeconds, updateEnabled, federationEnabled, metadataEnabled, authToken, allowedOrigins, allowedHosts, maxRequestBytes, allowUnauthenticatedRemote, updateToken, shutdownSeconds, accessLog, maxServiceRequests, maxServiceBytes);
+        return new EndpointOptions(path, v, maxConcurrentQueries, maxRows, maxBufferedBytes, maxUploadSeconds, updateEnabled, federationEnabled, metadataEnabled, authToken, allowedOrigins, allowedHosts, maxRequestBytes, allowUnauthenticatedRemote, updateToken, shutdownSeconds, accessLog, maxServiceRequests, maxServiceBytes, federationDestinations);
     }
 
     public EndpointOptions withMaxConcurrentQueries(int v) {
-        return new EndpointOptions(path, maxExecutionSeconds, v, maxRows, maxBufferedBytes, maxUploadSeconds, updateEnabled, federationEnabled, metadataEnabled, authToken, allowedOrigins, allowedHosts, maxRequestBytes, allowUnauthenticatedRemote, updateToken, shutdownSeconds, accessLog, maxServiceRequests, maxServiceBytes);
+        return new EndpointOptions(path, maxExecutionSeconds, v, maxRows, maxBufferedBytes, maxUploadSeconds, updateEnabled, federationEnabled, metadataEnabled, authToken, allowedOrigins, allowedHosts, maxRequestBytes, allowUnauthenticatedRemote, updateToken, shutdownSeconds, accessLog, maxServiceRequests, maxServiceBytes, federationDestinations);
     }
 
     public EndpointOptions withMaxRows(int v) {
-        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, v, maxBufferedBytes, maxUploadSeconds, updateEnabled, federationEnabled, metadataEnabled, authToken, allowedOrigins, allowedHosts, maxRequestBytes, allowUnauthenticatedRemote, updateToken, shutdownSeconds, accessLog, maxServiceRequests, maxServiceBytes);
+        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, v, maxBufferedBytes, maxUploadSeconds, updateEnabled, federationEnabled, metadataEnabled, authToken, allowedOrigins, allowedHosts, maxRequestBytes, allowUnauthenticatedRemote, updateToken, shutdownSeconds, accessLog, maxServiceRequests, maxServiceBytes, federationDestinations);
     }
 
     public EndpointOptions withMaxBufferedBytes(long v) {
-        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, maxRows, v, maxUploadSeconds, updateEnabled, federationEnabled, metadataEnabled, authToken, allowedOrigins, allowedHosts, maxRequestBytes, allowUnauthenticatedRemote, updateToken, shutdownSeconds, accessLog, maxServiceRequests, maxServiceBytes);
+        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, maxRows, v, maxUploadSeconds, updateEnabled, federationEnabled, metadataEnabled, authToken, allowedOrigins, allowedHosts, maxRequestBytes, allowUnauthenticatedRemote, updateToken, shutdownSeconds, accessLog, maxServiceRequests, maxServiceBytes, federationDestinations);
     }
 
     public EndpointOptions withMaxUploadSeconds(int v) {
-        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, maxRows, maxBufferedBytes, v, updateEnabled, federationEnabled, metadataEnabled, authToken, allowedOrigins, allowedHosts, maxRequestBytes, allowUnauthenticatedRemote, updateToken, shutdownSeconds, accessLog, maxServiceRequests, maxServiceBytes);
+        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, maxRows, maxBufferedBytes, v, updateEnabled, federationEnabled, metadataEnabled, authToken, allowedOrigins, allowedHosts, maxRequestBytes, allowUnauthenticatedRemote, updateToken, shutdownSeconds, accessLog, maxServiceRequests, maxServiceBytes, federationDestinations);
     }
 
     public EndpointOptions withUpdateEnabled(boolean v) {
-        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, maxRows, maxBufferedBytes, maxUploadSeconds, v, federationEnabled, metadataEnabled, authToken, allowedOrigins, allowedHosts, maxRequestBytes, allowUnauthenticatedRemote, updateToken, shutdownSeconds, accessLog, maxServiceRequests, maxServiceBytes);
+        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, maxRows, maxBufferedBytes, maxUploadSeconds, v, federationEnabled, metadataEnabled, authToken, allowedOrigins, allowedHosts, maxRequestBytes, allowUnauthenticatedRemote, updateToken, shutdownSeconds, accessLog, maxServiceRequests, maxServiceBytes, federationDestinations);
     }
 
     public EndpointOptions withFederationEnabled(boolean v) {
-        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, maxRows, maxBufferedBytes, maxUploadSeconds, updateEnabled, v, metadataEnabled, authToken, allowedOrigins, allowedHosts, maxRequestBytes, allowUnauthenticatedRemote, updateToken, shutdownSeconds, accessLog, maxServiceRequests, maxServiceBytes);
+        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, maxRows, maxBufferedBytes, maxUploadSeconds, updateEnabled, v, metadataEnabled, authToken, allowedOrigins, allowedHosts, maxRequestBytes, allowUnauthenticatedRemote, updateToken, shutdownSeconds, accessLog, maxServiceRequests, maxServiceBytes, federationDestinations);
     }
 
     public EndpointOptions withMetadataEnabled(boolean v) {
-        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, maxRows, maxBufferedBytes, maxUploadSeconds, updateEnabled, federationEnabled, v, authToken, allowedOrigins, allowedHosts, maxRequestBytes, allowUnauthenticatedRemote, updateToken, shutdownSeconds, accessLog, maxServiceRequests, maxServiceBytes);
+        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, maxRows, maxBufferedBytes, maxUploadSeconds, updateEnabled, federationEnabled, v, authToken, allowedOrigins, allowedHosts, maxRequestBytes, allowUnauthenticatedRemote, updateToken, shutdownSeconds, accessLog, maxServiceRequests, maxServiceBytes, federationDestinations);
     }
 
     public EndpointOptions withAuthToken(String v) {
-        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, maxRows, maxBufferedBytes, maxUploadSeconds, updateEnabled, federationEnabled, metadataEnabled, v, allowedOrigins, allowedHosts, maxRequestBytes, allowUnauthenticatedRemote, updateToken, shutdownSeconds, accessLog, maxServiceRequests, maxServiceBytes);
+        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, maxRows, maxBufferedBytes, maxUploadSeconds, updateEnabled, federationEnabled, metadataEnabled, v, allowedOrigins, allowedHosts, maxRequestBytes, allowUnauthenticatedRemote, updateToken, shutdownSeconds, accessLog, maxServiceRequests, maxServiceBytes, federationDestinations);
     }
 
     public EndpointOptions withAllowedOrigins(List<String> v) {
-        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, maxRows, maxBufferedBytes, maxUploadSeconds, updateEnabled, federationEnabled, metadataEnabled, authToken, v, allowedHosts, maxRequestBytes, allowUnauthenticatedRemote, updateToken, shutdownSeconds, accessLog, maxServiceRequests, maxServiceBytes);
+        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, maxRows, maxBufferedBytes, maxUploadSeconds, updateEnabled, federationEnabled, metadataEnabled, authToken, v, allowedHosts, maxRequestBytes, allowUnauthenticatedRemote, updateToken, shutdownSeconds, accessLog, maxServiceRequests, maxServiceBytes, federationDestinations);
     }
 
     public EndpointOptions withAllowedHosts(List<String> v) {
-        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, maxRows, maxBufferedBytes, maxUploadSeconds, updateEnabled, federationEnabled, metadataEnabled, authToken, allowedOrigins, v, maxRequestBytes, allowUnauthenticatedRemote, updateToken, shutdownSeconds, accessLog, maxServiceRequests, maxServiceBytes);
+        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, maxRows, maxBufferedBytes, maxUploadSeconds, updateEnabled, federationEnabled, metadataEnabled, authToken, allowedOrigins, v, maxRequestBytes, allowUnauthenticatedRemote, updateToken, shutdownSeconds, accessLog, maxServiceRequests, maxServiceBytes, federationDestinations);
     }
 
     public EndpointOptions withMaxRequestBytes(long v) {
-        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, maxRows, maxBufferedBytes, maxUploadSeconds, updateEnabled, federationEnabled, metadataEnabled, authToken, allowedOrigins, allowedHosts, v, allowUnauthenticatedRemote, updateToken, shutdownSeconds, accessLog, maxServiceRequests, maxServiceBytes);
+        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, maxRows, maxBufferedBytes, maxUploadSeconds, updateEnabled, federationEnabled, metadataEnabled, authToken, allowedOrigins, allowedHosts, v, allowUnauthenticatedRemote, updateToken, shutdownSeconds, accessLog, maxServiceRequests, maxServiceBytes, federationDestinations);
     }
 
     public EndpointOptions withAllowUnauthenticatedRemote(boolean v) {
-        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, maxRows, maxBufferedBytes, maxUploadSeconds, updateEnabled, federationEnabled, metadataEnabled, authToken, allowedOrigins, allowedHosts, maxRequestBytes, v, updateToken, shutdownSeconds, accessLog, maxServiceRequests, maxServiceBytes);
+        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, maxRows, maxBufferedBytes, maxUploadSeconds, updateEnabled, federationEnabled, metadataEnabled, authToken, allowedOrigins, allowedHosts, maxRequestBytes, v, updateToken, shutdownSeconds, accessLog, maxServiceRequests, maxServiceBytes, federationDestinations);
     }
 
     public EndpointOptions withUpdateToken(String v) {
-        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, maxRows, maxBufferedBytes, maxUploadSeconds, updateEnabled, federationEnabled, metadataEnabled, authToken, allowedOrigins, allowedHosts, maxRequestBytes, allowUnauthenticatedRemote, v, shutdownSeconds, accessLog, maxServiceRequests, maxServiceBytes);
+        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, maxRows, maxBufferedBytes, maxUploadSeconds, updateEnabled, federationEnabled, metadataEnabled, authToken, allowedOrigins, allowedHosts, maxRequestBytes, allowUnauthenticatedRemote, v, shutdownSeconds, accessLog, maxServiceRequests, maxServiceBytes, federationDestinations);
     }
 
     public EndpointOptions withShutdownSeconds(int v) {
-        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, maxRows, maxBufferedBytes, maxUploadSeconds, updateEnabled, federationEnabled, metadataEnabled, authToken, allowedOrigins, allowedHosts, maxRequestBytes, allowUnauthenticatedRemote, updateToken, v, accessLog, maxServiceRequests, maxServiceBytes);
+        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, maxRows, maxBufferedBytes, maxUploadSeconds, updateEnabled, federationEnabled, metadataEnabled, authToken, allowedOrigins, allowedHosts, maxRequestBytes, allowUnauthenticatedRemote, updateToken, v, accessLog, maxServiceRequests, maxServiceBytes, federationDestinations);
     }
 
     public EndpointOptions withAccessLog(boolean v) {
-        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, maxRows, maxBufferedBytes, maxUploadSeconds, updateEnabled, federationEnabled, metadataEnabled, authToken, allowedOrigins, allowedHosts, maxRequestBytes, allowUnauthenticatedRemote, updateToken, shutdownSeconds, v, maxServiceRequests, maxServiceBytes);
+        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, maxRows, maxBufferedBytes, maxUploadSeconds, updateEnabled, federationEnabled, metadataEnabled, authToken, allowedOrigins, allowedHosts, maxRequestBytes, allowUnauthenticatedRemote, updateToken, shutdownSeconds, v, maxServiceRequests, maxServiceBytes, federationDestinations);
     }
 
     public EndpointOptions withMaxServiceRequests(int v) {
-        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, maxRows, maxBufferedBytes, maxUploadSeconds, updateEnabled, federationEnabled, metadataEnabled, authToken, allowedOrigins, allowedHosts, maxRequestBytes, allowUnauthenticatedRemote, updateToken, shutdownSeconds, accessLog, v, maxServiceBytes);
+        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, maxRows, maxBufferedBytes, maxUploadSeconds, updateEnabled, federationEnabled, metadataEnabled, authToken, allowedOrigins, allowedHosts, maxRequestBytes, allowUnauthenticatedRemote, updateToken, shutdownSeconds, accessLog, v, maxServiceBytes, federationDestinations);
     }
 
     public EndpointOptions withMaxServiceBytes(long v) {
-        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, maxRows, maxBufferedBytes, maxUploadSeconds, updateEnabled, federationEnabled, metadataEnabled, authToken, allowedOrigins, allowedHosts, maxRequestBytes, allowUnauthenticatedRemote, updateToken, shutdownSeconds, accessLog, maxServiceRequests, v);
+        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, maxRows, maxBufferedBytes, maxUploadSeconds, updateEnabled, federationEnabled, metadataEnabled, authToken, allowedOrigins, allowedHosts, maxRequestBytes, allowUnauthenticatedRemote, updateToken, shutdownSeconds, accessLog, maxServiceRequests, v, federationDestinations);
+    }
+
+    public EndpointOptions withFederationDestinations(List<String> v) {
+        return new EndpointOptions(path, maxExecutionSeconds, maxConcurrentQueries, maxRows, maxBufferedBytes, maxUploadSeconds, updateEnabled, federationEnabled, metadataEnabled, authToken, allowedOrigins, allowedHosts, maxRequestBytes, allowUnauthenticatedRemote, updateToken, shutdownSeconds, accessLog, maxServiceRequests, maxServiceBytes, v);
+    }
+
+    /** {@link #federationDestinations} as the policy SERVICE and LOAD are held to. */
+    Destinations destinations() {
+        return Destinations.parse(federationDestinations);
     }
 }

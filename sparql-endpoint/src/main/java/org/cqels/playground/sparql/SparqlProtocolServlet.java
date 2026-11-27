@@ -117,11 +117,13 @@ import java.util.function.Supplier;
  * charset, or a request nested too deeply to parse; 403 update while disabled, update by a
  * request {@link AccessFilters#READ_ONLY} marks, SERVICE / LOAD while federation is
  * disabled ({@link #reachesOut}), or naming a non-HTTP IRI while it is enabled
- * ({@link #nonHttpTarget}); 405, with {@code Allow}, update via GET or a method other than GET,
+ * ({@link #nonHttpTarget}) or a destination {@link Destinations} refuses; 405, with {@code Allow}, update via GET or a method other than GET,
  * HEAD, POST and OPTIONS; 406 no acceptable result format; 408 body not
  * received within {@code maxUploadSeconds}; 413 body over the limit; 415 unknown POST content
  * type or charset; 500 evaluation failure or the heap exhausted; 503 execution time exceeded or
- * every query slot busy (then with {@code Retry-After}); 504 a SERVICE or LOAD target did not
+ * every query slot busy (then with {@code Retry-After}), or a LOAD cut off by {@link #destroy()};
+ * 502 a SERVICE or LOAD target failed, or
+ * redirected to a destination refused; 504 a SERVICE or LOAD target did not
  * answer in time. A failure after the response is committed — the execution limit tripping
  * mid-stream — aborts the response instead.
  *
@@ -164,6 +166,8 @@ public final class SparqlProtocolServlet extends HttpServlet {
 
     private final transient Supplier<Repository> repository;
     private final EndpointOptions options;
+    /** Where LOAD may fetch from, and which constant SERVICE and LOAD IRIs are refused up front. */
+    private final transient Destinations destinations;
     private final transient Semaphore slots;
     /**
      * Ends uploads that outlive {@code maxUploadSeconds}; see {@link #readBody}. Made in
@@ -172,8 +176,8 @@ public final class SparqlProtocolServlet extends HttpServlet {
      * after the first stop, failing every POST (found in co-review of #123).
      */
     private transient volatile java.util.concurrent.ScheduledExecutorService uploadWatch;
-    /** Fetches LOAD sources; built on first use. See {@link #executeLoad}. */
-    private transient volatile java.net.http.HttpClient loadClient;
+    /** Fetches LOAD sources; built on first use. See {@link #executeLoad} and {@link #fetch}. */
+    private transient volatile org.apache.http.impl.client.CloseableHttpClient loadClient;
     /**
      * Which lifetime of this servlet instance a request belongs to. Each request records it on
      * arrival ({@link #GENERATION}); {@link #destroy()} advances it under {@link #commitGate}'s write
@@ -213,6 +217,7 @@ public final class SparqlProtocolServlet extends HttpServlet {
                                  Supplier<? extends Collection<Statement>> metadata) {
         this.repository = repository;
         this.options = options;
+        this.destinations = options.destinations();
         this.slots = new Semaphore(options.maxConcurrentQueries());
         this.metadata = metadata;
     }
@@ -250,16 +255,14 @@ public final class SparqlProtocolServlet extends HttpServlet {
         if (watch != null) {
             watch.shutdownNow();
         }
-        // The LOAD client's selector thread and kept-alive connections outlived a Jetty stop
-        // (found in co-review of #123). Dropped here and remade on the next LOAD; closed outright
-        // where the runtime can (HttpClient is AutoCloseable from JDK 21), otherwise left to the
-        // collector, which ends its thread once nothing holds it.
-        java.net.http.HttpClient client = loadClient;
+        // The LOAD client's kept-alive connections outlived a Jetty stop (found in co-review of
+        // #123). Closed here and remade on the next LOAD.
+        org.apache.http.impl.client.CloseableHttpClient client = loadClient;
         loadClient = null;
-        if (client instanceof AutoCloseable closeable) {
+        if (client != null) {
             try {
-                closeable.close();
-            } catch (Exception e) {
+                client.close();
+            } catch (IOException e) {
                 log.debug("closing the LOAD client: {}", e.toString());
             }
         }
@@ -1073,9 +1076,14 @@ public final class SparqlProtocolServlet extends HttpServlet {
      * hand to any scheme ({@code file:} included: an http URL redirecting to a local file read it
      * into the store) and its connection has no deadline, and neither can be fixed from outside
      * except JVM-wide — which a co-review of #123 showed fails silently in a JVM that has already
-     * opened an HTTP connection. Java's {@code HttpClient} instead follows redirects only to
-     * {@code http}/{@code https} (never from https to http), and the whole fetch is bounded by
-     * the execution limit (504) and the body by {@code maxBufferedBytes}.
+     * opened an HTTP connection. {@link #fetch} instead follows redirects only to
+     * {@code http}/{@code https} (never from https to http), and only to the federation
+     * destinations ({@link Destinations}); the whole fetch is bounded by the execution limit (504)
+     * and the body by {@code maxBufferedBytes}.
+     *
+     * <p>A destination refused is answered whatever {@code SILENT} says: 403 for the source, 502
+     * for a redirect or a JSON-LD context. {@code SILENT} covers a source that fails, not this
+     * endpoint's own policy, which hidden behind a 204 would look like a source with nothing in it.
      *
      * <p>The price: a request that holds {@code LOAD} must hold nothing else (400), since RDF4J
      * cannot run the other operations of one request around a load done elsewhere. {@code SILENT}
@@ -1089,18 +1097,20 @@ public final class SparqlProtocolServlet extends HttpServlet {
         // One deadline for everything the LOAD fetches: the source and any JSON-LD context.
         long deadline = System.nanoTime() + options.maxExecutionSeconds() * 1_000_000_000L;
         String timedOut = "LOAD <" + source + "> did not finish within " + options.maxExecutionSeconds() + " s";
-        java.net.http.HttpResponse<byte[]> fetched;
+        Fetched fetched;
         try {
             fetched = fetch(source, RDF_ACCEPT, deadline);
         } catch (java.util.concurrent.TimeoutException e) {
             loadFailed(resp, load, HttpServletResponse.SC_GATEWAY_TIMEOUT, timedOut);
             return;
+        } catch (DestinationRefused e) {
+            fail(resp, e.status, "LOAD: " + e.getMessage());
+            return;
+        } catch (Stopping e) {
+            fail(resp, HttpServletResponse.SC_SERVICE_UNAVAILABLE, "LOAD <" + source + ">: " + e.getMessage());
+            return;
         } catch (IOException | IllegalArgumentException e) {
             loadFailed(resp, load, HttpServletResponse.SC_BAD_GATEWAY, "LOAD <" + source + "> failed: " + e.getMessage());
-            return;
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            loadFailed(resp, load, HttpServletResponse.SC_SERVICE_UNAVAILABLE, "LOAD <" + source + "> was interrupted");
             return;
         }
         if (fetched.statusCode() / 100 != 2) {
@@ -1152,10 +1162,17 @@ public final class SparqlProtocolServlet extends HttpServlet {
                 }
             });
         } catch (org.eclipse.rdf4j.rio.RDFParseException | org.eclipse.rdf4j.rio.RDFHandlerException
-                 | java.io.UncheckedIOException e) {
+                 | java.io.UncheckedIOException | IllegalArgumentException e) {
+            // IllegalArgumentException: a base IRI the parser refuses, the source's own URL; a
+            // remote's doing, not the client's 400 (found in co-review round 5 of #144)
             // UncheckedIOException: the parser's own I/O failures, such as an XML encoding the
             // runtime does not know, which escaped LOAD SILENT as a 500 (found in co-review of #123)
-            if (contexts.timedOut) {
+            if (contexts.stopping) {
+                fail(resp, HttpServletResponse.SC_SERVICE_UNAVAILABLE, "LOAD <" + source + ">: the endpoint is stopping");
+            } else if (contexts.refused != null) {
+                fail(resp, HttpServletResponse.SC_BAD_GATEWAY, "LOAD <" + source + ">: a JSON-LD context: "
+                        + contexts.refused.getMessage());
+            } else if (contexts.timedOut) {
                 loadFailed(resp, load, HttpServletResponse.SC_GATEWAY_TIMEOUT, timedOut);
             } else {
                 loadFailed(resp, load, HttpServletResponse.SC_BAD_GATEWAY, "LOAD <" + source + ">: " + e.getMessage());
@@ -1190,6 +1207,10 @@ public final class SparqlProtocolServlet extends HttpServlet {
     private final class ContextLoader extends com.github.jsonldjava.core.DocumentLoader {
         private final long deadline;
         volatile boolean timedOut;
+        /** A context, or its alternate, that the federation destinations do not admit. */
+        volatile DestinationRefused refused;
+        /** A context fetch {@link #destroy()} cut off. */
+        volatile boolean stopping;
 
         ContextLoader(long deadline) {
             this.deadline = deadline;
@@ -1238,9 +1259,12 @@ public final class SparqlProtocolServlet extends HttpServlet {
             } catch (java.util.concurrent.TimeoutException e) {
                 timedOut = true;
                 throw new com.github.jsonldjava.core.JsonLdError(refused, url + " did not answer in time");
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                throw new com.github.jsonldjava.core.JsonLdError(refused, url + ": interrupted");
+            } catch (DestinationRefused e) {
+                this.refused = e;
+                throw new com.github.jsonldjava.core.JsonLdError(refused, e.getMessage());
+            } catch (Stopping e) {
+                stopping = true;
+                throw new com.github.jsonldjava.core.JsonLdError(refused, e.getMessage());
             } catch (IOException | IllegalArgumentException e) {
                 throw new com.github.jsonldjava.core.JsonLdError(refused, url + ": " + e.getMessage());
             }
@@ -1349,40 +1373,260 @@ public final class SparqlProtocolServlet extends HttpServlet {
         fail(resp, status, message);
     }
 
+    /** A LOAD fetch's answer: its status, the URI it came from after redirects, its headers and body. */
+    record Fetched(int statusCode, java.net.URI uri, java.net.http.HttpHeaders headers, byte[] body) { }
+
+    /** A request {@link Destinations} refuses: 403 for the request's own IRI, 502 for a redirect. */
+    static final class DestinationRefused extends IOException {
+        final int status;
+
+        DestinationRefused(boolean redirected, String message) {
+            super(message);
+            this.status = redirected ? HttpServletResponse.SC_BAD_GATEWAY : HttpServletResponse.SC_FORBIDDEN;
+        }
+    }
+
+    /**
+     * Called with the redirect count before each request of a LOAD fetch after the first; for
+     * tests, which stop the servlet there. Always {@code null} outside them.
+     */
+    static volatile java.util.function.IntConsumer beforeLoadHop;
+
+    /** A fetch the servlet's {@link #destroy()} cut off: answered 503, as any request that outlives it. */
+    static final class Stopping extends IOException {
+        Stopping() {
+            super("the endpoint is stopping");
+        }
+    }
+
+    /** The proxy selector the LOAD client routes by, captured with it (set before the client is published). */
+    private transient volatile java.net.ProxySelector loadRoutes;
+
+    /** The LOAD client's own credentials store, which must stay empty; for tests. */
+    private transient volatile org.apache.http.impl.client.BasicCredentialsProvider loadClientCredentials;
+
+    /** Whether the LOAD client's own credentials store holds anything; for tests. */
+    boolean loadClientHoldsCredentials() {
+        var c = loadClientCredentials;
+        return c != null && c.getCredentials(org.apache.http.auth.AuthScope.ANY) != null;
+    }
+
+    /** Redirects one LOAD fetch follows, at most: what Java's {@code HttpClient}, used here before, followed. */
+    static final int MAX_LOAD_REDIRECTS = 5;
+
+    private static final java.util.Set<Integer> REDIRECT_STATUSES = java.util.Set.of(301, 302, 303, 307, 308);
+
     /**
      * GETs {@code url} by {@code deadline} (a {@link System#nanoTime} instant, ignored when the
-     * execution limit is 0), following redirects only to http(s), holding at most
-     * {@code maxBufferedBytes} of body.
+     * execution limit is 0), following redirects only to http(s), never from https to http, and
+     * only to the federation destinations, holding at most {@code maxBufferedBytes} of body.
+     *
+     * <p><strong>Why Apache's client, not Java's.</strong> Java's {@code HttpClient} (used here
+     * until the destinations existed) resolves names itself, out of reach: a check of a name's
+     * addresses made beforehand could be answered one address and the connection another (DNS
+     * rebinding). Apache's client connects to the addresses its {@link Destinations.Dns} resolver
+     * answered, which is where they are checked; and it follows no redirect on its own, so every
+     * hop is checked here. The deadline aborts the request in progress, as for SERVICE
+     * ({@link TimedServiceClient}); the name lookup is held to it by the same
+     * {@link TimedServiceClient.BoundedDns}.
      */
-    private java.net.http.HttpResponse<byte[]> fetch(String url, String accept, long deadline)
-            throws IOException, InterruptedException, java.util.concurrent.TimeoutException {
-        java.net.http.HttpClient client = loadClient;
-        if (client == null) {
-            java.net.http.HttpClient.Builder b = java.net.http.HttpClient.newBuilder()
-                    .followRedirects(java.net.http.HttpClient.Redirect.NORMAL);
-            if (options.maxExecutionSeconds() > 0) {
-                b.connectTimeout(java.time.Duration.ofSeconds(options.maxExecutionSeconds()));
-            }
-            client = b.build();
-            loadClient = client;
-        }
-        java.net.http.HttpRequest request = java.net.http.HttpRequest.newBuilder(java.net.URI.create(url))
-                .header("Accept", accept).GET().build();
-        long cap = options.maxBufferedBytes();
+    private Fetched fetch(String url, String accept, long deadline)
+            throws IOException, java.util.concurrent.TimeoutException {
         boolean timed = options.maxExecutionSeconds() > 0;
-        long left = deadline - System.nanoTime();
-        if (timed && left <= 0) {
-            throw new java.util.concurrent.TimeoutException();
+        java.net.URI uri = java.net.URI.create(url);
+        org.apache.http.impl.client.CloseableHttpClient client = loadClient();
+        for (int redirects = 0; ; redirects++) {
+            boolean redirected = redirects > 0;
+            // the host Apache takes from the URI and resolves, decided on as it is (see Destinations.target)
+            // Only a URL with a server authority java.net.URI reads, and a port in range, as Java's
+            // HttpClient (used here before) required. Apache's extractHost reads anything else
+            // leniently — ":-2" as no port (port 80), ":+8080" as 8080, "localhost%3a8080" decoded —
+            // and LOAD went where the URL did not say, or answered a remote's bad redirect with the
+            // client's 400 (found in co-review round 5 of #144). SERVICE keeps master's behaviour:
+            // its explicitPortValid refuses ":-2", not the decoded forms, which it reaches as Apache
+            // reads them, deciding on that same reading. A Docker Compose name such as sparql_store
+            // has no server authority either: SERVICE reaches it, LOAD does not, as on master.
+            if (uri.getHost() == null || uri.getPort() == 0 || uri.getPort() > 65535) {
+                // quoted as written, not as Apache reads it: "localhost%3a8080", not "localhost:8080"
+                // (found in co-review round 6 of #144); scheme and authority only, never a path or query
+                String written = (uri.getScheme() == null ? "" : uri.getScheme() + ":")
+                        + (uri.getRawAuthority() == null ? "" : "//" + uri.getRawAuthority());
+                throw new IOException((redirected ? "redirected to <" : "<") + written
+                        + ">, which is not a URL with a host and a port that can be fetched");
+            }
+            org.apache.http.HttpHost target = Destinations.target(uri);
+            if (target == null) {
+                throw new IOException((redirected ? "redirected to <" : "<") + Destinations.origin(uri) + ">, which names no host");
+            }
+            String why = destinations.refusal(target, loadRoutes);
+            if (why != null) {
+                throw new DestinationRefused(redirected, (redirected ? "a redirect to " : "") + why);
+            }
+            long left = deadline - System.nanoTime();
+            if (timed && left <= 0) {
+                throw new java.util.concurrent.TimeoutException();
+            }
+            org.apache.http.client.methods.HttpGet get;
+            try {
+                get = new org.apache.http.client.methods.HttpGet(uri);
+            } catch (IllegalArgumentException e) {
+                throw new IOException("not a URL that can be fetched: <" + Destinations.origin(uri) + ">");
+            }
+            get.setHeader("Accept", accept);
+            java.util.concurrent.atomic.AtomicBoolean fired = new java.util.concurrent.atomic.AtomicBoolean();
+            java.util.concurrent.ScheduledFuture<?> timer = timed
+                    ? TimedServiceClient.schedule(() -> {
+                        fired.set(true);
+                        get.abort();
+                    }, left)
+                    : null;
+            if (timed) {
+                TimedServiceClient.BoundedDns.DEADLINE.set(deadline);
+            }
+            Destinations.CHECK.set(destinations.decide(target) == Destinations.Decision.IF_PUBLIC);
+            java.util.function.IntConsumer hook = beforeLoadHop;
+            if (hook != null && redirected) {
+                hook.accept(redirects);
+            }
+            // A context of its own, with credentials of its own: Apache copies a URL's user:pass@
+            // into the context's credentials store, which was otherwise the client's, kept for its
+            // lifetime, one entry per host a client named (found in co-review round 2 of #144).
+            // Nothing is ever sent from it: the client has no authentication schemes.
+            org.apache.http.client.protocol.HttpClientContext context = org.apache.http.client.protocol.HttpClientContext.create();
+            context.setCredentialsProvider(new org.apache.http.impl.client.BasicCredentialsProvider());
+            try (org.apache.http.client.methods.CloseableHttpResponse response = client.execute(target, get, context)) {
+                int status = response.getStatusLine().getStatusCode();
+                org.apache.http.Header location = response.getFirstHeader("Location");
+                if (REDIRECT_STATUSES.contains(status) && location != null) {
+                    get.abort();   // the redirect's body is dropped with its connection, never read
+                    java.net.URI to;
+                    try {
+                        to = org.apache.http.client.utils.URIUtils.resolve(uri, location.getValue().trim());
+                    } catch (IllegalArgumentException e) {
+                        throw new IOException("redirected to an invalid URI");
+                    }
+                    String scheme = to.getScheme() == null ? "" : to.getScheme().toLowerCase(Locale.ROOT);
+                    if (!scheme.equals("http") && !scheme.equals("https")) {
+                        throw new IOException("redirected to <" + Destinations.origin(to) + ">: only http and https are followed");
+                    }
+                    if ("https".equalsIgnoreCase(uri.getScheme()) && scheme.equals("http")) {
+                        throw new IOException("redirected from https to <" + Destinations.origin(to)
+                                + ">: a redirect may not drop to plain http");
+                    }
+                    if (redirects + 1 > MAX_LOAD_REDIRECTS) {
+                        throw new IOException("redirected more than " + MAX_LOAD_REDIRECTS + " times");
+                    }
+                    uri = to;
+                    continue;
+                }
+                byte[] body = new byte[0];
+                org.apache.http.HttpEntity entity = response.getEntity();
+                if (entity != null) {
+                    InputStream in = entity.getContent();
+                    try {
+                        body = readCapped(in, options.maxBufferedBytes());
+                    } finally {
+                        // Aborted before the stream is closed: closing Apache's stream reads the rest
+                        // of the body to its end, so a source over the cap was downloaded on until
+                        // the deadline (a 504, not the cap's 502) or, with no deadline, for as long
+                        // as it lasted (found in co-review round 1 of #144).
+                        get.abort();
+                        try {
+                            in.close();
+                        } catch (IOException ignored) {
+                            // aborted underneath: closed all the same
+                        }
+                    }
+                }
+                java.util.Map<String, List<String>> headers = new java.util.TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+                for (org.apache.http.Header h : response.getAllHeaders()) {
+                    headers.computeIfAbsent(h.getName(), k -> new ArrayList<>()).add(h.getValue());
+                }
+                return new Fetched(status, uri, java.net.http.HttpHeaders.of(headers, (k, v) -> true), body);
+            } catch (Destinations.NotPublic e) {
+                throw new DestinationRefused(redirected, (redirected ? "a redirect to " : "") + e.getMessage());
+            } catch (IllegalStateException e) {
+                // "Connection pool shut down": destroy() closed the client under a fetch still in
+                // progress, which ended as a 500 (found in co-review round 2 of #144). A request
+                // already out when it did fails as an IOException instead; both are a 503 below.
+                if (loadClient != client) {
+                    throw new Stopping();
+                }
+                throw new IOException(e.getMessage(), e);
+            } catch (IOException e) {
+                // The client's own socket, connect and name-lookup timeouts are the same deadline,
+                // and can come a moment before the timer: a timeout either way
+                boolean timeout = fired.get();
+                for (Throwable t = e; t != null && !timeout; t = t.getCause() == t ? null : t.getCause()) {
+                    timeout = t instanceof java.net.SocketTimeoutException
+                            || t instanceof org.apache.http.conn.ConnectTimeoutException;
+                }
+                if (timeout && timed) {
+                    throw new java.util.concurrent.TimeoutException();
+                }
+                if (loadClient != client) {
+                    throw new Stopping();   // destroy() closed the client under this request: its connection with it
+                }
+                throw e;
+            } finally {
+                if (timer != null) {
+                    timer.cancel(false);
+                }
+                TimedServiceClient.BoundedDns.DEADLINE.remove();
+                Destinations.CHECK.remove();
+            }
         }
-        var pending = client.sendAsync(request, info -> new CappedBody(cap));
-        try {
-            return timed ? pending.get(left, java.util.concurrent.TimeUnit.NANOSECONDS) : pending.get();
-        } catch (java.util.concurrent.ExecutionException e) {
-            Throwable cause = e.getCause();
-            throw cause instanceof IOException io ? io : new IOException(String.valueOf(cause), cause);
-        } catch (java.util.concurrent.TimeoutException | InterruptedException e) {
-            pending.cancel(true);
-            throw e;
+    }
+
+    /** {@code in} read to its end, failing beyond {@code cap} bytes. */
+    private static byte[] readCapped(InputStream in, long cap) throws IOException {
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        byte[] buf = new byte[8192];
+        int n;
+        while ((n = in.read(buf)) >= 0) {
+            if (out.size() + (long) n > cap) {
+                throw new IOException("the body exceeds " + cap + " bytes");
+            }
+            out.write(buf, 0, n);
+        }
+        return out.toByteArray();
+    }
+
+    /**
+     * The LOAD client, built on first use: no redirects, retries, credentials, cookies or content
+     * decoding of its own ({@link #decoded} undoes an encoding, within the cap), the JVM's proxy
+     * settings as SERVICE has them, and names resolved through {@link Destinations.Dns} within the
+     * deadline.
+     */
+    private org.apache.http.impl.client.CloseableHttpClient loadClient() {
+        org.apache.http.impl.client.CloseableHttpClient client = loadClient;
+        if (client != null) {
+            return client;
+        }
+        synchronized (this) {
+            if (loadClient == null) {
+                int millis = (int) Math.min(Integer.MAX_VALUE, Math.max(0, options.maxExecutionSeconds()) * 1000L);
+                loadClientCredentials = new org.apache.http.impl.client.BasicCredentialsProvider();
+                loadRoutes = Destinations.currentSelector();
+                loadClient = org.apache.http.impl.client.HttpClientBuilder.create()
+                        .useSystemProperties()
+                        .setRoutePlanner(Destinations.routePlanner(loadRoutes))
+                        .setDnsResolver(new Destinations.Dns(new TimedServiceClient.BoundedDns(
+                                org.apache.http.impl.conn.SystemDefaultDnsResolver.INSTANCE, millis)))
+                        .disableRedirectHandling()
+                        .disableAutomaticRetries()
+                        .disableContentCompression()
+                        .disableCookieManagement()
+                        .setDefaultAuthSchemeRegistry(org.apache.http.config.RegistryBuilder
+                                .<org.apache.http.auth.AuthSchemeProvider>create().build())
+                        .setDefaultCredentialsProvider(loadClientCredentials)
+                        .setDefaultRequestConfig(org.apache.http.client.config.RequestConfig.custom()
+                                .setConnectTimeout(millis)
+                                .setConnectionRequestTimeout(millis)
+                                .setSocketTimeout(millis).build())
+                        .build();
+            }
+            return loadClient;
         }
     }
 
@@ -1392,7 +1636,7 @@ public final class SparqlProtocolServlet extends HttpServlet {
      * source; passed straight to the parser it failed on the gzip magic byte (found in
      * co-review of #123). Any other encoding is refused.
      */
-    private byte[] decoded(java.net.http.HttpResponse<byte[]> fetched) throws IOException {
+    private byte[] decoded(Fetched fetched) throws IOException {
         String encoding = fetched.headers().firstValue("Content-Encoding").orElse("identity").trim().toLowerCase(Locale.ROOT);
         InputStream in;
         switch (encoding) {
@@ -1416,53 +1660,6 @@ public final class SparqlProtocolServlet extends HttpServlet {
             }
         }
         return out.toByteArray();
-    }
-
-    /** A response body held in memory up to {@code cap} bytes; beyond it the fetch fails. */
-    private static final class CappedBody implements java.net.http.HttpResponse.BodySubscriber<byte[]> {
-        private final long cap;
-        private final java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
-        private final java.util.concurrent.CompletableFuture<byte[]> result = new java.util.concurrent.CompletableFuture<>();
-        private java.util.concurrent.Flow.Subscription subscription;
-
-        CappedBody(long cap) {
-            this.cap = cap;
-        }
-
-        @Override
-        public java.util.concurrent.CompletionStage<byte[]> getBody() {
-            return result;
-        }
-
-        @Override
-        public void onSubscribe(java.util.concurrent.Flow.Subscription s) {
-            subscription = s;
-            s.request(Long.MAX_VALUE);
-        }
-
-        @Override
-        public void onNext(List<java.nio.ByteBuffer> items) {
-            for (java.nio.ByteBuffer b : items) {
-                if (out.size() + (long) b.remaining() > cap) {
-                    subscription.cancel();
-                    result.completeExceptionally(new IOException("the body exceeds " + cap + " bytes"));
-                    return;
-                }
-                byte[] chunk = new byte[b.remaining()];
-                b.get(chunk);
-                out.writeBytes(chunk);
-            }
-        }
-
-        @Override
-        public void onError(Throwable t) {
-            result.completeExceptionally(t);
-        }
-
-        @Override
-        public void onComplete() {
-            result.complete(out.toByteArray());
-        }
     }
 
     /**
@@ -1568,6 +1765,47 @@ public final class SparqlProtocolServlet extends HttpServlet {
         return found[0];
     }
 
+    /**
+     * Why the first constant SERVICE or LOAD IRI in {@code node} that {@code destinations} refuses by
+     * name is refused, or {@code null}. Called after {@link #nonHttpTarget}, so every IRI here is
+     * http or https.
+     */
+    static String refusedTarget(QueryModelNode node, Destinations destinations) {
+        String[] found = {null};
+        node.visit(new AbstractQueryModelVisitor<RuntimeException>() {
+            @Override
+            public void meet(Service service) {
+                if (found[0] == null && service.getServiceRef().hasValue()) {
+                    check("SERVICE", service.getServiceRef().getValue().stringValue());
+                }
+                super.meet(service);
+            }
+
+            @Override
+            public void meet(Load load) {
+                if (found[0] == null) {
+                    check("LOAD", load.getSource().getValue().stringValue());
+                }
+            }
+
+            private void check(String what, String iri) {
+                java.net.URI uri;
+                try {
+                    uri = new java.net.URI(iri);
+                } catch (java.net.URISyntaxException e) {
+                    return;   // left to the request, which fails on it
+                }
+                // a host-less IRI is left to the request, which fails on it (LOAD SILENT: 204, as
+                // before); refused here, it was "<> is not among the destinations" even under '*'
+                // (found in co-review round 4 of #144)
+                if (Destinations.target(uri) != null && destinations.decide(uri) == Destinations.Decision.REFUSED) {
+                    found[0] = what + ": " + destinations.refusal(uri);
+                }
+            }
+        });
+        return found[0];
+    }
+
     /** Answers 403 and returns true when federation is off and {@code nodes} reach out, or reach a non-HTTP IRI. */
     private boolean refusedOutbound(HttpServletResponse resp, List<? extends QueryModelNode> nodes) throws IOException {
         for (QueryModelNode node : nodes) {
@@ -1579,6 +1817,14 @@ public final class SparqlProtocolServlet extends HttpServlet {
             if (bad != null) {
                 fail(resp, HttpServletResponse.SC_FORBIDDEN, "SERVICE and LOAD may name only http and https IRIs, "
                         + "not <" + bad + ">");
+                return true;
+            }
+            // A constant IRI the destinations refuse by name is answered before anything runs.
+            // Not the only check: a variable SERVICE, a redirect and a name's addresses are checked
+            // when the request is made (TimedServiceClient, fetch).
+            String refused = options.federationEnabled() ? refusedTarget(node, destinations) : null;
+            if (refused != null) {
+                fail(resp, HttpServletResponse.SC_FORBIDDEN, refused);
                 return true;
             }
             // SERVICE goes through the repository's own client, which only
