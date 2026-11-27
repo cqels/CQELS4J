@@ -86,7 +86,7 @@ import org.cqels.playground.Fleet;
  */
 public class CdspDrivingStyle {
 
-    public static void main(String[] args) throws InterruptedException {
+    public static void main(String[] args) {
         try (CQELSEngine engine = CQELSEngine.builder()
                 .id("cdsp-driving-style")
                 .withMemoryStore()
@@ -134,63 +134,49 @@ public class CdspDrivingStyle {
                     within 3 s while speed > 10 — eight Datalog rules as one continuous query.
                     """);
 
-            // Every frame reaches the stream at an explicit time (ms) that follows the pauses below, so
-            // the window holds the same frames every run; its phenomenonTime is that same instant,
+            // Every frame reaches the stream at an explicit time (ms), so the window holds the same
+            // frames every run; its phenomenonTime is that same instant,
             // except in scenario 5, where a replay makes the two differ.
 
             // Scenario 1 — a hard swerve at speed on EV-7Q2: angle 20 -> 250 (diff 230 > 210).
             System.out.println("Scenario 1 — EV-7Q2 swings 20 -> 250 deg at 64 km/h (should fire):");
             Fleet.pushFrameAt(telemetry, Fleet.SENSOR_EV1, Fleet.EV1, Fleet.STEERING, 20.0, Fleet.SPEED, 64.0, 1_000);
-            Thread.sleep(300);
             Fleet.pushFrameAt(telemetry, Fleet.SENSOR_EV1, Fleet.EV1, Fleet.STEERING, 250.0, Fleet.SPEED, 64.0, 1_300);
-            Thread.sleep(1200);
 
             // Scenario 2 — the same swing, but parked. The speed guard must suppress it.
-            Thread.sleep(4000);   // pacing; the next frame's stream time, 5.2 s on, takes scenario 1 out of the 3s window
+            // the next frame's stream time, 5.2 s on, takes scenario 1 out of the 3s window
             System.out.println("\nScenario 2 — EV-3K8 swings 15 -> 245 deg at 4 km/h (should stay quiet):");
             Fleet.pushFrameAt(telemetry, Fleet.SENSOR_EV2, Fleet.EV2, Fleet.STEERING, 15.0, Fleet.SPEED, 4.0, 6_500);
-            Thread.sleep(300);
             Fleet.pushFrameAt(telemetry, Fleet.SENSOR_EV2, Fleet.EV2, Fleet.STEERING, 245.0, Fleet.SPEED, 4.0, 6_800);
-            Thread.sleep(1200);
             System.out.println("  (no alert: the swing is real but the vehicle is barely moving)");
 
             // Scenario 3 — at speed, but a gentle correction. The angle guard must suppress it.
-            Thread.sleep(4000);
             System.out.println("\nScenario 3 — EV-9TZ swings 30 -> 55 deg at 80 km/h (should stay quiet):");
             Fleet.pushFrameAt(telemetry, Fleet.SENSOR_EV3, Fleet.EV3, Fleet.STEERING, 30.0, Fleet.SPEED, 80.0, 12_000);
-            Thread.sleep(300);
             Fleet.pushFrameAt(telemetry, Fleet.SENSOR_EV3, Fleet.EV3, Fleet.STEERING, 55.0, Fleet.SPEED, 80.0, 12_300);
-            Thread.sleep(1500);
             System.out.println("  (no alert: fast, but only a 25 deg correction)");
 
             // Scenario 4 — the case that motivated the frame model: the vehicle WAS fast, then
             // slowed, and only then swerved. An earlier version of this query paired the swing
             // with the stale 64 km/h reading still sitting in the window and alerted. Because
             // speed now travels in the same frame as the angle, the swing carries 4 km/h.
-            Thread.sleep(4000);
             System.out.println("\nScenario 4 — EV-7Q2 was at 64, SLOWED to 4, then swings"
                     + " 20 -> 250 (should stay quiet):");
             Fleet.pushFrameAt(telemetry, Fleet.SENSOR_EV1, Fleet.EV1, Fleet.STEERING, 5.0, Fleet.SPEED, 64.0, 17_800);
-            Thread.sleep(300);
             Fleet.pushFrameAt(telemetry, Fleet.SENSOR_EV1, Fleet.EV1, Fleet.STEERING, 20.0, Fleet.SPEED, 4.0, 18_100);
-            Thread.sleep(300);
             Fleet.pushFrameAt(telemetry, Fleet.SENSOR_EV1, Fleet.EV1, Fleet.STEERING, 250.0, Fleet.SPEED, 4.0, 18_400);
-            Thread.sleep(1500);
             System.out.println("  (no alert: the swing happened at 4 km/h, though 64 is still in the window)");
 
             // Scenario 5 — the same slowed-then-swerved case, REPLAYED out of order: the later
             // frame is pushed FIRST. Ordering by minted identifier (arrival) read this pair
             // backwards and alerted on the stale 64; ordering by sosa:phenomenonTime does not,
             // because ?f2 is the later frame whichever arrives first.
-            Thread.sleep(4000);
             System.out.println("\nScenario 5 — the same case REPLAYED out of order, later frame"
                     + " pushed first (should stay quiet):");
             Fleet.pushFrameAt(telemetry, Fleet.SENSOR_EV2, Fleet.EV2, Fleet.STEERING, 250.0,
                     Fleet.SPEED, 4.0, "2026-01-01T00:00:09Z", 23_900);     // later event, arrives first
-            Thread.sleep(300);
             Fleet.pushFrameAt(telemetry, Fleet.SENSOR_EV2, Fleet.EV2, Fleet.STEERING, 20.0,
                     Fleet.SPEED, 64.0, "2026-01-01T00:00:01Z", 24_200);    // earlier event, arrives second
-            Thread.sleep(1500);
             System.out.println("  (no alert: ?f2 is the 00:00:09 frame by event time, so the guard"
                     + " reads 4 km/h — not the 64 that arrived later)");
         }

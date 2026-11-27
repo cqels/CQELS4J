@@ -15,7 +15,7 @@ import org.cqels.engine.DataStream;
  */
 public class CypherGraphQuery {
 
-    public static void main(String[] args) throws InterruptedException {
+    public static void main(String[] args) {
         try (CQELSEngine engine = CQELSEngine.builder()
                 .id("cypher-graph-query")
                 .withMemoryStore()
@@ -39,9 +39,7 @@ public class CypherGraphQuery {
             for (String[] ev : fleet) {
                 System.out.println("push: observation from " + ev[1].substring(Fleet.EX.length()));
                 Fleet.pushObservation(telemetry, ev[0], ev[1], Fleet.SPEED, 55.0);
-                Thread.sleep(250);
             }
-            Thread.sleep(800);
         }
         System.out.println("\nDone.");
     }

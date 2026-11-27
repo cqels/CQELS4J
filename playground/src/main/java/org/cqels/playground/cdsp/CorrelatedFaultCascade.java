@@ -53,7 +53,7 @@ public class CorrelatedFaultCascade {
     private static final ValueFactory VF = SimpleValueFactory.getInstance();
     private static final AtomicLong ALERT_SEQ = new AtomicLong();
 
-    public static void main(String[] args) throws InterruptedException {
+    public static void main(String[] args) {
         try (CQELSEngine engine = CQELSEngine.builder()
                 .id("correlated-fault-cascade")
                 .withMemoryStore()
@@ -91,11 +91,8 @@ public class CorrelatedFaultCascade {
             // -- Scenario 1: EV-7Q2 raises three distinct subsystem alerts -> must match.
             System.out.println("Scenario 1 — one vehicle, three distinct subsystems (should fire):");
             pushAlert(alerts, Fleet.EV1, INVERTER_OVER_TEMP, 1_000);
-            Thread.sleep(300);
             pushAlert(alerts, Fleet.EV1, BRAKE_WEAR, 1_300);
-            Thread.sleep(300);
             pushAlert(alerts, Fleet.EV1, TIRE_PRESSURE, 1_600);
-            Thread.sleep(1500);   // let the compound alert print
 
             // -- Scenario 2: the same three alert types, but split across two OTHER vehicles.
             // The distinctness filters pass, yet the same-vehicle guards
@@ -105,11 +102,8 @@ public class CorrelatedFaultCascade {
             System.out.println(
                     "\nScenario 2 — same alert types, spread across two vehicles (should stay quiet):");
             pushAlert(alerts, Fleet.EV2, INVERTER_OVER_TEMP, 3_100);
-            Thread.sleep(300);
             pushAlert(alerts, Fleet.EV3, BRAKE_WEAR, 3_400);
-            Thread.sleep(300);
             pushAlert(alerts, Fleet.EV2, TIRE_PRESSURE, 3_700);
-            Thread.sleep(1500);
             System.out.println("  (no cascade: three distinct alerts, but never three from ONE vehicle —"
                     + " the cross-event same-vehicle guard suppressed the match)");
         }

@@ -157,7 +157,6 @@ public class MessageLogReplay {
                         + (message.isEmpty() ? ", empty: a heartbeat" : "") + ") at "
                         + Instant.ofEpochMilli(eventTime));
                 cabin.push(message, eventTime);
-                Thread.sleep(400);
             }
 
             System.out.println("\n--- the same log read as one plain Turtle document ---");
@@ -170,7 +169,6 @@ public class MessageLogReplay {
             System.out.println("one document: " + asOneDocument.size() + " statements; its " + results
                     + " sosa:hasResult _:r point at " + resultNodes + " blank node(s)");
             merged.push(asOneDocument, eventTime);
-            Thread.sleep(600);
             System.out.println("  Reading over it: " + mergedRows.get() + " rows (every observation joined to"
                     + " every value), against " + readings.size() + " from the message log");
         }

@@ -114,7 +114,8 @@ test until it has a file, and a file whose demo is gone fails it too.
 For that, a demo must print the same thing on every run: nothing that varies between runs (random
 IDs, ports, the wall clock), and windows that hold the same readings every time. So every demo with
 a time window gives each reading an explicit event time, rather than letting the engine stamp it on
-arrival. The `Thread.sleep` calls only pace the output while you watch; no result depends on them.
+arrival. The demos don't sleep: a gap such as "5.5 s later" is a gap in event time, not a pause, so
+what a demo prints doesn't depend on how fast the machine runs it.
 
 When a demo's output changes on purpose, regenerate its file on JDK 17, the JDK CI uses, and review
 the diff:

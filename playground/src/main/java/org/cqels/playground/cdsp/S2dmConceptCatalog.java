@@ -60,7 +60,7 @@ import org.cqels.playground.Fleet;
  */
 public class S2dmConceptCatalog {
 
-    public static void main(String[] args) throws InterruptedException {
+    public static void main(String[] args) {
         try (CQELSEngine engine = CQELSEngine.builder()
                 .id("s2dm-concept-catalog")
                 .withMemoryStore()
@@ -134,15 +134,12 @@ public class S2dmConceptCatalog {
 
             System.out.println("push: EV-7Q2 Vehicle.averageSpeed = 62.0");
             S2dm.pushConceptSignal(telemetry, Fleet.EV1, S2dm.F_AVERAGE_SPEED, 62.0);
-            Thread.sleep(700);
 
             System.out.println("\npush: EV-3K8 Powertrain.stateOfCharge = 41.5");
             S2dm.pushConceptSignal(telemetry, Fleet.EV2, S2dm.F_BATTERY_SOC, 41.5);
-            Thread.sleep(700);
 
             System.out.println("\npush: EV-9TZ Door.isOpen = 1.0");
             S2dm.pushConceptSignal(telemetry, Fleet.EV3, S2dm.F_DOOR_OPEN, 1.0);
-            Thread.sleep(900);
 
             // The counter-example. c:Seat is an OBJECT concept: it is typed s2dm:ObjectType, never
             // s2dm:Field, so the second query's type guard should exclude it -- discriminated
@@ -150,7 +147,6 @@ public class S2dmConceptCatalog {
             System.out.println("\npush: EV-7Q2 c:Seat = 1.0   (an OBJECT concept — the"
                     + " [modelled field] query SHOULD ignore it)");
             S2dm.pushConceptSignal(telemetry, Fleet.EV1, S2dm.C_SEAT, 1.0);
-            Thread.sleep(900);
         }
         System.out.println("\nDone.");
     }

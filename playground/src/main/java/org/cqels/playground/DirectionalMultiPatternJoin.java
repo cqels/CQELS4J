@@ -38,7 +38,7 @@ public class DirectionalMultiPatternJoin {
 
     private static final ValueFactory VF = SimpleValueFactory.getInstance();
 
-    public static void main(String[] args) throws InterruptedException {
+    public static void main(String[] args) {
         // On 2.0.0-alpha.22 the multi-pattern directional shape runs with this property unset, and
         // "false" refuses it at the shape guard. Setting it explicitly keeps the example working on
         // alphas where it was opt-in (from alpha.7). The flag is read per gate evaluation (never
@@ -80,12 +80,10 @@ public class DirectionalMultiPatternJoin {
             // Window (2000, 4000]: EV-9TZ's SoC and charging power both land in it -> joined row.
             push(telemetry, Fleet.EV3, Fleet.SOC, 52.0, 2200L);
             push(telemetry, Fleet.EV3, Fleet.CHARGE_POWER, 11000.0, 3000L);
-            Thread.sleep(300);
             // Closer: a later reading (matches neither pattern) advances the watermark past
             // window (2000, 4000]'s end, closing it -> EV-9TZ's joined row prints.
             System.out.println("push: closer event @ t=8000 ms (advances the watermark; the second window closes)");
             push(telemetry, Fleet.EV1, Fleet.SPEED, 45.0, 8000L);
-            Thread.sleep(800);
         }
         System.out.println("\nDone.");
     }

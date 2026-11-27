@@ -26,7 +26,7 @@ public class ChargerRangeFilter {
     private static final String LON = Fleet.EX + "lon";
     private static final String OF_VEHICLE = Fleet.EX + "vehicle";
 
-    public static void main(String[] args) throws InterruptedException {
+    public static void main(String[] args) {
         try (CQELSEngine engine = CQELSEngine.builder()
                 .id("charger-range-filter")
                 .withMemoryStore()
@@ -61,7 +61,6 @@ public class ChargerRangeFilter {
             pushPing(positions, "ping/1", Fleet.EV1, 48.137, 11.575);   // near  -> matches
             pushPing(positions, "ping/2", Fleet.EV2, 48.400, 11.900);   // far   -> filtered
 
-            Thread.sleep(800);
         }
         System.out.println("\nDone.");
     }

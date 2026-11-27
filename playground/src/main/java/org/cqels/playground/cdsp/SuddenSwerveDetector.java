@@ -24,7 +24,7 @@ public class SuddenSwerveDetector {
 
     private static long readingSeq = 0;
 
-    public static void main(String[] args) throws InterruptedException {
+    public static void main(String[] args) {
         try (CQELSEngine engine = CQELSEngine.builder()
                 .id("sudden-swerve-detector")
                 .withMemoryStore()
@@ -61,27 +61,21 @@ public class SuddenSwerveDetector {
             engine.start();
             System.out.println("Watching for: steering swing > 90 degrees between two readings at > 50 km/h.\n");
 
-            // Every reading carries an explicit event time (ms), following the pauses below, so the
-            // windows hold the same readings every run.
+            // Every reading carries an explicit event time (ms), so the windows hold the same readings
+            // every run; the gaps between phases are in event time, not wall-clock time.
             System.out.println("Phase 1: EV-7Q2 cruises at 60 km/h with a gentle wiggle (must NOT match - swing too small).");
             pushReading(telemetry, Fleet.EV1, 60, -4, 1_000);
-            Thread.sleep(250);
             pushReading(telemetry, Fleet.EV1, 61, 5, 1_250);
-            Thread.sleep(250);
             pushReading(telemetry, Fleet.EV1, 60, -3, 1_500);
-            Thread.sleep(3500);   // pacing; the next reading's event time, 3.5 s on, takes phase 1 out of the 3s window
+            // the next reading's event time, 3.5 s on, takes phase 1 out of the 3s window
 
             System.out.println("Phase 2: EV-3K8 swings the wheel -40 -> +70 degrees at parking speed (must NOT match - speed gate).");
             pushReading(telemetry, Fleet.EV2, 15, -40, 5_000);
-            Thread.sleep(250);
             pushReading(telemetry, Fleet.EV2, 14, 70, 5_250);
-            Thread.sleep(3500);
 
             System.out.println("Phase 3: EV-9TZ at 85 km/h snaps the wheel -35 -> +80 degrees (MUST match: delta 115 at speed 86).");
             pushReading(telemetry, Fleet.EV3, 85, -35, 8_750);
-            Thread.sleep(250);
             pushReading(telemetry, Fleet.EV3, 86, 80, 9_000);
-            Thread.sleep(1500);
         }
         System.out.println("\nDone.");
     }

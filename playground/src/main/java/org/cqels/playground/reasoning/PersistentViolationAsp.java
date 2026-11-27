@@ -69,7 +69,7 @@ public class PersistentViolationAsp {
 
     private static final ValueFactory VF = SimpleValueFactory.getInstance();
 
-    public static void main(String[] args) throws InterruptedException {
+    public static void main(String[] args) {
         Set<String> printed = ConcurrentHashMap.newKeySet();
         Set<String> flagged = ConcurrentHashMap.newKeySet();
 
@@ -129,15 +129,11 @@ public class PersistentViolationAsp {
             System.out.println("Interleaved depot-zone readings (limit " + (int) DEPOT_LIMIT_KMH + " km/h):");
             pushSpeedReading(telemetry, Fleet.SENSOR_EV1, Fleet.EV1, 1, 34.0);   // EV-7Q2 over
             pushSpeedReading(telemetry, Fleet.SENSOR_EV3, Fleet.EV3, 1, 31.0);   // EV-9TZ over
-            Thread.sleep(300);
             pushSpeedReading(telemetry, Fleet.SENSOR_EV1, Fleet.EV1, 2, 27.0);   // EV-7Q2 over
             pushSpeedReading(telemetry, Fleet.SENSOR_EV3, Fleet.EV3, 2, 12.0);   // EV-9TZ compliant — breaks its chain
-            Thread.sleep(300);
             pushSpeedReading(telemetry, Fleet.SENSOR_EV1, Fleet.EV1, 3, 29.0);   // EV-7Q2 over -> fires here
-            Thread.sleep(700);
             pushSpeedReading(telemetry, Fleet.SENSOR_EV3, Fleet.EV3, 3, 26.0);   // EV-9TZ over
             pushSpeedReading(telemetry, Fleet.SENSOR_EV3, Fleet.EV3, 4, 33.0);   // EV-9TZ over — still only 2 in a row
-            Thread.sleep(1500);
 
             System.out.println("\nSummary:");
             System.out.println("  EV-7Q2 flagged: " + flagged.contains(Fleet.EV1) + " (expected true)");

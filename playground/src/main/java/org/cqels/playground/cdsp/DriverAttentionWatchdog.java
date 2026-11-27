@@ -49,7 +49,7 @@ public class DriverAttentionWatchdog {
 
     private static final ValueFactory VF = SimpleValueFactory.getInstance();
 
-    public static void main(String[] args) throws InterruptedException {
+    public static void main(String[] args) {
         try (CQELSEngine engine = CQELSEngine.builder()
                 .id("driver-attention-watchdog")
                 .withMemoryStore()
@@ -87,11 +87,8 @@ public class DriverAttentionWatchdog {
             // a new ?e1, so exactly one alert is expected.)
             System.out.println("Scenario 1 — fast, coasts to 55 (no brake), fast again (should fire):");
             pushSpeed(telemetry, Fleet.EV1, 90, 1_000);
-            Thread.sleep(300);
             pushSpeed(telemetry, Fleet.EV1, 55, 1_300);
-            Thread.sleep(300);
             pushSpeed(telemetry, Fleet.EV1, 75, 1_600);
-            Thread.sleep(1500);   // let the alert print
 
             // Move event time past the 5s RANGE so nothing from scenario 1 is still pending — for a
             // CEP query the window is also the timeout on a partial match. Every reading carries an
@@ -104,11 +101,8 @@ public class DriverAttentionWatchdog {
             // both occur.
             System.out.println("Scenario 2 — fast, BRAKES to 30, fast again (should stay quiet):");
             pushSpeed(telemetry, Fleet.EV1, 90, 8_600);
-            Thread.sleep(300);
             pushSpeed(telemetry, Fleet.EV1, 30, 8_900);
-            Thread.sleep(300);
             pushSpeed(telemetry, Fleet.EV1, 75, 9_200);
-            Thread.sleep(1500);
             System.out.println("  (no alert: the same vehicle's braking reading matched the negated"
                     + " step NOT ?e2 — the driver reacted, so the sequence was discarded)");
 
@@ -120,9 +114,7 @@ public class DriverAttentionWatchdog {
             System.out.println(
                     "Scenario 3 — EV-3K8 fast, then a DIFFERENT vehicle fast (should stay quiet):");
             pushSpeed(telemetry, Fleet.EV2, 90, 16_200);
-            Thread.sleep(300);
             pushSpeed(telemetry, Fleet.EV3, 75, 16_500);
-            Thread.sleep(1500);
             System.out.println("  (no alert: the same-vehicle guard STR(?e1)=STR(?e3) rejects a"
                     + " cross-vehicle pairing of the two fast readings)");
 
@@ -137,11 +129,8 @@ public class DriverAttentionWatchdog {
             System.out.println("Scenario 4 — EV-7Q2 fast, a DIFFERENT vehicle brakes to 30, EV-7Q2"
                     + " fast again (should STILL fire — correlated negation):");
             pushSpeed(telemetry, Fleet.EV1, 90, 23_500);
-            Thread.sleep(300);
             pushSpeed(telemetry, Fleet.EV2, 30, 23_800);
-            Thread.sleep(300);
             pushSpeed(telemetry, Fleet.EV1, 75, 24_100);
-            Thread.sleep(1500);   // let the alert print
         }
         System.out.println("\nDone.");
     }

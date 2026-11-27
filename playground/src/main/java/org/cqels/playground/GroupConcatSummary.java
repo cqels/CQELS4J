@@ -22,7 +22,7 @@ public class GroupConcatSummary {
 
     private static final Random RANDOM = new Random(5);
 
-    public static void main(String[] args) throws InterruptedException {
+    public static void main(String[] args) {
         try (CQELSEngine engine = CQELSEngine.builder()
                 .id("group-concat-summary")
                 .withMemoryStore()
@@ -56,9 +56,7 @@ public class GroupConcatSummary {
                 String[] ev = fleet[RANDOM.nextInt(fleet.length)];
                 Fleet.pushObservationAt(telemetry, ev[0], ev[1],
                         signals[RANDOM.nextInt(signals.length)], 10 + RANDOM.nextDouble() * 90, 1_000 + i * 150L);
-                Thread.sleep(150);
             }
-            Thread.sleep(1000);
         }
         System.out.println("\nDone.");
     }

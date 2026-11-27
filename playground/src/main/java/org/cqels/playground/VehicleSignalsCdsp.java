@@ -19,7 +19,7 @@ public class VehicleSignalsCdsp {
 
     private static final Random RANDOM = new Random(42);
 
-    public static void main(String[] args) throws InterruptedException {
+    public static void main(String[] args) {
         try (CQELSEngine engine = CQELSEngine.builder()
                 .id("vehicle-signals-cdsp")
                 .withMemoryStore()
@@ -56,9 +56,7 @@ public class VehicleSignalsCdsp {
                 int v = i % fleet.length;
                 double kmh = base[v] + (RANDOM.nextDouble() - 0.5) * 20;
                 Fleet.pushObservationAt(telemetry, fleet[v][0], fleet[v][1], Fleet.SPEED, kmh, 1_000 + i * 80L);
-                Thread.sleep(80);
             }
-            Thread.sleep(1000);
         }
         System.out.println("\nDone.");
     }

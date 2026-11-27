@@ -269,28 +269,22 @@ public class TrailerHealthMonitor {
             // holds the same readings every run.
             System.out.println("\npush: trailer 1, axle 2, left — tire pressure 612 kPa");
             push(wheels, truck, TIRE_PRESSURE, "TRAILER_1", "POSITION_2", "LEFT", "_1ST", KPA, VF.createLiteral(612), 1_000);
-            Thread.sleep(700);
 
             System.out.println("\npush: trailer 1, axle 2, right, inner twin — tire pressure 455 kPa");
             push(wheels, truck, TIRE_PRESSURE, "TRAILER_1", "POSITION_2", "RIGHT", "_2ND", KPA, VF.createLiteral(455), 1_700);
-            Thread.sleep(700);
 
             System.out.println("\npush: trailer 1, axle 2, right, inner twin — isPressureLow = true");
             push(wheels, truck, TIRE_PRESSURE_LOW, "TRAILER_1", "POSITION_2", "RIGHT", "_2ND", null, VF.createLiteral(true), 2_400);
-            Thread.sleep(700);
 
             System.out.println("\npush: trailer 2, axle 1, left — brake pad wear 35 %");
             push(wheels, truck, BRAKE_PAD_WEAR, "TRAILER_2", "POSITION_1", "LEFT", "_1ST", PERCENT, VF.createLiteral(35), 3_100);
-            Thread.sleep(700);
 
             System.out.println("\npush: trailer 2, axle 1, left — isBrakesWorn = false   (a boolean"
                     + " field, but false: no alarm)");
             push(wheels, truck, BRAKES_WORN, "TRAILER_2", "POSITION_1", "LEFT", "_1ST", null, VF.createLiteral(false), 3_800);
-            Thread.sleep(700);
 
             System.out.println("\npush: trailer 2, axle 3, right — isBrakesWorn = true");
             push(wheels, truck, BRAKES_WORN, "TRAILER_2", "POSITION_3", "RIGHT", "_1ST", null, VF.createLiteral(true), 4_500);
-            Thread.sleep(700);
 
             // Not a field of the model (a typo for "isPressureLow"), carrying the value true. The
             // model is what rejects it: query 1 finds no owning type for it, and query 2's guard
@@ -299,7 +293,6 @@ public class TrailerHealthMonitor {
                     + "   (no such field in the model: no [placed], no [ALARM])");
             push(wheels, truck, T + "TrailerWheelTire.isPresureLow", "TRAILER_1", "POSITION_4", "LEFT",
                     "_1ST", null, VF.createLiteral(true), 5_200);
-            Thread.sleep(700);
 
             // A gateway that reports pressure in PSI. 32 PSI is 220.6 kPa: converted with QUDT's
             // factor, it becomes trailer 1 axle 2's lowest pressure, which a reading taken as kPa
@@ -307,18 +300,15 @@ public class TrailerHealthMonitor {
             System.out.println("\npush: trailer 1, axle 2, left — tire pressure 32 PSI   (the schema"
                     + " declares kPa: [CONVERTED] to 220.6 kPa, and the new [lowest])");
             push(wheels, truck, TIRE_PRESSURE, "TRAILER_1", "POSITION_2", "LEFT", "_1ST", PSI, VF.createLiteral(32), 5_900);
-            Thread.sleep(700);
 
             // A pressure sent in percent: no conversion to kPa exists (another dimension), so it is
             // flagged and left out of [lowest].
             System.out.println("\npush: trailer 1, axle 3, left — tire pressure 85 PERCENT   (no conversion"
                     + " to kPa: [UNIT], and not counted in [lowest])");
             push(wheels, truck, TIRE_PRESSURE, "TRAILER_1", "POSITION_3", "LEFT", "_1ST", PERCENT, VF.createLiteral(85), 6_600);
-            Thread.sleep(700);
 
             System.out.println("\npush: trailer 2, axle 1, left — tire pressure 598 kPa");
             push(wheels, truck, TIRE_PRESSURE, "TRAILER_2", "POSITION_1", "LEFT", "_1ST", KPA, VF.createLiteral(598), 7_300);
-            Thread.sleep(900);
         }
         System.out.println("\nDone.");
     }

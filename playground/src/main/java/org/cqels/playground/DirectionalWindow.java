@@ -21,7 +21,7 @@ import org.cqels.engine.DataStream;
  */
 public class DirectionalWindow {
 
-    public static void main(String[] args) throws InterruptedException {
+    public static void main(String[] args) {
         try (CQELSEngine engine = CQELSEngine.builder()
                 .id("directional-window")
                 .withMemoryStore()
@@ -46,9 +46,7 @@ public class DirectionalWindow {
             Fleet.pushObservationAt(telemetry, Fleet.SENSOR_EV1, Fleet.EV1, Fleet.CHARGE_POWER, 7400.0, 1000L);
             Fleet.pushObservationAt(telemetry, Fleet.SENSOR_EV2, Fleet.EV2, Fleet.CHARGE_POWER, 11000.0, 1500L);
             Fleet.pushObservationAt(telemetry, Fleet.SENSOR_EV1, Fleet.EV1, Fleet.CHARGE_POWER, 7300.0, 2000L);
-            Thread.sleep(300);
             Fleet.pushObservationAt(telemetry, Fleet.SENSOR_EV3, Fleet.EV3, Fleet.CHARGE_POWER, 3600.0, 4000L);
-            Thread.sleep(600);
         }
         System.out.println("\nDone.");
     }

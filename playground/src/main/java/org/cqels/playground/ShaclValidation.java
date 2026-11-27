@@ -40,7 +40,7 @@ public class ShaclValidation {
                 sh:minCount 1 .
             """;
 
-    public static void main(String[] args) throws InterruptedException {
+    public static void main(String[] args) {
         List<Statement> shapes = new ShaclShapeParser().parseTurtle(SHAPES);
 
         ShaclStreamSolveConfig config = ShaclStreamSolveConfig.builder()
@@ -84,12 +84,10 @@ public class ShaclValidation {
             telemetry.pushTriple(obs, Fleet.RDF_TYPE, Fleet.OBSERVATION);
             telemetry.pushTriple(obs, Fleet.MADE_BY_SENSOR, Fleet.SENSOR_EV1);
             telemetry.pushTriple(obs, Fleet.OBSERVED_PROPERTY, Fleet.SOC);
-            Thread.sleep(1500);
 
             // Supply the missing result for the SAME observation -> it now conforms.
             System.out.println("push: the missing result for the same observation");
             telemetry.push(obs, Fleet.HAS_SIMPLE_RESULT, 54.0);
-            Thread.sleep(2500);
         }
         System.out.println("\nDone.");
     }

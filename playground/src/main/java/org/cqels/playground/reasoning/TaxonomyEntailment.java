@@ -39,7 +39,7 @@ public class TaxonomyEntailment {
     private static final String RDFS_SUBPROPERTYOF =
             "http://www.w3.org/2000/01/rdf-schema#subPropertyOf";
 
-    public static void main(String[] args) throws InterruptedException {
+    public static void main(String[] args) {
         // RDFS profile = rdfs2/3/5/7/9/11 with recursive inference on, so entailments
         // cascade (subclass transitivity feeds type propagation).
         ReactiveReteAdapter reasoner = new ReactiveReteAdapter(RDFSProfile.INSTANCE.createConfig());
@@ -83,22 +83,18 @@ public class TaxonomyEntailment {
             registry.pushTriple(DEPOT_VEHICLE, Fleet.RDFS_SUBCLASSOF, Fleet.VEHICLE_CLASS);
             System.out.println("push schema: ex:reportsSoC rdfs:subPropertyOf ex:reportsTelemetry");
             registry.pushTriple(REPORTS_SOC, RDFS_SUBPROPERTYOF, REPORTS_TELEMETRY);
-            Thread.sleep(400);
 
             // 2) Instance asserted at the BOTTOM of the chain -> top-class query fires.
             System.out.println("\npush instance: EV-3K8 a ex:ElectricBus  (bottom class, 2 hops down)");
             registry.pushTriple(Fleet.EV2, Fleet.RDF_TYPE, ELECTRIC_BUS);
-            Thread.sleep(600);
 
             // 3) Data on the SPECIFIC property -> super-property query fires.
             System.out.println("\npush data: EV-3K8 ex:reportsSoC 54.0  (specific sub-property)");
             registry.push(Fleet.EV2, REPORTS_SOC, 54.0);
-            Thread.sleep(600);
 
             // 4) Negative case: a class with NO subclass axiom into the taxonomy stays silent.
             System.out.println("\npush instance: EV-9TZ a ex:ContractorShuttle  (no axiom -> must stay quiet)");
             registry.pushTriple(Fleet.EV3, Fleet.RDF_TYPE, CONTRACTOR_SHUTTLE);
-            Thread.sleep(600);
             System.out.println("  (no entailment: ex:ContractorShuttle has no rdfs:subClassOf link"
                     + " to vsso:Vehicle)");
         }

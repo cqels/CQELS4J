@@ -67,7 +67,6 @@ public class MessageStreamOverSse {
                         + (message.isEmpty() ? " (empty: a heartbeat)" : "") + " at " + Instant.ofEpochMilli(t));
                 cabin.push(message, t);
             });
-            Thread.sleep(600);
             System.out.println("\nconsumer: " + received + " events, " + readings.size() + " readings");
         }
         System.out.println("\nDone.");
