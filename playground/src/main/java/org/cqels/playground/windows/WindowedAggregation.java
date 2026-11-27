@@ -1,9 +1,10 @@
-package org.cqels.playground;
+package org.cqels.playground.windows;
 
 import org.cqels.engine.CQELSEngine;
 import org.cqels.engine.DataStream;
 
 import java.util.Random;
+import org.cqels.playground.Fleet;
 
 /**
  * Example 2 — windowed aggregation.
@@ -22,7 +23,7 @@ import java.util.Random;
  * Which shape does which is not predictable from pattern or aggregate counts —
  * {@code CQELS-QL_SPEC.md} §9 carries the measured cases.
  *
- * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.WindowedAggregation}
+ * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.windows.WindowedAggregation}
  */
 public class WindowedAggregation {
 

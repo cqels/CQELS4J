@@ -52,7 +52,7 @@ Three lines, no credentials at any point — Git, JDK 17+ and Maven 3.8+ are all
 ```bash
 git clone https://github.com/cqels/CQELS4J.git
 cd CQELS4J/playground
-mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.HelloCqels
+mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.basics.HelloCqels
 ```
 
 It should print a low-battery alert for each reading below 20 %:
@@ -132,42 +132,42 @@ electric-vehicle fleet / vehicle-to-grid (V2G) scenario.)
 **Basics**
 | Demo | Feature |
 |------|---------|
-| [`HelloCqels`](playground/src/main/java/org/cqels/playground/HelloCqels.java) | `[NOW]` window + `FILTER` — the minimal continuous query |
+| [`HelloCqels`](playground/src/main/java/org/cqels/playground/basics/HelloCqels.java) | `[NOW]` window + `FILTER` — the minimal continuous query |
 
 **Windowing & aggregation**
 | Demo | Feature |
 |------|---------|
-| [`WindowedAggregation`](playground/src/main/java/org/cqels/playground/WindowedAggregation.java) | rolling `[RANGE]` + `GROUP BY` aggregates, re-emitted on every arrival |
-| [`SlidingWindowTrends`](playground/src/main/java/org/cqels/playground/SlidingWindowTrends.java) | sliding `[SLIDE … STEP …]` windows |
-| [`CountWindow`](playground/src/main/java/org/cqels/playground/CountWindow.java) | count-based `[TRIPLES N]` window |
-| [`DirectionalWindow`](playground/src/main/java/org/cqels/playground/DirectionalWindow.java) | directional/LARS `[FUTURE … EMIT …]` window |
-| [`DirectionalMultiPatternJoin`](playground/src/main/java/org/cqels/playground/DirectionalMultiPatternJoin.java) | `[FUTURE …]` + 2-pattern star join (since alpha.7; opt-in at first, runs without the property on alpha.22) |
-| [`CollisionWarningReview`](playground/src/main/java/org/cqels/playground/CollisionWarningReview.java) | combined `[PAST … FUTURE … STEP …]` window: reviewing collision warnings with `SEQ` and `NOT` |
-| [`GroupConcatSummary`](playground/src/main/java/org/cqels/playground/GroupConcatSummary.java) | `GROUP_CONCAT` string aggregation |
+| [`WindowedAggregation`](playground/src/main/java/org/cqels/playground/windows/WindowedAggregation.java) | rolling `[RANGE]` + `GROUP BY` aggregates, re-emitted on every arrival |
+| [`SlidingWindowTrends`](playground/src/main/java/org/cqels/playground/windows/SlidingWindowTrends.java) | sliding `[SLIDE … STEP …]` windows |
+| [`CountWindow`](playground/src/main/java/org/cqels/playground/windows/CountWindow.java) | count-based `[TRIPLES N]` window |
+| [`DirectionalWindow`](playground/src/main/java/org/cqels/playground/windows/DirectionalWindow.java) | directional/LARS `[FUTURE … EMIT …]` window |
+| [`DirectionalMultiPatternJoin`](playground/src/main/java/org/cqels/playground/windows/DirectionalMultiPatternJoin.java) | `[FUTURE …]` + 2-pattern star join (since alpha.7; opt-in at first, runs without the property on alpha.22) |
+| [`CollisionWarningReview`](playground/src/main/java/org/cqels/playground/windows/CollisionWarningReview.java) | combined `[PAST … FUTURE … STEP …]` window: reviewing collision warnings with `SEQ` and `NOT` |
+| [`GroupConcatSummary`](playground/src/main/java/org/cqels/playground/windows/GroupConcatSummary.java) | `GROUP_CONCAT` string aggregation |
 
 **Advanced query patterns**
 | Demo | Feature |
 |------|---------|
-| [`StreamStaticJoin`](playground/src/main/java/org/cqels/playground/StreamStaticJoin.java) | stream–static lookup join (static patterns outside `STREAM {}`) |
-| [`AdvancedQueryOperators`](playground/src/main/java/org/cqels/playground/AdvancedQueryOperators.java) | `OPTIONAL` / `UNION` / `FILTER NOT EXISTS` / `BIND` |
+| [`StreamStaticJoin`](playground/src/main/java/org/cqels/playground/basics/StreamStaticJoin.java) | stream–static lookup join (static patterns outside `STREAM {}`) |
+| [`AdvancedQueryOperators`](playground/src/main/java/org/cqels/playground/basics/AdvancedQueryOperators.java) | `OPTIONAL` / `UNION` / `FILTER NOT EXISTS` / `BIND` |
 
 **Complex event processing**
 | Demo | Feature |
 |------|---------|
-| [`ComplexEventPattern`](playground/src/main/java/org/cqels/playground/ComplexEventPattern.java) | declarative CEP `FILTER(SEQ(…))` sequence detection |
-| [`CepQuantifier`](playground/src/main/java/org/cqels/playground/CepQuantifier.java) | CEP quantifier `?e+` (one-or-more) |
+| [`ComplexEventPattern`](playground/src/main/java/org/cqels/playground/cep/ComplexEventPattern.java) | declarative CEP `FILTER(SEQ(…))` sequence detection |
+| [`CepQuantifier`](playground/src/main/java/org/cqels/playground/cep/CepQuantifier.java) | CEP quantifier `?e+` (one-or-more) |
 
-**Advanced CDSP analytics & CEP** (`org.cqels.playground.cdsp`)
+**Advanced CDSP analytics & CEP**
 | Demo | Feature | Scenario |
 |------|---------|----------|
-| [`CorrelatedFaultCascade`](playground/src/main/java/org/cqels/playground/cdsp/CorrelatedFaultCascade.java) | CEP multi-triple (reified) events + cross-event `STR()` correlation filters + `FILTER(SEQ(?e1; ?e2; ?e3))` | Fault cascade: three different subsystem alerts from the same vehicle within 15 s → send it to the depot; the same alerts spread across two vehicles stay silent. |
-| [`DriverAttentionWatchdog`](playground/src/main/java/org/cqels/playground/cdsp/DriverAttentionWatchdog.java) | CEP correlated negated sequence step `FILTER(SEQ(?e1; NOT ?e2; ?e3))` + same-vehicle guards, including on the negated step | Driver-attention watchdog: fast driving, then no braking by the same vehicle before its next fast reading → attention alert; another vehicle's brake does not suppress it. |
+| [`CorrelatedFaultCascade`](playground/src/main/java/org/cqels/playground/cep/CorrelatedFaultCascade.java) | CEP multi-triple (reified) events + cross-event `STR()` correlation filters + `FILTER(SEQ(?e1; ?e2; ?e3))` | Fault cascade: three different subsystem alerts from the same vehicle within 15 s → send it to the depot; the same alerts spread across two vehicles stay silent. |
+| [`DriverAttentionWatchdog`](playground/src/main/java/org/cqels/playground/cep/DriverAttentionWatchdog.java) | CEP correlated negated sequence step `FILTER(SEQ(?e1; NOT ?e2; ?e3))` + same-vehicle guards, including on the negated step | Driver-attention watchdog: fast driving, then no braking by the same vehicle before its next fast reading → attention alert; another vehicle's brake does not suppress it. |
 | [`SuddenSwerveDetector`](playground/src/main/java/org/cqels/playground/cdsp/SuddenSwerveDetector.java) | Two-reading temporal self-join in one `[RANGE 3s]` window + `BIND(ABS(…))` delta | Sudden-swerve incident: the steering wheel swings > 90° between two readings while above 50 km/h. |
 | [`WetRoadBraking`](playground/src/main/java/org/cqels/playground/cdsp/WetRoadBraking.java) | Context-gated self-join (rain triple gates the reading pair) | Hard braking specifically on a wet road: a > 20 km/h drop fires only when it was raining as braking began. |
 | [`FleetRiskLeaderboard`](playground/src/main/java/org/cqels/playground/cdsp/FleetRiskLeaderboard.java) | Windowed `GROUP BY` + `COUNT(*)`/`AVG` over a multi-pattern join + `HAVING` floor | Rolling per-vehicle risk score: speeding / violent-steering violations per 10 s window. |
 | [`LiveEfficiencyTicker`](playground/src/main/java/org/cqels/playground/cdsp/LiveEfficiencyTicker.java) | `[SLIDE 3s STEP 1s]` sliding window + `GROUP BY` over two co-bound metrics | Live per-vehicle efficiency ticker: trailing average battery power vs speed. |
 
-**S2DM model from a real export** (`org.cqels.playground.s2dm`)
+**S2DM model from a real export**
 | Demo | Feature | Scenario |
 |------|---------|----------|
 | [`TrailerHealthMonitor`](playground/src/main/java/org/cqels/playground/s2dm/TrailerHealthMonitor.java) | Stream–static joins over the RDF that COVESA s2dm's own exporter wrote (`data_graph.ttl` + `skos.ttl`), a supplement of units and field descriptions read from the same schema, and QUDT unit conversions, plus a windowed `GROUP BY` over instance tags | Trailer wheel telemetry: each reading is placed in the model (wheel → tire or brake, with its description), every boolean alarm is caught without the query naming one (all three boolean fields in this schema are fault flags), a reading sent in another unit than the schema's (PSI for a kPa field) is converted with QUDT's factors, one that cannot be converted is flagged, and the lowest tire pressure is tracked per trailer and axle in the schema's unit. A misspelled field matches nothing, because the model does not contain it. |
@@ -175,16 +175,16 @@ electric-vehicle fleet / vehicle-to-grid (V2G) scenario.)
 **Query dialects**
 | Demo | Feature |
 |------|---------|
-| [`CypherGraphQuery`](playground/src/main/java/org/cqels/playground/CypherGraphQuery.java) | CypherQL `MATCH … RETURN` over a stream |
+| [`CypherGraphQuery`](playground/src/main/java/org/cqels/playground/basics/CypherGraphQuery.java) | CypherQL `MATCH … RETURN` over a stream |
 
 **Reasoning & validation** (add-on modules)
 | Demo | Feature |
 |------|---------|
-| [`RdfsReasoning`](playground/src/main/java/org/cqels/playground/RdfsReasoning.java) | RDFS/OWL inference over a stream (`cqels-reasoning-rete`) |
-| [`ShaclValidation`](playground/src/main/java/org/cqels/playground/ShaclValidation.java) | continuous [SHACL](https://www.w3.org/TR/shacl/) validation (`cqels-shacl`) |
-| [`AspReasoning`](playground/src/main/java/org/cqels/playground/AspReasoning.java) | Answer-Set Programming rules (`cqels-asp`) |
+| [`RdfsReasoning`](playground/src/main/java/org/cqels/playground/reasoning/RdfsReasoning.java) | RDFS/OWL inference over a stream (`cqels-reasoning-rete`) |
+| [`ShaclValidation`](playground/src/main/java/org/cqels/playground/reasoning/ShaclValidation.java) | continuous [SHACL](https://www.w3.org/TR/shacl/) validation (`cqels-shacl`) |
+| [`AspReasoning`](playground/src/main/java/org/cqels/playground/reasoning/AspReasoning.java) | Answer-Set Programming rules (`cqels-asp`) |
 
-**Reasoning showcase** (`org.cqels.playground.reasoning`)
+**Reasoning showcase**
 | Demo | Feature | Scenario |
 |------|---------|----------|
 | [`TaxonomyEntailment`](playground/src/main/java/org/cqels/playground/reasoning/TaxonomyEntailment.java) | Multi-hop RDFS entailment — subclass-chain + type lifting + sub-property propagation (`cqels-reasoning-rete`) | A two-level depot taxonomy: queries against the top class and super-property still find a vehicle registered only at the bottom. |
@@ -196,20 +196,20 @@ electric-vehicle fleet / vehicle-to-grid (V2G) scenario.)
 **Geospatial** (add-on module)
 | Demo | Feature |
 |------|---------|
-| [`GeoSpatialFilter`](playground/src/main/java/org/cqels/playground/GeoSpatialFilter.java) | OGC [GeoSPARQL](https://www.ogc.org/standard/geosparql/) `geof:sfWithin` (`cqels-geo`) |
+| [`GeoSpatialFilter`](playground/src/main/java/org/cqels/playground/geo/GeoSpatialFilter.java) | OGC [GeoSPARQL](https://www.ogc.org/standard/geosparql/) `geof:sfWithin` (`cqels-geo`) |
 
 **Extension functions** (add-on module)
 | Demo | Feature |
 |------|---------|
-| [`ChargerRangeFilter`](playground/src/main/java/org/cqels/playground/ChargerRangeFilter.java) | user-defined function by IRI (SPARQL 1.1 §17.6, alpha.11) — `cqels-functions-ext`, e.g. `cqfn:haversine(...)` |
+| [`ChargerRangeFilter`](playground/src/main/java/org/cqels/playground/basics/ChargerRangeFilter.java) | user-defined function by IRI (SPARQL 1.1 §17.6, alpha.11) — `cqels-functions-ext`, e.g. `cqfn:haversine(...)` |
 
 **Standard vocabularies & domains**
 | Demo | Feature |
 |------|---------|
-| [`SosaObservations`](playground/src/main/java/org/cqels/playground/SosaObservations.java) | W3C [SOSA/SSN](https://www.w3.org/TR/vocab-ssn/) + [VSSo](https://www.w3.org/TR/vsso/) + VSS: per (vehicle × observed signal) averages |
-| [`VehicleSignalsCdsp`](playground/src/main/java/org/cqels/playground/VehicleSignalsCdsp.java) | flagship COVESA [VSS](https://covesa.global/) speeding detection + `GROUP BY` / `HAVING` |
-| [`MessageLogReplay`](playground/src/main/java/org/cqels/playground/messages/MessageLogReplay.java) (`org.cqels.playground.messages`) | W3C RSP CG [RDF Messages](https://w3c-cg.github.io/rsp/spec/messages): replay a Turtle message log (one message, one atomic element), per-message blank nodes, `[TRIPLES 1]` vs `[RANGE]` across messages, and results written back as a message log |
-| [`MessageStreamOverSse`](playground/src/main/java/org/cqels/playground/messages/MessageStreamOverSse.java) (`org.cqels.playground.messages`) | RDF Messages over Server-Sent Events (§4.1.1): a producer serves each message as one `rdf-message` event with a JSON-LD payload; a consumer pushes each into the engine as one atomic element |
+| [`SosaObservations`](playground/src/main/java/org/cqels/playground/basics/SosaObservations.java) | W3C [SOSA/SSN](https://www.w3.org/TR/vocab-ssn/) + [VSSo](https://www.w3.org/TR/vsso/) + VSS: per (vehicle × observed signal) averages |
+| [`VehicleSignalsCdsp`](playground/src/main/java/org/cqels/playground/cdsp/VehicleSignalsCdsp.java) | flagship COVESA [VSS](https://covesa.global/) speeding detection + `GROUP BY` / `HAVING` |
+| [`MessageLogReplay`](playground/src/main/java/org/cqels/playground/messages/MessageLogReplay.java) | W3C RSP CG [RDF Messages](https://w3c-cg.github.io/rsp/spec/messages): replay a Turtle message log (one message, one atomic element), per-message blank nodes, `[TRIPLES 1]` vs `[RANGE]` across messages, and results written back as a message log |
+| [`MessageStreamOverSse`](playground/src/main/java/org/cqels/playground/messages/MessageStreamOverSse.java) | RDF Messages over Server-Sent Events (§4.1.1): a producer serves each message as one `rdf-message` event with a JSON-LD payload; a consumer pushes each into the engine as one atomic element |
 
 ---
 

@@ -1,4 +1,4 @@
-package org.cqels.playground;
+package org.cqels.playground.reasoning;
 
 import org.cqels.asp.config.AspStreamSolveConfig;
 import org.cqels.engine.CQELSEngine;
@@ -7,6 +7,7 @@ import org.cqels.engine.QueryResultListener;
 
 import java.util.List;
 import java.util.Map;
+import org.cqels.playground.Fleet;
 
 /**
  * Example — Answer-Set Programming over the stream (cqels-asp).
@@ -23,7 +24,7 @@ import java.util.Map;
  *
  * <p>Add-on dependency: {@code org.cqels:cqels-asp}.
  *
- * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.AspReasoning}
+ * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.reasoning.AspReasoning}
  */
 public class AspReasoning {
 

@@ -1,9 +1,10 @@
-package org.cqels.playground;
+package org.cqels.playground.windows;
 
 import org.cqels.engine.CQELSEngine;
 import org.cqels.engine.DataStream;
 
 import java.util.Random;
+import org.cqels.playground.Fleet;
 
 /**
  * Example 13 — string aggregation with {@code GROUP_CONCAT}.
@@ -16,7 +17,7 @@ import java.util.Random;
  * {@code GROUP_CONCAT} takes only the optional {@code SEPARATOR} — there is no per-aggregate
  * {@code DISTINCT}).
  *
- * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.GroupConcatSummary}
+ * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.windows.GroupConcatSummary}
  */
 public class GroupConcatSummary {
 

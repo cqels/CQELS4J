@@ -49,59 +49,73 @@ mvn -q compile
 # Default (HelloCqels):
 mvn -q exec:java
 
-# Any scenario, e.g.:
-mvn -q exec:java -Dexec.mainClass=org.cqels.playground.WindowedAggregation
-mvn -q exec:java -Dexec.mainClass=org.cqels.playground.SlidingWindowTrends
-mvn -q exec:java -Dexec.mainClass=org.cqels.playground.CountWindow
-mvn -q exec:java -Dexec.mainClass=org.cqels.playground.DirectionalWindow
-mvn -q exec:java -Dexec.mainClass=org.cqels.playground.DirectionalMultiPatternJoin
-mvn -q exec:java -Dexec.mainClass=org.cqels.playground.CollisionWarningReview
-mvn -q exec:java -Dexec.mainClass=org.cqels.playground.GroupConcatSummary
-mvn -q exec:java -Dexec.mainClass=org.cqels.playground.StreamStaticJoin
-mvn -q exec:java -Dexec.mainClass=org.cqels.playground.AdvancedQueryOperators
-mvn -q exec:java -Dexec.mainClass=org.cqels.playground.ComplexEventPattern
-mvn -q exec:java -Dexec.mainClass=org.cqels.playground.CepQuantifier
-mvn -q exec:java -Dexec.mainClass=org.cqels.playground.CypherGraphQuery
-mvn -q exec:java -Dexec.mainClass=org.cqels.playground.RdfsReasoning
-mvn -q exec:java -Dexec.mainClass=org.cqels.playground.ShaclValidation
-mvn -q exec:java -Dexec.mainClass=org.cqels.playground.AspReasoning
-mvn -q exec:java -Dexec.mainClass=org.cqels.playground.GeoSpatialFilter
-mvn -q exec:java -Dexec.mainClass=org.cqels.playground.SosaObservations
-mvn -q exec:java -Dexec.mainClass=org.cqels.playground.VehicleSignalsCdsp
-mvn -q exec:java -Dexec.mainClass=org.cqels.playground.RdfMessageIngestion
-mvn -q exec:java -Dexec.mainClass=org.cqels.playground.messages.MessageLogReplay
-mvn -q exec:java -Dexec.mainClass=org.cqels.playground.messages.MessageStreamOverSse
-mvn -q exec:java -Dexec.mainClass=org.cqels.playground.ChargerRangeFilter
+# Any scenario, by package:
 
-# Advanced CDSP analytics & CEP (org.cqels.playground.cdsp):
-mvn -q exec:java -Dexec.mainClass=org.cqels.playground.cdsp.CorrelatedFaultCascade
-mvn -q exec:java -Dexec.mainClass=org.cqels.playground.cdsp.DriverAttentionWatchdog
+# basics — the first query, joins with the static graph, operators, Cypher, SOSA, an extension function
+mvn -q exec:java -Dexec.mainClass=org.cqels.playground.basics.HelloCqels
+mvn -q exec:java -Dexec.mainClass=org.cqels.playground.basics.StreamStaticJoin
+mvn -q exec:java -Dexec.mainClass=org.cqels.playground.basics.AdvancedQueryOperators
+mvn -q exec:java -Dexec.mainClass=org.cqels.playground.basics.CypherGraphQuery
+mvn -q exec:java -Dexec.mainClass=org.cqels.playground.basics.SosaObservations
+mvn -q exec:java -Dexec.mainClass=org.cqels.playground.basics.ChargerRangeFilter
+
+# windows — Windows and aggregation
+mvn -q exec:java -Dexec.mainClass=org.cqels.playground.windows.WindowedAggregation
+mvn -q exec:java -Dexec.mainClass=org.cqels.playground.windows.SlidingWindowTrends
+mvn -q exec:java -Dexec.mainClass=org.cqels.playground.windows.CountWindow
+mvn -q exec:java -Dexec.mainClass=org.cqels.playground.windows.DirectionalWindow
+mvn -q exec:java -Dexec.mainClass=org.cqels.playground.windows.DirectionalMultiPatternJoin
+mvn -q exec:java -Dexec.mainClass=org.cqels.playground.windows.CollisionWarningReview
+mvn -q exec:java -Dexec.mainClass=org.cqels.playground.windows.GroupConcatSummary
+
+# cep — Complex event processing
+mvn -q exec:java -Dexec.mainClass=org.cqels.playground.cep.ComplexEventPattern
+mvn -q exec:java -Dexec.mainClass=org.cqels.playground.cep.CepQuantifier
+mvn -q exec:java -Dexec.mainClass=org.cqels.playground.cep.CorrelatedFaultCascade
+mvn -q exec:java -Dexec.mainClass=org.cqels.playground.cep.DriverAttentionWatchdog
+
+# cdsp — COVESA VSS / CDSP analytics
+mvn -q exec:java -Dexec.mainClass=org.cqels.playground.cdsp.VehicleSignalsCdsp
 mvn -q exec:java -Dexec.mainClass=org.cqels.playground.cdsp.SuddenSwerveDetector
 mvn -q exec:java -Dexec.mainClass=org.cqels.playground.cdsp.WetRoadBraking
 mvn -q exec:java -Dexec.mainClass=org.cqels.playground.cdsp.FleetRiskLeaderboard
 mvn -q exec:java -Dexec.mainClass=org.cqels.playground.cdsp.LiveEfficiencyTicker
 mvn -q exec:java -Dexec.mainClass=org.cqels.playground.cdsp.CdspDrivingStyle
 
-# S2DM concept layer (org.cqels.playground.cdsp):
-mvn -q exec:java -Dexec.mainClass=org.cqels.playground.cdsp.S2dmConceptCatalog
-mvn -q exec:java -Dexec.mainClass=org.cqels.playground.cdsp.S2dmInstanceZones
-mvn -q exec:java -Dexec.mainClass=org.cqels.playground.cdsp.SkosConceptRollup
-
-# S2DM model from a real export (org.cqels.playground.s2dm):
+# s2dm — COVESA S2DM: the concept layer, then a real s2dm export
+mvn -q exec:java -Dexec.mainClass=org.cqels.playground.s2dm.S2dmConceptCatalog
+mvn -q exec:java -Dexec.mainClass=org.cqels.playground.s2dm.S2dmInstanceZones
+mvn -q exec:java -Dexec.mainClass=org.cqels.playground.s2dm.SkosConceptRollup
 mvn -q exec:java -Dexec.mainClass=org.cqels.playground.s2dm.TrailerHealthMonitor
 
-# Reasoning showcase (org.cqels.playground.reasoning):
+# reasoning — Reasoning and validation (RDFS, SHACL, ASP)
+mvn -q exec:java -Dexec.mainClass=org.cqels.playground.reasoning.RdfsReasoning
+mvn -q exec:java -Dexec.mainClass=org.cqels.playground.reasoning.ShaclValidation
+mvn -q exec:java -Dexec.mainClass=org.cqels.playground.reasoning.AspReasoning
 mvn -q exec:java -Dexec.mainClass=org.cqels.playground.reasoning.TaxonomyEntailment
 mvn -q exec:java -Dexec.mainClass=org.cqels.playground.reasoning.BoundedTransitiveClosure
 mvn -q exec:java -Dexec.mainClass=org.cqels.playground.reasoning.RetractableInference
 mvn -q exec:java -Dexec.mainClass=org.cqels.playground.reasoning.MissionPreservationAsp
 mvn -q exec:java -Dexec.mainClass=org.cqels.playground.reasoning.PersistentViolationAsp
 
+# geo — Geospatial
+mvn -q exec:java -Dexec.mainClass=org.cqels.playground.geo.GeoSpatialFilter
+
+# messages — W3C RSP CG RDF Messages
+mvn -q exec:java -Dexec.mainClass=org.cqels.playground.messages.RdfMessageIngestion
+mvn -q exec:java -Dexec.mainClass=org.cqels.playground.messages.MessageLogReplay
+mvn -q exec:java -Dexec.mainClass=org.cqels.playground.messages.MessageStreamOverSse
+
 # Behaviour-truth probe (not a demo — asserts this repo's engine claims are still true):
-mvn -q exec:java -Dexec.mainClass=org.cqels.playground.CapabilityProbe
+mvn -q exec:java -Dexec.mainClass=org.cqels.playground.probe.CapabilityProbe
 ```
 
 Each program prints what it pushes and what the engine emits, then exits on its own.
+
+Every demo sits in a package named after its feature, as above. The vocabulary and helpers they
+share, [`Fleet`](src/main/java/org/cqels/playground/Fleet.java), stay in `org.cqels.playground`;
+the S2DM demos share theirs in [`s2dm/S2dm`](src/main/java/org/cqels/playground/s2dm/S2dm.java), and the
+message demos the readers next to them in `messages`.
 
 ## Every demo's output is tested
 
@@ -128,38 +142,38 @@ mvn -q test -Dtest=DemoOutputTest -Dexpected.update=true
 
 ## The scenarios
 
-Grouped by use-case category — add new demos under the matching heading (and list them
-in the table + the `Build & run` block above).
+Grouped by use-case category — add new demos under the matching heading, put the class in the
+matching package, and list it in the table + the `Build & run` block above.
 
 ### Basics
 | Class | CQELS feature | Scenario |
 |-------|---------------|----------|
-| [`HelloCqels`](src/main/java/org/cqels/playground/HelloCqels.java) | `[NOW]` window + `FILTER` | Low-battery alert: raise an alert whenever a vehicle's state-of-charge drops below 20 % — the minimal continuous query. |
+| [`HelloCqels`](src/main/java/org/cqels/playground/basics/HelloCqels.java) | `[NOW]` window + `FILTER` | Low-battery alert: raise an alert whenever a vehicle's state-of-charge drops below 20 % — the minimal continuous query. |
 
 ### Windowing & aggregation
 | Class | CQELS feature | Scenario |
 |-------|---------------|----------|
-| [`WindowedAggregation`](src/main/java/org/cqels/playground/WindowedAggregation.java) | `[RANGE 3s]` rolling + `GROUP BY` | Per-vehicle average / peak speed and sample count over the last 3 seconds; every arrival re-emits the current per-vehicle rows. |
-| [`SlidingWindowTrends`](src/main/java/org/cqels/playground/SlidingWindowTrends.java) | `[SLIDE 4s STEP 2s]` + `GROUP BY` | Per-vehicle moving state-of-charge (battery-drain) trend — average / min / max re-emitted every 2s. |
-| [`CountWindow`](src/main/java/org/cqels/playground/CountWindow.java) | `[TRIPLES 30]` count-based window | Observations per vehicle over the most recent stream triples (the last N readings, not seconds). |
-| [`DirectionalWindow`](src/main/java/org/cqels/playground/DirectionalWindow.java) | `[FUTURE 2s EMIT EARLY_AND_FINAL]` (LARS) | Forward-looking charge-reading counts per vehicle during a V2G charging burst (running + final rows). |
-| [`DirectionalMultiPatternJoin`](src/main/java/org/cqels/playground/DirectionalMultiPatternJoin.java) | `[FUTURE 2s]` + 2-pattern star join (since alpha.7; opt-in at first, runs without the property on alpha.22) | V2G readiness: join each vehicle's SoC and charge-power readings observed inside the same forward window — with `cqels.directional.multiPatternSelect=true` set in `main()` for older alphas (alpha.22 runs it unset); rows surface per closed window. |
-| [`CollisionWarningReview`](src/main/java/org/cqels/playground/CollisionWarningReview.java) | Combined past-and-future window `[PAST 2s FUTURE 1s STEP 1s]` with `SEQ` and a trailing `NOT`; `[NOW]` beside it | Forward-collision warnings on time to collision (TTC < 2 s). The live warning fires at once under `[NOW]`; a review over the combined window then judges each warning with context from both sides: did the vehicle close in gradually before it, and did the driver brake after it (with the reaction time)? "No brake" is only decided once the window's future second has passed. Anchors sit on a fixed 1 s grid and each window is `(anchor-2s, anchor+1s]`, so each warning appears in three windows; the demo judges it in the one where it falls in the second up to the anchor. |
-| [`GroupConcatSummary`](src/main/java/org/cqels/playground/GroupConcatSummary.java) | `GROUP_CONCAT(…; SEPARATOR=…)` | Per-vehicle observation count + the list of observed VSS signals per 3-second window. |
+| [`WindowedAggregation`](src/main/java/org/cqels/playground/windows/WindowedAggregation.java) | `[RANGE 3s]` rolling + `GROUP BY` | Per-vehicle average / peak speed and sample count over the last 3 seconds; every arrival re-emits the current per-vehicle rows. |
+| [`SlidingWindowTrends`](src/main/java/org/cqels/playground/windows/SlidingWindowTrends.java) | `[SLIDE 4s STEP 2s]` + `GROUP BY` | Per-vehicle moving state-of-charge (battery-drain) trend — average / min / max re-emitted every 2s. |
+| [`CountWindow`](src/main/java/org/cqels/playground/windows/CountWindow.java) | `[TRIPLES 30]` count-based window | Observations per vehicle over the most recent stream triples (the last N readings, not seconds). |
+| [`DirectionalWindow`](src/main/java/org/cqels/playground/windows/DirectionalWindow.java) | `[FUTURE 2s EMIT EARLY_AND_FINAL]` (LARS) | Forward-looking charge-reading counts per vehicle during a V2G charging burst (running + final rows). |
+| [`DirectionalMultiPatternJoin`](src/main/java/org/cqels/playground/windows/DirectionalMultiPatternJoin.java) | `[FUTURE 2s]` + 2-pattern star join (since alpha.7; opt-in at first, runs without the property on alpha.22) | V2G readiness: join each vehicle's SoC and charge-power readings observed inside the same forward window — with `cqels.directional.multiPatternSelect=true` set in `main()` for older alphas (alpha.22 runs it unset); rows surface per closed window. |
+| [`CollisionWarningReview`](src/main/java/org/cqels/playground/windows/CollisionWarningReview.java) | Combined past-and-future window `[PAST 2s FUTURE 1s STEP 1s]` with `SEQ` and a trailing `NOT`; `[NOW]` beside it | Forward-collision warnings on time to collision (TTC < 2 s). The live warning fires at once under `[NOW]`; a review over the combined window then judges each warning with context from both sides: did the vehicle close in gradually before it, and did the driver brake after it (with the reaction time)? "No brake" is only decided once the window's future second has passed. Anchors sit on a fixed 1 s grid and each window is `(anchor-2s, anchor+1s]`, so each warning appears in three windows; the demo judges it in the one where it falls in the second up to the anchor. |
+| [`GroupConcatSummary`](src/main/java/org/cqels/playground/windows/GroupConcatSummary.java) | `GROUP_CONCAT(…; SEPARATOR=…)` | Per-vehicle observation count + the list of observed VSS signals per 3-second window. |
 
 ### Advanced query patterns
 | Class | CQELS feature | Scenario |
 |-------|---------------|----------|
-| [`StreamStaticJoin`](src/main/java/org/cqels/playground/StreamStaticJoin.java) | stream–static lookup join | Enrich each speed reading with the vehicle's assigned driver and GTFS-style service route from the seeded fleet graph (static patterns outside `STREAM {}`). |
-| [`AdvancedQueryOperators`](src/main/java/org/cqels/playground/AdvancedQueryOperators.java) | `OPTIONAL` / `UNION` / `FILTER NOT EXISTS` / `BIND` | Enrich each speed reading against the static fleet graph: OPTIONAL battery state-of-health, a UNION supervisor-or-backup contact, FILTER NOT EXISTS to drop vehicles in maintenance, and BIND for speed headroom. |
+| [`StreamStaticJoin`](src/main/java/org/cqels/playground/basics/StreamStaticJoin.java) | stream–static lookup join | Enrich each speed reading with the vehicle's assigned driver and GTFS-style service route from the seeded fleet graph (static patterns outside `STREAM {}`). |
+| [`AdvancedQueryOperators`](src/main/java/org/cqels/playground/basics/AdvancedQueryOperators.java) | `OPTIONAL` / `UNION` / `FILTER NOT EXISTS` / `BIND` | Enrich each speed reading against the static fleet graph: OPTIONAL battery state-of-health, a UNION supervisor-or-backup contact, FILTER NOT EXISTS to drop vehicles in maintenance, and BIND for speed headroom. |
 
 ### Complex event processing
 | Class | CQELS feature | Scenario |
 |-------|---------------|----------|
-| [`ComplexEventPattern`](src/main/java/org/cqels/playground/ComplexEventPattern.java) | declarative CEP `FILTER(SEQ(...))` | Road-rage detection: a sharp speed **drop** then a sharp speed **spike** within a window (order matters). |
-| [`CepQuantifier`](src/main/java/org/cqels/playground/CepQuantifier.java) | CEP quantifier `?e+` | Impaired driving: a speed drop, then one-or-more lane-weaves, then a speed spike — a variable-length sequence. |
+| [`ComplexEventPattern`](src/main/java/org/cqels/playground/cep/ComplexEventPattern.java) | declarative CEP `FILTER(SEQ(...))` | Road-rage detection: a sharp speed **drop** then a sharp speed **spike** within a window (order matters). |
+| [`CepQuantifier`](src/main/java/org/cqels/playground/cep/CepQuantifier.java) | CEP quantifier `?e+` | Impaired driving: a speed drop, then one-or-more lane-weaves, then a speed spike — a variable-length sequence. |
 
-### Advanced CDSP analytics & CEP (`org.cqels.playground.cdsp`)
+### Advanced CDSP analytics & CEP
 
 Deeper query shapes adapted from the COVESA CDSP vehicle-signal scenario suite — multi-triple
 CEP events with cross-event correlation, a negated sequence step, two-reading temporal
@@ -169,22 +183,22 @@ visible; the ticker instead demonstrates window eviction (the run outlasts the w
 
 | Class | CQELS feature | Scenario |
 |-------|---------------|----------|
-| [`CorrelatedFaultCascade`](src/main/java/org/cqels/playground/cdsp/CorrelatedFaultCascade.java) | CEP multi-triple (reified) events + cross-event `STR()` correlation filters + `FILTER(SEQ(?e1; ?e2; ?e3))` | Fault cascade: three **different** subsystem alerts (inverter over-temp, brake wear, tire pressure) from the **same** vehicle within 15 s → send it to the depot; the same alerts spread across two vehicles stay silent. |
-| [`DriverAttentionWatchdog`](src/main/java/org/cqels/playground/cdsp/DriverAttentionWatchdog.java) | CEP **correlated** negated sequence step `FILTER(SEQ(?e1; NOT ?e2; ?e3))` + cross-event `STR()` guards on the fast readings *and* on the negated step | Driver-attention watchdog: fast (> 80 km/h), then **no** braking reading (< 40) *by the same vehicle* before the next fast reading (> 60) → attention alert; the vehicle's own hard-brake in the gap keeps it quiet, a *different* vehicle braking in the gap no longer suppresses the alert, and two fast readings from *different* vehicles cannot pair. |
+| [`CorrelatedFaultCascade`](src/main/java/org/cqels/playground/cep/CorrelatedFaultCascade.java) | CEP multi-triple (reified) events + cross-event `STR()` correlation filters + `FILTER(SEQ(?e1; ?e2; ?e3))` | Fault cascade: three **different** subsystem alerts (inverter over-temp, brake wear, tire pressure) from the **same** vehicle within 15 s → send it to the depot; the same alerts spread across two vehicles stay silent. |
+| [`DriverAttentionWatchdog`](src/main/java/org/cqels/playground/cep/DriverAttentionWatchdog.java) | CEP **correlated** negated sequence step `FILTER(SEQ(?e1; NOT ?e2; ?e3))` + cross-event `STR()` guards on the fast readings *and* on the negated step | Driver-attention watchdog: fast (> 80 km/h), then **no** braking reading (< 40) *by the same vehicle* before the next fast reading (> 60) → attention alert; the vehicle's own hard-brake in the gap keeps it quiet, a *different* vehicle braking in the gap no longer suppresses the alert, and two fast readings from *different* vehicles cannot pair. |
 | [`SuddenSwerveDetector`](src/main/java/org/cqels/playground/cdsp/SuddenSwerveDetector.java) | Two-reading temporal self-join in one `[RANGE 3s]` window + `BIND(ABS(…))` delta + compound `FILTER` | Sudden-swerve incident: the steering wheel swings > 90° between two readings while above 50 km/h — a cruise wiggle and a hard swing at parking speed both stay silent. |
 | [`WetRoadBraking`](src/main/java/org/cqels/playground/cdsp/WetRoadBraking.java) | Context-gated self-join: the deceleration pair counts only when a rain triple accompanies the first reading | Hard braking specifically on a wet road: a > 20 km/h drop fires only when it was raining as braking began — the identical drop on a dry road stays silent. |
 | [`FleetRiskLeaderboard`](src/main/java/org/cqels/playground/cdsp/FleetRiskLeaderboard.java) | Windowed `GROUP BY` + `COUNT(*)`/`AVG` over a multi-pattern reading join, compound `OR` `FILTER`, `HAVING` floor | Rolling per-vehicle risk score: speeding / violent-steering violations per 10 s window — the hard-driven EV tops the board, a two-slip vehicle is gated out by `HAVING`, the clean one never groups. |
 | [`CdspDrivingStyle`](src/main/java/org/cqels/playground/cdsp/CdspDrivingStyle.java) | Windowed two-reading self-join + `BIND(ABS(…))` + `GROUP BY`/`AVG` | The COVESA CDSP **aggressive-driving** use case: a steering swing > 210° within 3 s while moving > 10 km/h. CDSP implements the detection as eight RDFox Datalog rules; here it is one continuous query, because the window replaces the temporal bookkeeping the rules hand-roll. Its separate output query assembles *segments*, which this does not reproduce — that needs the pair ordered in time. A parked swing and a gentle correction at speed both stay silent, as does a vehicle that slowed before swerving — including when that case is replayed out of order, because the pair is ordered by `sosa:phenomenonTime` rather than by arrival. See [CDSP_MAPPING.md](../CDSP_MAPPING.md). |
 | [`LiveEfficiencyTicker`](src/main/java/org/cqels/playground/cdsp/LiveEfficiencyTicker.java) | `[SLIDE 3s STEP 1s]` sliding window + `GROUP BY` over two co-bound metrics on a per-tick reading node | Live per-vehicle efficiency ticker: trailing average battery power vs speed — the hard-driven EV draws ~3× the power of the economical one at only ~2× the speed, the depot-parked EV shows positive (V2G charging) power at 0 km/h, and early ticks demonstrably age out of the window. |
 
-### S2DM concept layer (`org.cqels.playground.cdsp`)
+### S2DM concept layer
 
 The COVESA [S2DM](https://github.com/COVESA/s2dm) (Simplified Semantic Data Modeling) approach
 lets subject-matter experts model in **GraphQL SDL**; its tooling projects that schema into
 **SKOS** RDF, where each GraphQL type and field becomes a `skos:Concept` with a `skos:prefLabel`
 and collection membership. Because that projection is ordinary RDF, it drops straight into CQELS
 as static context — so a continuous query can be written against *modelled concepts* instead of
-hard-coded VSS signal paths. [`S2dm`](src/main/java/org/cqels/playground/cdsp/S2dm.java) holds the
+hard-coded VSS signal paths. [`S2dm`](src/main/java/org/cqels/playground/s2dm/S2dm.java) holds the
 shared vocabulary and seeds a hand-built catalogue in the shape of s2dm's **older** SKOS exporter
 (once run as `s2dm generate skos-skeleton`): each concept typed `s2dm:ObjectType` or `s2dm:Field`,
 language-tagged labels, a `skos:definition` on fields as well as types, and the collection
@@ -193,9 +207,9 @@ with a couple added to give the rollup a hierarchy.
 
 | Class | CQELS feature | Scenario |
 |-------|---------------|----------|
-| [`S2dmConceptCatalog`](src/main/java/org/cqels/playground/cdsp/S2dmConceptCatalog.java) | Stream–static join against a SKOS concept graph; `[TRIPLES 1]` over atomic multi-statement elements | Readings are presented with the label and definition the *modeller* wrote: the query joins live telemetry to `skos:prefLabel` / `skos:definition`, so renaming a concept upstream changes every consumer with no query edit. |
-| [`S2dmInstanceZones`](src/main/java/org/cqels/playground/cdsp/S2dmInstanceZones.java) | `FILTER` over instance-tag bindings + `GROUP BY` on a compound (row × side) key | S2DM **instance tags**: one `Door.isOpen` concept tagged with an `InCabinZone` (row × side) replaces VSS's exploded `…Row1.DriverSide.IsOpen` paths — "any door, any zone" binds row/side as data, a rear-passenger-side interlock filters on the tag, and a dashboard counts door-open *events* per vehicle and zone (current state would need the latest reading per zone, which this release cannot express). A third row changes the data, not the query. |
-| [`SkosConceptRollup`](src/main/java/org/cqels/playground/cdsp/SkosConceptRollup.java) | Custom RETE rules (`cqels-reasoning-rete`) over `skos:broader` | Rolling observations up the concept hierarchy: `Seat`/`Door` readings answer a query that asks only about `Cabin`, and one two hops up that asks only about `Vehicle`; `Powertrain` — narrower than `Vehicle` but not than `Cabin` — answers the vehicle query and correctly stays out of the cabin one. SKOS carries no RDFS entailment, so the lift is stated as an explicit rule rather than inherited from `rdfs:subClassOf`. |
+| [`S2dmConceptCatalog`](src/main/java/org/cqels/playground/s2dm/S2dmConceptCatalog.java) | Stream–static join against a SKOS concept graph; `[TRIPLES 1]` over atomic multi-statement elements | Readings are presented with the label and definition the *modeller* wrote: the query joins live telemetry to `skos:prefLabel` / `skos:definition`, so renaming a concept upstream changes every consumer with no query edit. |
+| [`S2dmInstanceZones`](src/main/java/org/cqels/playground/s2dm/S2dmInstanceZones.java) | `FILTER` over instance-tag bindings + `GROUP BY` on a compound (row × side) key | S2DM **instance tags**: one `Door.isOpen` concept tagged with an `InCabinZone` (row × side) replaces VSS's exploded `…Row1.DriverSide.IsOpen` paths — "any door, any zone" binds row/side as data, a rear-passenger-side interlock filters on the tag, and a dashboard counts door-open *events* per vehicle and zone (current state would need the latest reading per zone, which this release cannot express). A third row changes the data, not the query. |
+| [`SkosConceptRollup`](src/main/java/org/cqels/playground/s2dm/SkosConceptRollup.java) | Custom RETE rules (`cqels-reasoning-rete`) over `skos:broader` | Rolling observations up the concept hierarchy: `Seat`/`Door` readings answer a query that asks only about `Cabin`, and one two hops up that asks only about `Vehicle`; `Powertrain` — narrower than `Vehicle` but not than `Cabin` — answers the vehicle query and correctly stays out of the cabin one. SKOS carries no RDFS entailment, so the lift is stated as an explicit rule rather than inherited from `rdfs:subClassOf`. |
 
 > These are written against the **published** `2.0.0-alpha.22` surface. Five engine limitations
 > came up while building an earlier version of these demos, each filed with a minimal reproducer:
@@ -216,7 +230,7 @@ with a couple added to give the rollup a hierarchy.
 > out of `skos.ttl` into a separate `data_graph.ttl`, so a query guarding on it needs both files
 > loaded. See [S2DM_MAPPING.md §5](../S2DM_MAPPING.md#5-what-the-export-does-not-carry).
 
-### S2DM model from a real export (`org.cqels.playground.s2dm`)
+### S2DM model from a real export
 
 Unlike the section above, this demo loads RDF that s2dm itself wrote:
 [`src/main/resources/s2dm/trailer/`](src/main/resources/s2dm/trailer/) holds `skos.ttl` and
@@ -238,14 +252,14 @@ what the supplement and `units.ttl` add.
 ### Query dialects
 | Class | CQELS feature | Scenario |
 |-------|---------------|----------|
-| [`CypherGraphQuery`](src/main/java/org/cqels/playground/CypherGraphQuery.java) | CypherQL `MATCH … RETURN` | Continuous property-graph matching (`MATCH (o:Observation) RETURN o`) over the telemetry stream. |
+| [`CypherGraphQuery`](src/main/java/org/cqels/playground/basics/CypherGraphQuery.java) | CypherQL `MATCH … RETURN` | Continuous property-graph matching (`MATCH (o:Observation) RETURN o`) over the telemetry stream. |
 
 ### Reasoning & validation (add-on modules)
 | Class | CQELS feature | Scenario |
 |-------|---------------|----------|
-| [`RdfsReasoning`](src/main/java/org/cqels/playground/RdfsReasoning.java) | RDFS/OWL inference — `cqels-reasoning-rete` | An `ex:DepotVehicle rdfs:subClassOf vsso:Vehicle` schema lets a query for `vsso:Vehicle` match the EV via inference. |
-| [`ShaclValidation`](src/main/java/org/cqels/playground/ShaclValidation.java) | continuous [SHACL](https://www.w3.org/TR/shacl/) — `cqels-shacl` | Require every `sosa:Observation` to carry a result; `conforms` flips from `false` to `true` as the result arrives for the same observation. |
-| [`AspReasoning`](src/main/java/org/cqels/playground/AspReasoning.java) | Answer-Set Programming — `cqels-asp` | A logic rule derives `convoy(V1,V2)` for two distinct vehicles reporting telemetry together (join + inequality). |
+| [`RdfsReasoning`](src/main/java/org/cqels/playground/reasoning/RdfsReasoning.java) | RDFS/OWL inference — `cqels-reasoning-rete` | An `ex:DepotVehicle rdfs:subClassOf vsso:Vehicle` schema lets a query for `vsso:Vehicle` match the EV via inference. |
+| [`ShaclValidation`](src/main/java/org/cqels/playground/reasoning/ShaclValidation.java) | continuous [SHACL](https://www.w3.org/TR/shacl/) — `cqels-shacl` | Require every `sosa:Observation` to carry a result; `conforms` flips from `false` to `true` as the result arrives for the same observation. |
+| [`AspReasoning`](src/main/java/org/cqels/playground/reasoning/AspReasoning.java) | Answer-Set Programming — `cqels-asp` | A logic rule derives `convoy(V1,V2)` for two distinct vehicles reporting telemetry together (join + inequality). |
 
 > Since `2.0.0-alpha.7` the ASP module also ships an opt-in *warm parse-cache* solver backend
 > (`WarmParseCacheAspSolverBackend`, parses the base program once and reuses it across continuous
@@ -278,7 +292,7 @@ what the supplement and `units.ttl` add.
 > `convoy(...)` atoms: it registers through the facade and the solver derives. Note the rule shape — a program written over `obs(...)` registers and
 > returns result objects but derives nothing, because the mapper only ever emits `rdf/3`.
 
-### Reasoning showcase (`org.cqels.playground.reasoning`)
+### Reasoning showcase
 
 Deeper reasoning shapes across the RETE (`cqels-reasoning-rete`) and ASP (`cqels-asp`) add-ons —
 multi-hop entailment, bounded recursion, truth maintenance, and negation-as-failure defaults.
@@ -295,21 +309,21 @@ Each demo pairs the derivation with a case that must NOT derive, so the semantic
 ### Geospatial (add-on module)
 | Class | CQELS feature | Scenario |
 |-------|---------------|----------|
-| [`GeoSpatialFilter`](src/main/java/org/cqels/playground/GeoSpatialFilter.java) | OGC [GeoSPARQL](https://www.ogc.org/standard/geosparql/) `geof:sfWithin` — `cqels-geo` | Keep only readings whose WKT location falls inside the depot geofence — the vehicles currently in the depot zone. |
+| [`GeoSpatialFilter`](src/main/java/org/cqels/playground/geo/GeoSpatialFilter.java) | OGC [GeoSPARQL](https://www.ogc.org/standard/geosparql/) `geof:sfWithin` — `cqels-geo` | Keep only readings whose WKT location falls inside the depot geofence — the vehicles currently in the depot zone. |
 
 ### Extension functions (add-on module)
 | Class | CQELS feature | Scenario |
 |-------|---------------|----------|
-| [`ChargerRangeFilter`](src/main/java/org/cqels/playground/ChargerRangeFilter.java) | user-defined function by IRI (SPARQL 1.1 §17.6, alpha.11) — `cqels-functions-ext` | Call `urn:cqels:fn:haversine(...)` from the query to keep only vehicles within 5 km of the depot charge hub. The reference function self-registers via `ServiceLoader` — on the classpath, no Java glue. |
+| [`ChargerRangeFilter`](src/main/java/org/cqels/playground/basics/ChargerRangeFilter.java) | user-defined function by IRI (SPARQL 1.1 §17.6, alpha.11) — `cqels-functions-ext` | Call `urn:cqels:fn:haversine(...)` from the query to keep only vehicles within 5 km of the depot charge hub. The reference function self-registers via `ServiceLoader` — on the classpath, no Java glue. |
 
 ### Standard vocabularies & domains
 | Class | CQELS feature | Scenario |
 |-------|---------------|----------|
-| [`SosaObservations`](src/main/java/org/cqels/playground/SosaObservations.java) | W3C [SOSA/SSN](https://www.w3.org/TR/vocab-ssn/) + multi-pattern stream join | Average / count per (vehicle × observed VSS signal) — the `observedProperty` keeps speed and battery readings apart. |
-| [`VehicleSignalsCdsp`](src/main/java/org/cqels/playground/VehicleSignalsCdsp.java) | COVESA [VSS](https://covesa.global/) (CDSP) + `GROUP BY` + `HAVING` | The flagship query: per-vehicle top/average speed over a window, emitting only vehicles that were speeding. |
-| [`RdfMessageIngestion`](src/main/java/org/cqels/playground/RdfMessageIngestion.java) | W3C [RSP CG **RDF Messages**](https://w3c-cg.github.io/rsp/spec/messages) N-Quads envelope (`RdfMessageCodec`, alpha.9) | Decode a `VERSION "1.2-messages"` document into atomic observations and push each as one stream element, so a multi-pattern `[NOW]` query binds two predicates of the *same* observation. |
-| [`MessageLogReplay`](src/main/java/org/cqels/playground/messages/MessageLogReplay.java) (`org.cqels.playground.messages`) | RDF Messages **Turtle** log reader/writer ([`RdfMessageLog`](src/main/java/org/cqels/playground/messages/RdfMessageLog.java)); `[TRIPLES 1]` vs `[RANGE 30s]` | Replay [`cabin-temperatures.ttl`](src/main/resources/messages/cabin-temperatures.ttl): 6 messages, the same `_:r` label in every observation. Read one message at a time, 4 readings; read as one plain document, the labels collide into 1 blank node and the same query returns 16 rows. Results go back out as a message log that re-reads as 4 messages. See [RDF_MESSAGES_MAPPING.md](../RDF_MESSAGES_MAPPING.md). |
-| [`MessageStreamOverSse`](src/main/java/org/cqels/playground/messages/MessageStreamOverSse.java) (`org.cqels.playground.messages`) | RDF Messages over **Server-Sent Events** ([`SseMessageChannel`](src/main/java/org/cqels/playground/messages/SseMessageChannel.java)); NDJSON-LD, YAML-LD and RDF/XML logs in [`JsonLdMessageLog`](src/main/java/org/cqels/playground/messages/JsonLdMessageLog.java) and [`RdfXmlMessageLog`](src/main/java/org/cqels/playground/messages/RdfXmlMessageLog.java) | The same six messages served as `rdf-message` events with JSON-LD payloads, read as they arrive and pushed into the engine: 6 events, 4 readings, as in the replay. |
+| [`SosaObservations`](src/main/java/org/cqels/playground/basics/SosaObservations.java) | W3C [SOSA/SSN](https://www.w3.org/TR/vocab-ssn/) + multi-pattern stream join | Average / count per (vehicle × observed VSS signal) — the `observedProperty` keeps speed and battery readings apart. |
+| [`VehicleSignalsCdsp`](src/main/java/org/cqels/playground/cdsp/VehicleSignalsCdsp.java) | COVESA [VSS](https://covesa.global/) (CDSP) + `GROUP BY` + `HAVING` | The flagship query: per-vehicle top/average speed over a window, emitting only vehicles that were speeding. |
+| [`RdfMessageIngestion`](src/main/java/org/cqels/playground/messages/RdfMessageIngestion.java) | W3C [RSP CG **RDF Messages**](https://w3c-cg.github.io/rsp/spec/messages) N-Quads envelope (`RdfMessageCodec`, alpha.9) | Decode a `VERSION "1.2-messages"` document into atomic observations and push each as one stream element, so a multi-pattern `[NOW]` query binds two predicates of the *same* observation. |
+| [`MessageLogReplay`](src/main/java/org/cqels/playground/messages/MessageLogReplay.java) | RDF Messages **Turtle** log reader/writer ([`RdfMessageLog`](src/main/java/org/cqels/playground/messages/RdfMessageLog.java)); `[TRIPLES 1]` vs `[RANGE 30s]` | Replay [`cabin-temperatures.ttl`](src/main/resources/messages/cabin-temperatures.ttl): 6 messages, the same `_:r` label in every observation. Read one message at a time, 4 readings; read as one plain document, the labels collide into 1 blank node and the same query returns 16 rows. Results go back out as a message log that re-reads as 4 messages. See [RDF_MESSAGES_MAPPING.md](../RDF_MESSAGES_MAPPING.md). |
+| [`MessageStreamOverSse`](src/main/java/org/cqels/playground/messages/MessageStreamOverSse.java) | RDF Messages over **Server-Sent Events** ([`SseMessageChannel`](src/main/java/org/cqels/playground/messages/SseMessageChannel.java)); NDJSON-LD, YAML-LD and RDF/XML logs in [`JsonLdMessageLog`](src/main/java/org/cqels/playground/messages/JsonLdMessageLog.java) and [`RdfXmlMessageLog`](src/main/java/org/cqels/playground/messages/RdfXmlMessageLog.java) | The same six messages served as `rdf-message` events with JSON-LD payloads, read as they arrive and pushed into the engine: 6 events, 4 readings, as in the replay. |
 
 ## Keeping the caveats honest
 
@@ -319,7 +333,7 @@ in a direction nothing else catches: when upstream **fixes** one, the workaround
 the build stays green while the prose quietly becomes false — which is exactly what happened to
 four other notes this table used to carry (`#54`, `#55`, `#56`, `#57`), all since fixed.
 
-[`CapabilityProbe`](src/main/java/org/cqels/playground/CapabilityProbe.java) is not a demo — it
+[`CapabilityProbe`](src/main/java/org/cqels/playground/probe/CapabilityProbe.java) is not a demo — it
 asserts both directions and fails if reality and the documentation have diverged, naming the files
 to edit:
 

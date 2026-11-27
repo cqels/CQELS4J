@@ -1,7 +1,8 @@
-package org.cqels.playground;
+package org.cqels.playground.windows;
 
 import org.cqels.engine.CQELSEngine;
 import org.cqels.engine.DataStream;
+import org.cqels.playground.Fleet;
 import org.eclipse.rdf4j.model.ValueFactory;
 import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
 
@@ -32,7 +33,7 @@ import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
  * every observation IRI is unique so an observation-subject join could never pair two signals.
  * Explicit event timestamps make the windows deterministic.
  *
- * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.DirectionalMultiPatternJoin}
+ * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.windows.DirectionalMultiPatternJoin}
  */
 public class DirectionalMultiPatternJoin {
 

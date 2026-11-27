@@ -31,7 +31,7 @@ import org.eclipse.rdf4j.rio.RDFFormat;
  * trailer example schema ({@code examples/trailer/full_schema.graphl}) at a pinned s2dm commit.
  * They are committed exactly as the tool wrote them; {@code scripts/s2dm/export-trailer.sh}
  * regenerates them in Docker. Nothing in them is hand-written, which is the difference from the
- * {@code org.cqels.playground.cdsp.S2dm*} demos, whose concept graph is hand-built in the
+ * {@code org.cqels.playground.s2dm.S2dm*} demos, whose concept graph is hand-built in the
  * exporter's shape. Next to them, {@code supplement.ttl} and {@code units.ttl} are <em>not</em>
  * s2dm output: the same script writes them with this repository's
  * {@code scripts/s2dm/supplement.py}, which reads the same schema for what the export drops, and

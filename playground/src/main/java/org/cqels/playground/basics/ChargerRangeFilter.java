@@ -1,7 +1,8 @@
-package org.cqels.playground;
+package org.cqels.playground.basics;
 
 import org.cqels.engine.CQELSEngine;
 import org.cqels.engine.DataStream;
+import org.cqels.playground.Fleet;
 
 /**
  * Example — a user-defined <strong>extension function</strong> called by IRI from CQELS-QL.
@@ -18,7 +19,7 @@ import org.cqels.engine.DataStream;
  *   FILTER(?km &lt;= 5.0)
  * </pre>
  *
- * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.ChargerRangeFilter}
+ * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.basics.ChargerRangeFilter}
  */
 public class ChargerRangeFilter {
 

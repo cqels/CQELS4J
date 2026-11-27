@@ -1,9 +1,10 @@
-package org.cqels.playground;
+package org.cqels.playground.cdsp;
 
 import org.cqels.engine.CQELSEngine;
 import org.cqels.engine.DataStream;
 
 import java.util.Random;
+import org.cqels.playground.Fleet;
 
 /**
  * Example — the flagship VSS scenario: per-vehicle speeding detection (GROUP BY + HAVING).
@@ -13,7 +14,7 @@ import java.util.Random;
  * {@code GROUP BY ?vehicle} + {@code HAVING}. This is the COVESA VSS use case that motivated the
  * whole fleet domain (cf. the COVESA CDSP), expressed over SOSA-wrapped VSS observations.
  *
- * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.VehicleSignalsCdsp}
+ * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.cdsp.VehicleSignalsCdsp}
  */
 public class VehicleSignalsCdsp {
 

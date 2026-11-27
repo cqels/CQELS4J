@@ -1,4 +1,4 @@
-package org.cqels.playground;
+package org.cqels.playground.probe;
 
 import org.cqels.asp.config.AspStreamSolveConfig;
 import org.cqels.asp.integration.AspFactMapper;
@@ -8,6 +8,7 @@ import org.cqels.asp.solver.WarmParseCacheAspSolverBackend;
 import org.cqels.engine.CQELSEngine;
 import org.cqels.engine.DataStream;
 import org.cqels.engine.cep.PatternMatch;
+import org.cqels.playground.Fleet;
 import org.cqels.reasoning.Rule;
 import org.cqels.reasoning.RuleCondition;
 import org.cqels.reasoning.RuleConsequent;
@@ -68,7 +69,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * <p>Exit status: <strong>0</strong> if documentation and reality agree, <strong>non-zero</strong>
  * (an exception, so Maven fails the build) if they diverge.
  *
- * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.CapabilityProbe}
+ * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.probe.CapabilityProbe}
  */
 public class CapabilityProbe {
 

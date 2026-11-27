@@ -1,4 +1,4 @@
-package org.cqels.playground.cdsp;
+package org.cqels.playground.cep;
 
 import org.cqels.engine.CQELSEngine;
 import org.cqels.engine.DataStream;
@@ -39,7 +39,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * across two other vehicles — which must stay silent, because the same-vehicle guard can never
  * hold.
  *
- * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.cdsp.CorrelatedFaultCascade}
+ * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.cep.CorrelatedFaultCascade}
  */
 public class CorrelatedFaultCascade {
 

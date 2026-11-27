@@ -766,8 +766,8 @@ prov_md "'Before \`X\` was the latest release, …' is history, not a stale stam
 # broke the moment block-continuity was enforced. A fixture that tests the wrong
 # file type is not testing the case it names.
 d=$(newfix)
-mkdir -p "$d/playground/src/main/java/org/cqels/playground/cdsp"
-cat > "$d/playground/src/main/java/org/cqels/playground/cdsp/DriverAttentionWatchdog.java" <<'EOF'
+mkdir -p "$d/playground/src/main/java/org/cqels/playground/cep"
+cat > "$d/playground/src/main/java/org/cqels/playground/cep/DriverAttentionWatchdog.java" <<'EOF'
 /**
  * <em>other</em> vehicle braking elsewhere in the fleet no longer suppresses the alert. Since
  * CQELS {@code 2.0.0-alpha.13}, cross-event FILTER guards on negated steps are honored; before

@@ -1,7 +1,8 @@
-package org.cqels.playground;
+package org.cqels.playground.messages;
 
 import org.cqels.engine.CQELSEngine;
 import org.cqels.engine.DataStream;
+import org.cqels.playground.Fleet;
 import org.cqels.stream.codec.RdfMessageCodec;
 import org.eclipse.rdf4j.model.IRI;
 import org.eclipse.rdf4j.model.Statement;
@@ -38,7 +39,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * <a href="https://github.com/cqels/CQELS4J/issues/133">#133</a>), see the
  * {@code org.cqels.playground.messages} package and {@code RDF_MESSAGES_MAPPING.md}.
  *
- * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.RdfMessageIngestion}
+ * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.messages.RdfMessageIngestion}
  */
 public class RdfMessageIngestion {
 

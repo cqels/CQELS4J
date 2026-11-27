@@ -1,9 +1,10 @@
-package org.cqels.playground;
+package org.cqels.playground.basics;
 
 import org.cqels.engine.CQELSEngine;
 import org.cqels.engine.DataStream;
 
 import java.util.Random;
+import org.cqels.playground.Fleet;
 
 /**
  * Example — the anatomy of a {@code sosa:Observation} (W3C SOSA/SSN + VSSo + VSS).
@@ -18,7 +19,7 @@ import java.util.Random;
  * {@code observedProperty} dimension keeps speed and battery readings apart — the value of wrapping
  * VSS signals as SOSA observations rather than flat triples.
  *
- * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.SosaObservations}
+ * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.basics.SosaObservations}
  */
 public class SosaObservations {
 

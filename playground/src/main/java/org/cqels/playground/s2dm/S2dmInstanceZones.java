@@ -1,4 +1,4 @@
-package org.cqels.playground.cdsp;
+package org.cqels.playground.s2dm;
 
 import org.cqels.engine.CQELSEngine;
 import org.cqels.engine.DataStream;
@@ -43,7 +43,7 @@ import org.cqels.playground.Fleet;
  * <p>CQELS-QL features shown: multi-pattern atomic stream elements, {@code FILTER} over
  * instance-tag bindings, and {@code GROUP BY} on a compound (row × side) key.
  *
- * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.cdsp.S2dmInstanceZones}
+ * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.s2dm.S2dmInstanceZones}
  */
 public class S2dmInstanceZones {
 

@@ -1,7 +1,8 @@
-package org.cqels.playground;
+package org.cqels.playground.basics;
 
 import org.cqels.engine.CQELSEngine;
 import org.cqels.engine.DataStream;
+import org.cqels.playground.Fleet;
 
 /**
  * Example 1 — the minimal continuous query: a low-battery alert.
@@ -15,7 +16,7 @@ import org.cqels.engine.DataStream;
  * {@link Fleet} pushes each triple of an observation as its own element, so the query matches a
  * single triple pattern and the demo streams only SoC readings.
  *
- * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.HelloCqels}
+ * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.basics.HelloCqels}
  */
 public class HelloCqels {
 

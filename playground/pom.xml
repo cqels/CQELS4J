@@ -18,7 +18,7 @@
         <!-- Bump to the latest published CQELS release as new versions ship. -->
         <cqels.version>2.0.0-alpha.22</cqels.version>
         <!-- Default example for `mvn exec:java`; override with -Dexec.mainClass=... -->
-        <exec.mainClass>org.cqels.playground.HelloCqels</exec.mainClass>
+        <exec.mainClass>org.cqels.playground.basics.HelloCqels</exec.mainClass>
     </properties>
 
     <dependencyManagement>
@@ -142,7 +142,7 @@
                 <version>3.2.5</version>
             </plugin>
             <!-- Run an example with:
-                 mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.HelloCqels -->
+                 mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.basics.HelloCqels -->
             <plugin>
                 <groupId>org.codehaus.mojo</groupId>
                 <artifactId>exec-maven-plugin</artifactId>

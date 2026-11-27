@@ -1,8 +1,9 @@
-package org.cqels.playground;
+package org.cqels.playground.reasoning;
 
 import org.cqels.engine.CQELSEngine;
 import org.cqels.engine.DataStream;
 import org.cqels.engine.QueryResultListener;
+import org.cqels.playground.Fleet;
 import org.cqels.shacl.config.ShaclStreamSolveConfig;
 import org.cqels.shacl.parser.ShaclShapeParser;
 import org.cqels.shacl.query.ShaclContinuousQuery;
@@ -22,7 +23,7 @@ import java.util.List;
  *
  * <p>Add-on dependency: {@code org.cqels:cqels-shacl}.
  *
- * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.ShaclValidation}
+ * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.reasoning.ShaclValidation}
  */
 public class ShaclValidation {
 

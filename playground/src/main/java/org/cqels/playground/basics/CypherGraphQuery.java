@@ -1,7 +1,8 @@
-package org.cqels.playground;
+package org.cqels.playground.basics;
 
 import org.cqels.engine.CQELSEngine;
 import org.cqels.engine.DataStream;
+import org.cqels.playground.Fleet;
 
 /**
  * Example — CypherQL: continuous property-graph queries.
@@ -11,7 +12,7 @@ import org.cqels.engine.DataStream;
  * Here {@code MATCH (o:Observation) RETURN o} continuously reports the telemetry observations flowing
  * through the fleet stream (each {@code sosa:Observation} is one labelled node).
  *
- * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.CypherGraphQuery}
+ * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.basics.CypherGraphQuery}
  */
 public class CypherGraphQuery {
 

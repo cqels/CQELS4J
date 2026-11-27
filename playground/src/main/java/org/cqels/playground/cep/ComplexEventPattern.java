@@ -1,8 +1,9 @@
-package org.cqels.playground;
+package org.cqels.playground.cep;
 
 import org.cqels.engine.CQELSEngine;
 import org.cqels.engine.DataStream;
 import org.cqels.engine.cep.PatternMatch;
+import org.cqels.playground.Fleet;
 import org.cqels.stream.StreamElement;
 
 /**
@@ -16,7 +17,7 @@ import org.cqels.stream.StreamElement;
  * <p>The drop/spike events are derived upstream (e.g. by a windowed delta query) and emitted to the
  * stream; this demo emits them directly via {@link Fleet#pushDrivingEvent}.
  *
- * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.ComplexEventPattern}
+ * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.cep.ComplexEventPattern}
  */
 public class ComplexEventPattern {
 

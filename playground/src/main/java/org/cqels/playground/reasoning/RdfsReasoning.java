@@ -1,7 +1,8 @@
-package org.cqels.playground;
+package org.cqels.playground.reasoning;
 
 import org.cqels.engine.CQELSEngine;
 import org.cqels.engine.DataStream;
+import org.cqels.playground.Fleet;
 import org.cqels.reasoning.config.RDFSProfile;
 import org.cqels.reasoning.engine.ReactiveReteAdapter;
 
@@ -19,7 +20,7 @@ import org.cqels.reasoning.engine.ReactiveReteAdapter;
  *
  * <p>Add-on dependency: {@code org.cqels:cqels-reasoning-rete}.
  *
- * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.RdfsReasoning}
+ * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.reasoning.RdfsReasoning}
  */
 public class RdfsReasoning {
 

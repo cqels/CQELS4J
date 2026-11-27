@@ -12,7 +12,7 @@ CQELS below was verified by running it on `2.0.0-alpha.22`.
 > records that "for the application database archetype MongoDB Realm was selected. Support for it
 > is currently a work in progress as part of the playground project backlog." The incumbent CQELS
 > would actually displace is **RDFox**, not a document store. For the S2DM concept layer itself,
-> see the three demos under [`playground/`](playground/README.md#s2dm-concept-layer-orgcqelsplaygroundcdsp).
+> see the three demos under [`playground/`](playground/README.md#s2dm-concept-layer).
 
 ---
 

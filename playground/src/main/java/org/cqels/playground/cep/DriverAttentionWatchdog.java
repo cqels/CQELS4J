@@ -1,4 +1,4 @@
-package org.cqels.playground.cdsp;
+package org.cqels.playground.cep;
 
 import org.cqels.engine.CQELSEngine;
 import org.cqels.engine.DataStream;
@@ -43,7 +43,7 @@ import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
  * watched vehicle is fast twice while a <em>different</em> vehicle brakes in between — the alert
  * still fires, because the guard rejects the other vehicle's braking reading as an {@code ?e2}.
  *
- * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.cdsp.DriverAttentionWatchdog}
+ * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.cep.DriverAttentionWatchdog}
  */
 public class DriverAttentionWatchdog {
 

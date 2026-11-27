@@ -1,4 +1,4 @@
-package org.cqels.playground.cdsp;
+package org.cqels.playground.s2dm;
 
 import org.cqels.engine.CQELSEngine;
 import org.cqels.engine.DataStream;
@@ -234,8 +234,9 @@ public final class S2dm {
      * the observation's concept, its value, its vehicle, and the {@code InCabinZone} row/side that
      * identifies <em>which</em> door or seat produced it.
      *
-     * <p>Atomicity matters for the same reason it does in {@link CorrelatedFaultCascade}: a query
-     * that binds concept, vehicle, row and side in one graph pattern only sees a consistent
+     * <p>Atomicity matters for the same reason it does in
+     * {@link org.cqels.playground.cep.CorrelatedFaultCascade}: a query that binds concept, vehicle,
+     * row and side in one graph pattern only sees a consistent
      * assignment if all five statements arrive as one element. Pushed separately they would
      * cross-product across vehicles and zones. The element is stamped at {@code timestamp} (ms), so
      * a windowed query holds the same readings every run.

@@ -144,7 +144,7 @@ what rejects it, not the filter on the value.
   model which parts of a reading identify the instance. The demo knows it from the schema.
 - **Field descriptions.** See §3. A query that wants to explain a field has to use its owning
   type's definition, as `PlacedReading` does.
-  [`S2dmConceptCatalog`](playground/src/main/java/org/cqels/playground/cdsp/S2dmConceptCatalog.java)
+  [`S2dmConceptCatalog`](playground/src/main/java/org/cqels/playground/s2dm/S2dmConceptCatalog.java)
   joins on field definitions, which s2dm's older SKOS exporter (`s2dm generate skos-skeleton`)
   wrote and the current one does not, so over a real export its first query returns no rows for a
   field observation. (An observation tagged with a described type still matches; the query does
@@ -154,11 +154,11 @@ what rejects it, not the filter on the value.
   `s2dm:Field` in the SKOS file; the current one puts that typing only in `data_graph.ttl`.
   `S2dmConceptCatalog`'s second query guards on `s2dm:Field`, so it needs both files loaded.
 - **`skos:broader`.** Not written anywhere. The hierarchy that
-  [`SkosConceptRollup`](playground/src/main/java/org/cqels/playground/cdsp/SkosConceptRollup.java)
+  [`SkosConceptRollup`](playground/src/main/java/org/cqels/playground/s2dm/SkosConceptRollup.java)
   rolls up is asserted by that demo; the structure s2dm does export is `s2dm:hasField` and
   `s2dm:hasOutputType`.
 
-The `org.cqels.playground.cdsp.S2dm*` demos predate this mapping. Their concept graph is hand-built
+The `org.cqels.playground.s2dm.S2dm*` demos predate this mapping. Their concept graph is hand-built
 in the shape of the older SKOS exporter, over a vocabulary partly taken from s2dm's examples.
 
 Units, `@range` and instances are written by other s2dm exporters (§2, item 3), but none of

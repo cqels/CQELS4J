@@ -1,7 +1,8 @@
-package org.cqels.playground;
+package org.cqels.playground.basics;
 
 import org.cqels.engine.CQELSEngine;
 import org.cqels.engine.DataStream;
+import org.cqels.playground.Fleet;
 
 /**
  * Example — Linked Streams: joining the telemetry stream against the static fleet graph.
@@ -14,7 +15,7 @@ import org.cqels.engine.DataStream;
  * <p>Uses a {@code [TRIPLES 10]} window so each observation (five triples) is comfortably co-resident
  * with its mates when the stream patterns are matched.
  *
- * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.StreamStaticJoin}
+ * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.basics.StreamStaticJoin}
  */
 public class StreamStaticJoin {
 

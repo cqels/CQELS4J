@@ -54,7 +54,7 @@ The worked examples are
 
 `org.cqels.stream.codec.RdfMessageCodec` (cqels-core) reads and writes N-Quads message logs, which
 covers N-Triples too. The existing
-[`RdfMessageIngestion`](playground/src/main/java/org/cqels/playground/RdfMessageIngestion.java) demo
+[`RdfMessageIngestion`](playground/src/main/java/org/cqels/playground/messages/RdfMessageIngestion.java) demo
 uses it. Measured against the draft's own §2.1.2 examples and some edge cases:
 
 | Case | Codec |
@@ -344,7 +344,7 @@ is 6 events, the empty heartbeat among them, and 4 `Reading` rows, the same as t
 
 ## 7. Keeping this true
 
-[`CapabilityProbe`](playground/src/main/java/org/cqels/playground/CapabilityProbe.java)
+[`CapabilityProbe`](playground/src/main/java/org/cqels/playground/probe/CapabilityProbe.java)
 (`scripts/ci/capability-probe.sh`, run on every PR) checks the six engine gaps above in both
 directions, so this document and the workarounds cannot outlive a fix unnoticed:
 

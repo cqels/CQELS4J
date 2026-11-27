@@ -1,8 +1,9 @@
-package org.cqels.playground;
+package org.cqels.playground.cep;
 
 import org.cqels.engine.CQELSEngine;
 import org.cqels.engine.DataStream;
 import org.cqels.engine.cep.PatternMatch;
+import org.cqels.playground.Fleet;
 import org.cqels.stream.StreamElement;
 
 /**
@@ -15,7 +16,7 @@ import org.cqels.stream.StreamElement;
  * <p>Quantifiers: {@code ?e+} (1+), {@code ?e*} (0+), {@code ?e?} (0/1), {@code ?e{n}},
  * {@code ?e{m,n}}; a step can also be negated with {@code NOT ?e} (see {@code CQELS-QL_SPEC.md}).
  *
- * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.CepQuantifier}
+ * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.cep.CepQuantifier}
  */
 public class CepQuantifier {
 
