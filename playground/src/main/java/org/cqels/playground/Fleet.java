@@ -301,10 +301,12 @@ public final class Fleet {
             station(conn, STATION1, "Depot North", 150, "POINT(2 2)");
             station(conn, STATION2, "City West", 50, "POINT(20 20)");
 
-            // geofenced zones: speed limit (km/h) + WKT area
+            // geofenced zones: speed limit (km/h) + WKT area. WKT is "longitude latitude" in degrees
+            // (CRS84). Against a polygon past ±180 / ±90, geof:sfWithin is a type error (unbound), so a
+            // FILTER on it drops every row; see CQELS-QL_SPEC.md §9, "Silently unbound".
             zone(conn, ZONE + "depot", 20, "POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))");
             zone(conn, ZONE + "school", 30, "POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))");
-            zone(conn, ZONE + "highway", 130, "POLYGON((100 100, 200 100, 200 200, 100 200, 100 100))");
+            zone(conn, ZONE + "highway", 130, "POLYGON((30 0, 90 0, 90 2, 30 2, 30 0))");
 
             // a traffic sensor reporting congestion on the depot approach
             conn.add(VF.createIRI(TRAFFIC + "sensor/approach-1"),
