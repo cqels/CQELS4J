@@ -4,7 +4,6 @@ import org.cqels.engine.CQELSEngine;
 import org.cqels.engine.DataStream;
 import org.eclipse.rdf4j.model.IRI;
 import org.eclipse.rdf4j.model.Literal;
-import org.eclipse.rdf4j.model.Statement;
 import org.eclipse.rdf4j.model.ValueFactory;
 import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
 
@@ -85,34 +84,18 @@ final class ProbeSupport {
         return out;
     }
 
-    /** One atomic element from (predicate local name, object) pairs about {@code C + subject}. */
-    static List<Statement> element(String subject, Object... po) {
-        List<Statement> statements = new ArrayList<>();
-        for (int i = 0; i < po.length; i += 2) {
-            org.eclipse.rdf4j.model.Value o = po[i + 1] instanceof Number n
-                    ? VF.createLiteral(n.toString(), org.eclipse.rdf4j.model.vocabulary.XSD.INTEGER)
-                    : VF.createIRI(C + po[i + 1]);
-            statements.add(VF.createStatement(VF.createIRI(C + subject), VF.createIRI(C + po[i]), o));
-        }
-        return statements;
-    }
-
-    static Statement st(String s, String p, String o) {
-        return VF.createStatement(VF.createIRI(C + s), VF.createIRI(C + p), VF.createIRI(C + o));
-    }
-
     /**
      * A binding as text: a literal's label, an IRI's string, anything else's {@code toString}. For
      * messages and for the duration reports; checks compare with {@link #sameValue}, never with
      * substrings of a row's {@code toString} (substring matching accepted {@code 150.01} for
      * {@code 150.0} and {@code AlphaWRONG} for {@code Alpha}; codex, review of #116).
      */
-    static String text(Object value) {
+    private static String text(Object value) {
         return value == null ? "null" : (value instanceof Literal l ? l.getLabel() : String.valueOf(value));
     }
 
     /** An expected number: compared numerically, and only against a number or numeric literal. */
-    record Num(double value) { }
+    private record Num(double value) { }
 
     /** An expected unbound variable: absent from the row, or bound to null. */
     static final Object UNBOUND = new Object();
@@ -144,7 +127,7 @@ final class ProbeSupport {
      * {@code "25"}), a number only a number. Spelling alone accepted a string where the engine
      * should bind an IRI (codex, round 3 of #116).
      */
-    static boolean sameValue(Object actual, Object expected) {
+    private static boolean sameValue(Object actual, Object expected) {
         if (expected == UNBOUND) {
             return actual == null;
         }

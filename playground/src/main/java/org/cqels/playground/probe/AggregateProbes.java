@@ -4,6 +4,7 @@ import org.cqels.engine.CQELSEngine;
 import org.cqels.engine.DataStream;
 import org.eclipse.rdf4j.model.IRI;
 import org.eclipse.rdf4j.model.Literal;
+import org.eclipse.rdf4j.model.Statement;
 import org.eclipse.rdf4j.repository.RepositoryConnection;
 
 import java.util.ArrayList;
@@ -321,6 +322,10 @@ final class AggregateProbes {
         // rows passed on {g1,n=1}+{g2,n=2} and on tenfold counts (codex, rounds 2 and 3 of #66;
         // review of #116).
         return exactRows(rows, List.of(row("g", iri("g1"), "n", num(2)), row("g", iri("g2"), "n", num(1))));
+    }
+
+    private static Statement st(String s, String p, String o) {
+        return VF.createStatement(VF.createIRI(C + s), VF.createIRI(C + p), VF.createIRI(C + o));
     }
 
     /** One query, one fresh engine, so checks cannot contaminate each other. */

@@ -107,7 +107,7 @@ public class CapabilityProbe {
         capability("#57 reasoner sees multi-statement (atomic) elements (fixed)",
                 ReasoningProbes.reasonerSeesAtomicElements());
         capability("#67 reverse-edge guard admits a match, rejects an unmatchable element (fixed)",
-                QueryProbes.reverseEdgeGuardAdmits());
+                StaticJoinProbes.reverseEdgeGuardAdmits());
         capability("#67 [NOW] static pattern does not admit a missing stream conjunct (fixed)",
                 StaticJoinProbes.nowStaticPatternEnforcesConjunction());
         capability("#82 FILTER compares xsd:duration by value (fixed in alpha.22)",

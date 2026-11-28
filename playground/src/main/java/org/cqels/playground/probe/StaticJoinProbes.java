@@ -1,16 +1,22 @@
 package org.cqels.playground.probe;
 
+import org.cqels.engine.CQELSEngine;
+import org.cqels.engine.DataStream;
 import org.cqels.playground.Fleet;
 import org.eclipse.rdf4j.model.IRI;
+import org.eclipse.rdf4j.model.Statement;
 import org.eclipse.rdf4j.repository.RepositoryConnection;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 import static org.cqels.playground.probe.ProbeSupport.*;
 
 /**
- * Joins with the static graph: static patterns beside a {@code STREAM} block, {@code FROM <graph>},
+ * Joins with the static graph: static patterns beside a {@code STREAM} block, the reverse-edge guard,
+ * {@code FROM <graph>},
  * a static {@code UNION}, and the static unit conversions {@code TrailerHealthMonitor} relies on.
  *
  * <p>{@link CapabilityProbe} runs these checks and names the documentation each one guards.
@@ -33,6 +39,102 @@ final class StaticJoinProbes {
             """.formatted(C, C, C),
                 s -> s.pushTriple(C + "o1", C + "of", C + "a"));
         return rows.isEmpty();   // eliminated == fixed
+    }
+
+    /**
+     * #67, fixed since 2.0.0-alpha.21: a static guard that reaches the join key by a REVERSE edge —
+     * {@code ex:coll ex:member ?f}, with {@code ?f} bound by the stream in object position — must
+     * admit a matching element and must not admit one that cannot match the stream block.
+     *
+     * <p>Before 2.0.0-alpha.21 it did neither reliably, in two opposite ways depending on shape: it
+     * <em>eliminated</em> rows that fully matched (this exact {@code [TRIPLES 1]} two-pattern shape),
+     * and elsewhere it <em>fabricated</em> rows from the static data alone when the pushed element
+     * matched no stream pattern at all. Issue #67 has the history.
+     *
+     * <p>This was a caveat until the alpha.21 bump, and the body below is unchanged from that
+     * version: the same two phases that reported "still open" on alpha.20 report correct behaviour
+     * on alpha.21. That is the point of flipping a caveat rather than rewriting it — the assertion
+     * that changed its verdict is the evidence.
+     *
+     * <p>Two phases are required, not one. An earlier version returned {@code !rows.isEmpty()},
+     * which would have read a FABRICATED row as the bug being fixed. A fixed engine must emit on the
+     * matching element ({@code admitsMatch}) and stay silent on the unmatchable one
+     * ({@code fabricates}). The forward-typed guard runs alongside as a control in both phases.
+     *
+     * <p>A 162-case sweep over six windows, both guard directions, four push kinds, six static
+     * shapes and four projections was correct on alpha.21 and wrong in 24 cases on alpha.20 —
+     * see {@code CQELS-QL_SPEC.md} §6. This check pins one cell of it; the next check pins the
+     * {@code [NOW]} half, which was the more serious.
+     */
+    static boolean reverseEdgeGuardAdmits() throws Exception {
+        // Phase 1 — a MATCHING element. A fixed engine emits the row here.
+        boolean admitsMatch = !reverseGuardRun(true).isEmpty();
+        // Phase 2 — an element that CANNOT match the stream block. A fixed engine emits nothing;
+        // this engine fabricates a row from the static data alone (issue #67 §A). Without this
+        // phase the check could not tell "fixed" from "got worse": the old version returned
+        // !reverse.isEmpty(), so a fabricated row would have been reported as NOW FIXED and the
+        // caveat removed from the docs — precisely backwards.
+        boolean fabricates = !reverseGuardRun(false).isEmpty();
+        // Phase 3 — an element that DOES match the stream block, keyed on b, which is not a member
+        // of the collection. Only the static guard can reject it; phase 2 never reaches the guard,
+        // so without this phase an engine that ignored the guard would pass (codex, review of #116).
+        boolean guardRejects = reverseGuardRun(null).isEmpty();
+        return admitsMatch && !fabricates && guardRejects;
+    }
+
+    /**
+     * One run of the #67 comparison. Pushes a matching two-statement element ({@code true}), one
+     * that cannot match the stream block at all ({@code false}), or one that matches the stream
+     * block keyed on a non-member {@code b} ({@code null}), and returns what the reverse-guarded
+     * query emitted.
+     * The forward-typed guard runs alongside as a control: on the matching push it must admit, and
+     * on the non-matching push it must stay silent. If either fails, the reverse verdict is not
+     * measuring what it claims to and a divergence says so.
+     */
+    private static List<Object> reverseGuardRun(Boolean mode) throws Exception {
+        boolean matching = Boolean.TRUE.equals(mode);
+        boolean nonMember = mode == null;
+        try (CQELSEngine engine = CQELSEngine.builder().id("probe-67").withMemoryStore().build()) {
+            try (RepositoryConnection conn = engine.getRepository().getConnection()) {
+                // Both directions asserted, exactly as the s2dm exporter emits them.
+                conn.add(VF.createIRI(C + "a"), VF.createIRI(Fleet.RDF_TYPE), VF.createIRI(C + "Field"));
+                conn.add(VF.createIRI(C + "coll"), VF.createIRI(C + "member"), VF.createIRI(C + "a"));
+            }
+            DataStream stream = engine.createStream("S");
+            List<Object> reverse = new CopyOnWriteArrayList<>();
+            List<Object> forward = new CopyOnWriteArrayList<>();
+            // Two patterns in the STREAM block — the shape that triggers it. Each query projects
+            // exactly what its own BGP binds; getting that wrong is how a shape difference gets
+            // mistaken for a guard difference.
+            String block = "?o <" + C + "of> ?f . ?o <" + C + "v> ?val .";
+            engine.registerCqelsQuery(withRegister("SELECT ?f ?val FROM STREAM S [TRIPLES 1]\n"
+                    + "WHERE { STREAM S { " + block + " } <" + C + "coll> <" + C + "member> ?f . }\n"),
+                    reverse::add);
+            engine.registerCqelsQuery(withRegister("SELECT ?f ?val FROM STREAM S [TRIPLES 1]\n"
+                    + "WHERE { STREAM S { " + block + " } ?f <" + Fleet.RDF_TYPE + "> <" + C + "Field> . }\n"),
+                    forward::add);
+            engine.start();
+            IRI o = VF.createIRI(C + "o1");
+            if (matching || nonMember) {
+                stream.push(List.of(
+                        VF.createStatement(o, VF.createIRI(C + "of"), VF.createIRI(C + (nonMember ? "b" : "a"))),
+                        VF.createStatement(o, VF.createIRI(C + "v"), VF.createLiteral(1.0))));
+            } else {
+                stream.push(VF.createStatement(o, VF.createIRI(C + "unrelated"), VF.createIRI(C + "x")));
+            }
+            Thread.sleep(1200);
+            if (matching && forward.isEmpty()) {
+                DIVERGENCES.add("REGRESSED — the forward-typed guard no longer admits a matching element\n"
+                        + "      the #67 comparison is meaningless in this run; investigate before "
+                        + "trusting its verdict");
+            } else if (!matching && !forward.isEmpty()) {
+                // b is not typed Field either, so the forward guard must reject the non-member too.
+                DIVERGENCES.add("REGRESSED — the forward-typed guard now fabricates too\n"
+                        + "      it emitted for an element that cannot match the stream block; the "
+                        + "#67 control is no longer sound");
+            }
+            return reverse;
+        }
     }
 
     /**
@@ -245,6 +347,18 @@ final class StaticJoinProbes {
             """.formatted(C, C),
                 s -> s.pushTriple(C + "o1", C + "of", C + "a"));
         return exactRows(rows, List.of(row("o", iri("o1"), "label", "Alpha")));
+    }
+
+    /** One atomic element from (predicate local name, object) pairs about {@code C + subject}. */
+    private static List<Statement> element(String subject, Object... po) {
+        List<Statement> statements = new ArrayList<>();
+        for (int i = 0; i < po.length; i += 2) {
+            org.eclipse.rdf4j.model.Value o = po[i + 1] instanceof Number n
+                    ? VF.createLiteral(n.toString(), org.eclipse.rdf4j.model.vocabulary.XSD.INTEGER)
+                    : VF.createIRI(C + po[i + 1]);
+            statements.add(VF.createStatement(VF.createIRI(C + subject), VF.createIRI(C + po[i]), o));
+        }
+        return statements;
     }
 
     /** A static conversion (blank node: to, factor, offset) from unit {@code from} to {@code to}. */
