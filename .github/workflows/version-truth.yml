@@ -189,7 +189,7 @@ jobs:
       # Exit 3 means "could not run" (toolchain or mirror unreachable), not "the docs are
       # wrong" -- same convention as the gate's --online tier. Still fails, log says re-run.
       - run: scripts/ci/capability-probe.sh
-      # The demos' own tests: the RDF Message Log reader (org.cqels.playground.messages) and
+      # The demos' own tests: the RDF Message Log readers (org.cqels.playground.messages.io) and
       # DemoOutputTest, which runs every demo and compares its output with expected-output/.
       - run: mvn -q -B -f playground/pom.xml test
 

@@ -1,4 +1,4 @@
-package org.cqels.playground.messages;
+package org.cqels.playground.messages.io;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -138,7 +138,7 @@ public final class SseMessageChannel {
     }
 
     /** One message's payload text. */
-    static String encode(List<Statement> message, Payload payload) {
+    public static String encode(List<Statement> message, Payload payload) {
         if (payload == Payload.JSON_LD) {
             return JsonLdMessageLog.messageObject(message);
         }
@@ -149,7 +149,7 @@ public final class SseMessageChannel {
     }
 
     /** One event: its type, its number as id, and one {@code data:} line per payload line. */
-    static String event(int id, String payload) {
+    public static String event(int id, String payload) {
         StringBuilder out = new StringBuilder("event: ").append(EVENT).append('\n')
                 .append("id: ").append(id).append('\n');
         // an empty N-Quads payload still needs a data field, or the event is not dispatched

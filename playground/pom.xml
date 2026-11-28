@@ -82,7 +82,7 @@
             <scope>runtime</scope>
         </dependency>
 
-        <!-- Tests for the RDF Message Log reader (org.cqels.playground.messages); same JUnit
+        <!-- Tests for the RDF Message Log readers (org.cqels.playground.messages.io); same JUnit
              and surefire versions as sparql-endpoint. -->
         <!-- RDF Messages demo (org.cqels.playground.messages): the NDJSON-LD, YAML-LD and RDF/XML
              message logs. Same RDF4J version as the engine. snakeyaml-engine reads YAML 1.2 with

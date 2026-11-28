@@ -37,7 +37,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * RDF/XML), Server-Sent Events, and the codec's known gaps
  * (<a href="https://github.com/cqels/CQELS4J/issues/126">#126</a>,
  * <a href="https://github.com/cqels/CQELS4J/issues/133">#133</a>), see the
- * {@code org.cqels.playground.messages} package and {@code RDF_MESSAGES_MAPPING.md}.
+ * {@code org.cqels.playground.messages.io} package and {@code RDF_MESSAGES_MAPPING.md}.
  *
  * <p>Run: {@code mvn -q compile exec:java -Dexec.mainClass=org.cqels.playground.messages.RdfMessageIngestion}
  */
