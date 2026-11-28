@@ -14,6 +14,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import org.cqels.engine.CQELSEngine;
 import org.cqels.engine.DataStream;
+import org.cqels.playground.messages.io.RdfMessageLog;
 import org.eclipse.rdf4j.model.BNode;
 import org.eclipse.rdf4j.model.Literal;
 import org.eclipse.rdf4j.model.Statement;

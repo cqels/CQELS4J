@@ -114,8 +114,9 @@ Each program prints what it pushes and what the engine emits, then exits on its 
 
 Every demo sits in a package named after its feature, as above. The vocabulary and helpers they
 share, [`Fleet`](src/main/java/org/cqels/playground/Fleet.java), stay in `org.cqels.playground`;
-the S2DM demos share theirs in [`s2dm/S2dm`](src/main/java/org/cqels/playground/s2dm/S2dm.java), and the
-message demos the readers next to them in `messages`.
+the S2DM demos share theirs in [`s2dm/S2dm`](src/main/java/org/cqels/playground/s2dm/S2dm.java), and
+the message demos use the RDF Message Log readers and writers in
+[`messages/io`](src/main/java/org/cqels/playground/messages/io/).
 
 ## Every demo's output is tested
 
@@ -322,8 +323,8 @@ Each demo pairs the derivation with a case that must NOT derive, so the semantic
 | [`SosaObservations`](src/main/java/org/cqels/playground/basics/SosaObservations.java) | W3C [SOSA/SSN](https://www.w3.org/TR/vocab-ssn/) + multi-pattern stream join | Average / count per (vehicle × observed VSS signal) — the `observedProperty` keeps speed and battery readings apart. |
 | [`VehicleSignalsCdsp`](src/main/java/org/cqels/playground/cdsp/VehicleSignalsCdsp.java) | COVESA [VSS](https://covesa.global/) (CDSP) + `GROUP BY` + `HAVING` | The flagship query: per-vehicle top/average speed over a window, emitting only vehicles that were speeding. |
 | [`RdfMessageIngestion`](src/main/java/org/cqels/playground/messages/RdfMessageIngestion.java) | W3C [RSP CG **RDF Messages**](https://w3c-cg.github.io/rsp/spec/messages) N-Quads envelope (`RdfMessageCodec`, alpha.9) | Decode a `VERSION "1.2-messages"` document into atomic observations and push each as one stream element, so a multi-pattern `[NOW]` query binds two predicates of the *same* observation. |
-| [`MessageLogReplay`](src/main/java/org/cqels/playground/messages/MessageLogReplay.java) | RDF Messages **Turtle** log reader/writer ([`RdfMessageLog`](src/main/java/org/cqels/playground/messages/RdfMessageLog.java)); `[TRIPLES 1]` vs `[RANGE 30s]` | Replay [`cabin-temperatures.ttl`](src/main/resources/messages/cabin-temperatures.ttl): 6 messages, the same `_:r` label in every observation. Read one message at a time, 4 readings; read as one plain document, the labels collide into 1 blank node and the same query returns 16 rows. Results go back out as a message log that re-reads as 4 messages. See [RDF_MESSAGES_MAPPING.md](../RDF_MESSAGES_MAPPING.md). |
-| [`MessageStreamOverSse`](src/main/java/org/cqels/playground/messages/MessageStreamOverSse.java) | RDF Messages over **Server-Sent Events** ([`SseMessageChannel`](src/main/java/org/cqels/playground/messages/SseMessageChannel.java)); NDJSON-LD, YAML-LD and RDF/XML logs in [`JsonLdMessageLog`](src/main/java/org/cqels/playground/messages/JsonLdMessageLog.java) and [`RdfXmlMessageLog`](src/main/java/org/cqels/playground/messages/RdfXmlMessageLog.java) | The same six messages served as `rdf-message` events with JSON-LD payloads, read as they arrive and pushed into the engine: 6 events, 4 readings, as in the replay. |
+| [`MessageLogReplay`](src/main/java/org/cqels/playground/messages/MessageLogReplay.java) | RDF Messages **Turtle** log reader/writer ([`RdfMessageLog`](src/main/java/org/cqels/playground/messages/io/RdfMessageLog.java)); `[TRIPLES 1]` vs `[RANGE 30s]` | Replay [`cabin-temperatures.ttl`](src/main/resources/messages/cabin-temperatures.ttl): 6 messages, the same `_:r` label in every observation. Read one message at a time, 4 readings; read as one plain document, the labels collide into 1 blank node and the same query returns 16 rows. Results go back out as a message log that re-reads as 4 messages. See [RDF_MESSAGES_MAPPING.md](../RDF_MESSAGES_MAPPING.md). |
+| [`MessageStreamOverSse`](src/main/java/org/cqels/playground/messages/MessageStreamOverSse.java) | RDF Messages over **Server-Sent Events** ([`SseMessageChannel`](src/main/java/org/cqels/playground/messages/io/SseMessageChannel.java)); NDJSON-LD, YAML-LD and RDF/XML logs in [`JsonLdMessageLog`](src/main/java/org/cqels/playground/messages/io/JsonLdMessageLog.java) and [`RdfXmlMessageLog`](src/main/java/org/cqels/playground/messages/io/RdfXmlMessageLog.java) | The same six messages served as `rdf-message` events with JSON-LD payloads, read as they arrive and pushed into the engine: 6 events, 4 readings, as in the replay. |
 
 ## Keeping the caveats honest
 
@@ -340,6 +341,9 @@ to edit:
 ```bash
 scripts/ci/capability-probe.sh
 ```
+
+Its checks sit in [`probe/`](src/main/java/org/cqels/playground/probe/), one class per area (query
+evaluation, static joins, aggregates, CEP, reasoning, RDF Messages); `CapabilityProbe` runs them.
 
 It covers API-shape claims too, not just query behaviour: that the warm parse-cache ASP backend is
 reachable through the facade's generic `registerQuery` (asserted by registering one and seeing it

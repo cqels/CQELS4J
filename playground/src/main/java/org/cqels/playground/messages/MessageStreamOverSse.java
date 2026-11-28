@@ -10,6 +10,8 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import org.cqels.engine.CQELSEngine;
 import org.cqels.engine.DataStream;
+import org.cqels.playground.messages.io.RdfMessageLog;
+import org.cqels.playground.messages.io.SseMessageChannel;
 import org.eclipse.rdf4j.model.Statement;
 import org.eclipse.rdf4j.rio.RDFFormat;
 

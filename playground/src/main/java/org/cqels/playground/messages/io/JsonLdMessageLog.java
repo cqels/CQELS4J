@@ -1,4 +1,4 @@
-package org.cqels.playground.messages;
+package org.cqels.playground.messages.io;
 
 import java.io.IOException;
 import java.io.StringReader;

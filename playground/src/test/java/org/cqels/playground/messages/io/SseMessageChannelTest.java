@@ -1,9 +1,12 @@
-package org.cqels.playground.messages;
+package org.cqels.playground.messages.io;
 
-import static org.cqels.playground.messages.RdfMessagesTestSuiteTest.assertMessages;
+import static org.cqels.playground.messages.io.RdfMessagesTestSuiteTest.assertMessages;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -46,7 +49,7 @@ class SseMessageChannelTest {
     @Test
     void producerToConsumerKeepsEveryMessage() throws Exception {
         List<List<Statement>> messages = RdfMessageLog.parse(
-                MessageLogReplay.readResource("/messages/cabin-temperatures.ttl"), RDFFormat.TURTLE, BASE);
+                readResource("/messages/cabin-temperatures.ttl"), RDFFormat.TURTLE, BASE);
         for (SseMessageChannel.Payload payload : SseMessageChannel.Payload.values()) {
             List<List<Statement>> received = Collections.synchronizedList(new ArrayList<>());
             try (SseMessageChannel.Producer producer = new SseMessageChannel.Producer(messages, payload, 0)) {
@@ -123,6 +126,16 @@ class SseMessageChannelTest {
             pool.shutdown();
             long ms = (System.nanoTime() - start) / 1_000_000;
             org.junit.jupiter.api.Assertions.assertTrue(ms < 3000, "two clients took " + ms + " ms");
+        }
+    }
+
+    /** The demos' cabin-temperature log, read from the classpath as {@code MessageLogReplay} reads it. */
+    private static String readResource(String path) throws IOException {
+        try (InputStream in = SseMessageChannelTest.class.getResourceAsStream(path)) {
+            if (in == null) {
+                throw new IOException("missing resource " + path);
+            }
+            return new String(in.readAllBytes(), StandardCharsets.UTF_8);
         }
     }
 }

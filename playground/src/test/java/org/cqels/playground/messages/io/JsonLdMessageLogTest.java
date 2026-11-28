@@ -1,6 +1,6 @@
-package org.cqels.playground.messages;
+package org.cqels.playground.messages.io;
 
-import static org.cqels.playground.messages.RdfMessagesTestSuiteTest.assertMessages;
+import static org.cqels.playground.messages.io.RdfMessagesTestSuiteTest.assertMessages;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;

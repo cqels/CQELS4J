@@ -1,4 +1,4 @@
-package org.cqels.playground.messages;
+package org.cqels.playground.messages.io;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
